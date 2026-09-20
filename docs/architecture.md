@@ -52,7 +52,38 @@ MT5 accounts are created and managed through the admin panel, not via automated 
 - **Funded account:** After passing evaluation, trader receives a live funded account
 - These are distinct lifecycle states with different rules, data models, and API surfaces
 
-## 2. Technology Stack
+## 2. Domain Model
+
+The following entities and relationships are approved for the Prisma schema:
+
+### 2.1 Trader
+
+The core user entity — a registered trader who undergoes evaluation.
+
+- **Evaluations** → MT5 Account Assignment → Ruleset Version
+- **Funded Accounts**
+
+### 2.2 MT5 Account
+
+A MetaTrader 5 account instance (manual entry or allocated).
+
+- **Inventory** — registry of all accounts (active, inactive, allocated, available)
+- **Credentials** — encrypted connection credentials
+- **Health** — connection status and health metrics
+- **Assignment History** — record of assignments to traders
+
+### 2.3 Ruleset
+
+Configurable evaluation rules with versioning.
+
+- **Ruleset Version** — immutable snapshot of rules at a point in time
+  - **Individual Rules** — single criteria (profit target, drawdown limit, trading hours, etc.)
+
+### 2.4 AuditLog
+
+Immutable system events — evaluation decisions, rule changes, admin actions.
+
+## 3. Technology Stack
 
 | Component | Technology |
 |---|---|
@@ -64,9 +95,9 @@ MT5 accounts are created and managed through the admin panel, not via automated 
 | Package Manager | pnpm |
 | Linting | ESLint |
 
-## 3. Unresolved Technical Questions
+## 4. Unresolved Technical Questions
 
-### 3.1 XM MT5 Connectivity
+### 4.1 XM MT5 Connectivity
 
 > **Status:** BLOCKER  
 > **Owner:** Architecture lead / DevOps  
@@ -74,17 +105,17 @@ MT5 accounts are created and managed through the admin panel, not via automated 
 >
 > **Action required:** Confirm with product/backend team whether XM exposes any API endpoints for MT5 account management before designing automated provisioning. Do not assume capabilities that have not been documented or approved.
 
-### 3.2 Real-Time Monitoring Frequency
+### 4.2 Real-Time Monitoring Frequency
 
 > **Status:** OPEN  
 > **Description:** The monitoring service interval (e.g., every 30s vs 60s) and method (polling vs WebSocket) have not been finalized. This depends on MT5 API capabilities and broker restrictions.
 
-### 3.3 Database Deployment Strategy
+### 4.3 Database Deployment Strategy
 
 > **Status:** OPEN  
 > **Description:** PostgreSQL will be used for development and likely production, but the deployment method (managed service, Docker, self-hosted) has not been decided. Prisma Migrate will handle schema evolution regardless.
 
-## 4. Folder Conventions
+## 5. Folder Conventions
 
 ```
 app/              Routes, layouts, API routes (Next.js App Router)
@@ -96,7 +127,7 @@ tests/            Unit, integration, and e2e tests
 public/           Static assets (images, icons, fonts)
 ```
 
-## 5. Non-Goals (Phase 1)
+## 6. Non-Goals (Phase 1)
 
 - No real payment processing (crypto payment workflow is planned but not yet implemented)
 - No real email/SMS delivery (SMTP config is a placeholder)
