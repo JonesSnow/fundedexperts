@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, OrderStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
@@ -49,29 +49,62 @@ export async function POST(
       );
     }
 
+    const order = await prisma.order.findUnique({ where: { id } });
+    if (!order) {
+      return NextResponse.json(
+        { success: false, error: "Order not found" },
+        { status: 404 },
+      );
+    }
+
+    if (order.traderId !== trader.id) {
+      logger.error("ACTIVATION", "Unauthorized: trader does not own order", {
+        correlationId,
+        actor: { type: "trader", id: trader.id },
+        entity: { type: "Order", id },
+        error: { code: "FORBIDDEN", message: "Trader does not own this order" },
+      });
+      return NextResponse.json(
+        { success: false, error: "Forbidden" },
+        { status: 403 },
+      );
+    }
+
     const body = await request.json();
     const { paymentReference } = body;
 
-    const result = await activateEvaluation(prisma, paymentProvider, {
-      orderId: id,
-      performedBy: trader.id,
-      paymentReference,
-    });
+    const isDemoPayment = paymentReference === "demo-payment";
+
+    if (isDemoPayment && order.status !== OrderStatus.PAID) {
+      return NextResponse.json(
+        { success: false, error: "Order is not paid" },
+        { status: 400 },
+      );
+    }
+
+    const activationInput = isDemoPayment
+      ? { orderId: id, performedBy: trader.id }
+      : { orderId: id, performedBy: trader.id, paymentReference };
+
+    const result = await activateEvaluation(prisma, paymentProvider, activationInput);
 
     if (result.success) {
       logger.info("ACTIVATION", "Activation completed", {
         correlationId,
         actor: { type: "trader", id: trader.id },
         entity: { type: "Evaluation", id: result.evaluation.id },
-        metadata: { wasAlreadyActivated: result.wasAlreadyActivated },
+        metadata: { wasAlreadyActivated: result.wasAlreadyActivated, isDemoPayment },
       });
-      return NextResponse.json({ success: true, result }, { status: 200 });
+      return NextResponse.json(
+        { success: true, result, isDemoPayment },
+        { status: 200 },
+      );
     }
 
     logger.error("ACTIVATION", "Activation failed", {
       correlationId,
       actor: { type: "trader", id: trader.id },
-      entity: { type: "Order", id: id },
+      entity: { type: "Order", id },
       error: { code: result.errorCategory, message: result.error },
     });
     return NextResponse.json(
@@ -83,7 +116,7 @@ export async function POST(
     logger.error("ACTIVATION", "Activation request failed", {
       correlationId,
       actor: { type: "trader", id: session.sub },
-      entity: { type: "Order", id: id },
+      entity: { type: "Order", id },
       error: { code: "ACTIVATION_REQUEST_FAILED", message: msg },
     });
     return NextResponse.json(

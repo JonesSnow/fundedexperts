@@ -325,6 +325,68 @@ describe("Activation - Idempotency", () => {
   });
 });
 
+describe("Activation - Demo Payment (Service Level)", () => {
+  it("should activate without payment reference when order is PAID", async () => {
+    const trader = await createTestTrader(
+      prisma,
+      `act-demo-${RUN_ID}@example.com`,
+    );
+    const { order } = await setupOrder(prisma, trader.id, OrderStatus.PAID);
+
+    const result = await activateEvaluation(prisma, provider, {
+      orderId: order.id,
+      performedBy: trader.id,
+    });
+    check("Demo activation success without payment ref", result.success === true, "");
+  });
+
+  it("should reject without payment reference when order is PENDING_PAYMENT", async () => {
+    const trader = await createTestTrader(
+      prisma,
+      `act-demo2-${RUN_ID}@example.com`,
+    );
+    const { order } = await setupOrder(
+      prisma,
+      trader.id,
+      OrderStatus.PENDING_PAYMENT,
+    );
+
+    const result = await activateEvaluation(prisma, provider, {
+      orderId: order.id,
+      performedBy: trader.id,
+    });
+    check("Demo activation rejected for unpaid", result.success === false, "");
+    if (!result.success) {
+      check(
+        "Error category ORDER_NOT_PAID",
+        result.errorCategory === "ORDER_NOT_PAID",
+        "",
+      );
+    }
+  });
+
+  it("should create evaluation when activated without payment reference", async () => {
+    const trader = await createTestTrader(
+      prisma,
+      `act-demo3-${RUN_ID}@example.com`,
+    );
+    const { order } = await setupOrder(prisma, trader.id, OrderStatus.PAID);
+
+    const result = await activateEvaluation(prisma, provider, {
+      orderId: order.id,
+      performedBy: trader.id,
+    });
+    if (result.success) {
+      check("Evaluation created", result.evaluation.id !== "", "");
+      check(
+        "Evaluation status IN_PROGRESS",
+        result.evaluation.status === "IN_PROGRESS",
+        `status=${result.evaluation.status}`,
+      );
+    }
+  });
+});
+
 describe("Activation - Ledger and Audit", () => {
   it("should create ledger entry with payment reference", async () => {
     const trader = await createTestTrader(

@@ -36,12 +36,6 @@ export async function GET(request: NextRequest) {
       { status: 401 },
     );
   }
-  if (trader.role !== "ADMIN") {
-    return NextResponse.json(
-      { success: false, error: "Forbidden" },
-      { status: 403 },
-    );
-  }
 
   try {
     const { search, status, evaluationId } = Object.fromEntries(
@@ -53,6 +47,9 @@ export async function GET(request: NextRequest) {
     };
 
     const where: Record<string, unknown> = {};
+    if (trader.role === "TRADER") {
+      where.traderId = trader.id;
+    }
     if (status && Object.values(FundedAccountStatus).includes(status as FundedAccountStatus)) {
       where.status = status as FundedAccountStatus;
     }
