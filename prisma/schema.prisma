@@ -1,0 +1,481 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  TRADER
+  ADMIN
+}
+
+enum TraderStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+enum EvaluationStatus {
+  IN_PROGRESS
+  PASSED
+  FAILED
+  ABANDONED
+}
+
+enum FundedAccountStatus {
+  PENDING
+  ELIGIBLE
+  APPROVED
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+  COMPLETED
+}
+
+enum AccountStatus {
+  AVAILABLE
+  IN_USE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum AccountAssignmentStatus {
+  ASSIGNED
+  RETURNED
+  REVOKED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  TIMEOUT
+  CANCELLED
+}
+
+enum MT5AccountPurpose {
+  EVALUATION
+  FUNDED
+  OTHER
+}
+
+enum MT5HealthStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum RuleType {
+  PROFIT_TARGET
+  DRAWDOWN_LIMIT
+  TRADING_HOURS
+  MIN_TRADES
+  MAX_DAILY_LOSS
+  MAX_OPEN_TRADES
+  MAX_LEVERAGE
+  TRADING_SESSION
+  // extensible via application logic
+}
+
+enum RulesetVersionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AuditAction {
+  EVALUATION_STARTED
+  EVALUATION_COMPLETED
+  EVALUATION_FAILED
+  EVALUATION_LINK_PENDING
+  EVALUATION_LINKED
+  EVALUATION_LINK_FAILED
+  RULE_CHANGED
+  RULE_VERSION_CREATED
+  RULE_CREATED
+  RULE_UPDATED
+  RULE_DELETED
+  TRADER_CREATED
+  TRADER_UPDATED
+  TRADER_SUSPENDED
+  ACCOUNT_CREATED
+  ACCOUNT_UPDATED
+  ACCOUNT_ASSIGNED
+  ACCOUNT_RETURNED
+  ACCOUNT_REVOKED
+  ACCOUNT_RECOVERED
+  FUNDED_ACCOUNT_CREATED
+  FUNDED_ACCOUNT_CLOSED
+  FUNDED_ACCOUNT_SUSPENDED
+  RECOVERY_STARTED
+  RECOVERY_SUCCEEDED
+  RECOVERY_FAILED
+  RECONCILIATION_STARTED
+  RECONCILIATION_REPAIRED
+  RECONCILIATION_SKIPPED
+  RECONCILIATION_REJECTED
+  PRODUCT_CREATED
+  PRODUCT_UPDATED
+  RULESET_CREATED
+  RULESET_UPDATED
+  RULESET_VERSION_CREATED
+  RULESET_VERSION_PUBLISHED
+  CONFIGURATION_CHANGED
+  SYSTEM_EVENT
+}
+
+enum RuleResult {
+  PASS
+  FAIL
+  WARNING
+}
+
+model Trader {
+  id                   String       @id @default(uuid())
+  email                String       @unique
+  password             String
+  role                 Role         @default(TRADER)
+  firstName            String?
+  lastName             String?
+  status               TraderStatus @default(PENDING)
+  passwordResetToken   String?
+  passwordResetExpires DateTime?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  evaluations    Evaluation[]
+  fundedAccounts FundedAccount[]
+  assignments    AccountAssignment[]
+  auditLogs      AuditLog[]
+  orders         Order[]
+  ledgerEntries  LedgerEntry[]
+
+  @@index([role])
+}
+
+model Product {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  description  String?
+  pricingPlan  String?
+  settings     Json?
+  isActive     Boolean  @default(true)
+  accountSize  Decimal? @db.Decimal(18, 2)
+  price        Decimal? @db.Decimal(18, 2)
+  currency     String   @default("USD")
+  rulesetId    String?
+  ruleset      Ruleset? @relation(fields: [rulesetId], references: [id])
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs  AuditLog[]
+  orderItems OrderItem[]
+}
+
+model Ruleset {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions  RulesetVersion[]
+  products  Product[]
+  auditLogs AuditLog[]
+}
+
+model RulesetVersion {
+  id            String               @id @default(uuid())
+  version       String
+  rulesetId     String
+  ruleset       Ruleset              @relation(fields: [rulesetId], references: [id])
+  status        RulesetVersionStatus @default(DRAFT)
+  effectiveDate DateTime?
+  isActive      Boolean              @default(true)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  rules          Rule[]
+  evaluations    Evaluation[]
+  fundedAccounts FundedAccount[]
+  orders         Order[]
+
+  @@unique([rulesetId, version])
+}
+
+model Rule {
+  id               String         @id @default(uuid())
+  rulesetVersionId String
+  rulesetVersion   RulesetVersion @relation(fields: [rulesetVersionId], references: [id])
+  ruleType         RuleType
+  name             String
+  value            Json?
+  isRequired       Boolean        @default(true)
+  effectiveDate    DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  ruleEvaluations RuleEvaluation[]
+}
+
+model MT5Account {
+  id                      String             @id @default(uuid())
+  accountNumber           String             @unique
+  broker                  String?
+  server                  String?
+  login                   String?
+  accountSize             Decimal?           @db.Decimal(18, 2)
+  currency                String             @default("USD")
+  purpose                 MT5AccountPurpose?
+  status                  AccountStatus      @default(AVAILABLE)
+  healthStatus            MT5HealthStatus    @default(DISCONNECTED)
+  credentials             String?
+  notes                   String?
+  lastHealthCheck         DateTime?
+  lastMonitoringAt        DateTime?
+  currentMonitoringStatus String?
+  currentMonitoringResult String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  assignments    AccountAssignment[]
+  ruleEvents     RuleEvent[]
+  evaluations    Evaluation[]
+  fundedAccounts FundedAccount[]
+  auditLogs      AuditLog[]
+  jobs           MonitoringJob[]
+}
+
+model MonitoringJob {
+  id           String     @id @default(uuid())
+  jobId        String     @unique
+  accountId    String
+  account      MT5Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  workerId     String?
+  status       JobStatus  @default(PENDING)
+  attempt      Int        @default(1)
+  timeoutMs    Int        @default(10000)
+  retryable    Boolean    @default(false)
+  errorCode    String?
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  leaseExpiry  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  // NOTE: Partial unique index "MonitoringJob_active_job_per_account" exists in the
+  // database migration (20260921130000_monitoring_persistence) enforcing one active
+  // (PENDING/RUNNING) job per accountId. Prisma 6.19.3 does not support declaring
+  // partial unique constraints via @@unique([accountId], where: ...) — prisma validate
+  // rejects such syntax. The index is maintained via SQL migration only.
+
+  @@index([accountId, status])
+  @@index([status, leaseExpiry])
+  @@index([workerId])
+}
+
+model Evaluation {
+  id               String           @id @default(uuid())
+  traderId         String
+  trader           Trader           @relation(fields: [traderId], references: [id])
+  rulesetVersionId String
+  rulesetVersion   RulesetVersion   @relation(fields: [rulesetVersionId], references: [id])
+  accountId        String?
+  account          MT5Account?      @relation(fields: [accountId], references: [id])
+  status           EvaluationStatus @default(IN_PROGRESS)
+  startedAt        DateTime         @default(now())
+  completedAt      DateTime?
+  totalPnl         Decimal?         @db.Decimal(18, 2)
+  maxDrawdown      Decimal?         @db.Decimal(18, 2)
+  notes            String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  ruleEvaluations RuleEvaluation[]
+  auditLogs       AuditLog[]
+  fundedAccounts  FundedAccount[]
+}
+
+model FundedAccount {
+  id               String              @id @default(uuid())
+  traderId         String
+  trader           Trader              @relation(fields: [traderId], references: [id])
+  evaluationId     String?
+  evaluation       Evaluation?         @relation(fields: [evaluationId], references: [id])
+  accountId        String?
+  account          MT5Account?         @relation(fields: [accountId], references: [id])
+  rulesetVersionId String?
+  rulesetVersion   RulesetVersion?     @relation(fields: [rulesetVersionId], references: [id])
+  status           FundedAccountStatus @default(PENDING)
+  allocatedAt      DateTime?
+  activatedAt      DateTime?
+  closedAt         DateTime?
+  totalPnl         Decimal?            @db.Decimal(18, 2)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  auditLogs AuditLog[]
+}
+
+model AccountAssignment {
+  id         String                  @id @default(uuid())
+  traderId   String
+  trader     Trader                  @relation(fields: [traderId], references: [id])
+  accountId  String
+  account    MT5Account              @relation(fields: [accountId], references: [id])
+  status     AccountAssignmentStatus @default(ASSIGNED)
+  assignedAt DateTime                @default(now())
+  returnedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  @@unique([traderId, accountId, assignedAt])
+}
+
+model RuleEvaluation {
+  id            String     @id @default(uuid())
+  evaluationId  String
+  evaluation    Evaluation @relation(fields: [evaluationId], references: [id])
+  ruleId        String
+  rule          Rule       @relation(fields: [ruleId], references: [id])
+  result        RuleResult
+  actualValue   Json?
+  expectedValue Json?
+  details       String?
+  evaluatedAt   DateTime   @default(now())
+
+  @@unique([evaluationId, ruleId])
+}
+
+model RuleEvent {
+  id           String     @id @default(uuid())
+  accountId    String
+  account      MT5Account @relation(fields: [accountId], references: [id])
+  eventType    String
+  severity     String?
+  message      String
+  occurredAt   DateTime   @default(now())
+  acknowledged Boolean    @default(false)
+}
+
+enum LedgerEntryStatus {
+  PENDING
+  POSTED
+  REVERSED
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerEntryType {
+  CUSTOMER_PAYMENT
+  REFUND
+  PLATFORM_FEE
+  TRADER_PAYOUT
+  INTERNAL_ADJUSTMENT
+}
+
+model Order {
+  id               String          @id @default(uuid())
+  orderNumber      String          @unique
+  traderId         String
+  trader           Trader          @relation(fields: [traderId], references: [id])
+  rulesetVersionId String?
+  rulesetVersion   RulesetVersion? @relation(fields: [rulesetVersionId], references: [id])
+  status           OrderStatus     @default(CREATED)
+  currency         String          @default("USD")
+  subtotal         Decimal         @db.Decimal(18, 2)
+  taxAmount        Decimal         @default(0) @db.Decimal(18, 2)
+  totalAmount      Decimal         @db.Decimal(18, 2)
+  idempotencyKey   String?         @unique
+  notes            String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  orderItems    OrderItem[]
+  ledgerEntries LedgerEntry[]
+
+  @@index([traderId, status])
+}
+
+model OrderItem {
+  id        String          @id @default(uuid())
+  orderId   String
+  order     Order           @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product         @relation(fields: [productId], references: [id])
+  unitPrice Decimal         @db.Decimal(18, 2)
+  currency  String          @default("USD")
+  quantity  Int             @default(1)
+  status    OrderItemStatus @default(PENDING)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([orderId, productId])
+}
+
+model LedgerEntry {
+  id          String            @id @default(uuid())
+  entryNumber String            @unique
+  traderId    String?
+  trader      Trader?           @relation(fields: [traderId], references: [id])
+  orderId     String?
+  order       Order?            @relation(fields: [orderId], references: [id])
+  referenceId String            @unique
+  entryType   LedgerEntryType
+  amount      Decimal           @db.Decimal(18, 2)
+  direction   LedgerDirection
+  currency    String            @default("USD")
+  status      LedgerEntryStatus @default(PENDING)
+  metadata    Json?
+  createdBy   String?
+  createdAt   DateTime          @default(now())
+
+  @@index([traderId, entryType])
+  @@index([orderId])
+  @@index([referenceId])
+}
+
+enum OrderStatus {
+  CREATED
+  PENDING_PAYMENT
+  PAID
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum OrderItemStatus {
+  PENDING
+  FULFILLED
+  ACTIVE
+  CANCELLED
+  FAILED
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  action      AuditAction
+  entityType  String
+  entityId    String
+  performedBy String?
+  details     Json?
+  timestamp   DateTime    @default(now())
+
+  traders        Trader[]
+  products       Product[]
+  rulesets       Ruleset[]
+  mt5Accounts    MT5Account[]
+  evaluations    Evaluation[]
+  fundedAccounts FundedAccount[]
+}

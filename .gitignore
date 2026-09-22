@@ -42,6 +42,9 @@ Thumbs.db
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+next.config.js
+next.config.ts
+.next/types/
 
 # Misc
 .cache
@@ -55,3 +58,7 @@ next-env.d.ts
 
 # docs
 docs/generated
+
+# POC experiments (isolated technical experiments, documented in docs/)
+poc-mt5-bridge/
+poc-*.json

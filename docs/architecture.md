@@ -99,11 +99,46 @@ Immutable system events — evaluation decisions, rule changes, admin actions.
 
 ### 4.1 XM MT5 Connectivity
 
-> **Status:** BLOCKER  
-> **Owner:** Architecture lead / DevOps  
-> **Description:** XM (the broker) may require specific API connectivity methods. The current assumption is manual MT5 account entry through the admin panel. If XM provides an API for account provisioning, this decision needs revisiting.
->
-> **Action required:** Confirm with product/backend team whether XM exposes any API endpoints for MT5 account management before designing automated provisioning. Do not assume capabilities that have not been documented or approved.
+> **Status:** BLOCKED — Terminal Not Logged In
+> **Owner:** Architecture lead / Backend team
+> **Last Updated:** 2026-09-20
+> **Per POC:** docs/mt5-poc-results.md
+
+**What was confirmed (research-based):**
+- XM officially supports MT5 Expert Advisors (EAs) and MQL5 automation
+- Read-only monitoring (balance, equity, margin, positions, orders, history) IS documented as feasible via the MetaTrader5 Python terminal bridge package
+- XM does NOT publish a public REST/WebSocket API for retail client account management
+- MetaQuotes provides broker-side APIs (Manager API, Web API, Server API) but these require institutional licensing
+- Third-party hosted MT5 REST APIs exist (Brokeret, mt5api.org) but are broker-agnostic, not XM-specific
+- Community projects (xm-exness-mt5-linux, mt5-bridge, mt5-httpapi) demonstrate terminal bridge pattern working with XM accounts
+
+**What was tested (Phase 7B POC, 2026-09-20):**
+- MetaTrader5 Python package v5.0.6180: INSTALLED successfully via pip
+- MT5 terminal at `D:\programs\MetaTrader 5\terminal64.exe`: INSTALLED and running (PID 15504)
+- `mt5.initialize()` with no credentials: TIMEOUT (10s) — terminal not authenticated
+- `mt5.initialize()` with invalid credentials: TIMEOUT (10s) — same failure mode
+- `mt5.initialize()` with env credentials: SKIPPED — no MT5_LOGIN/MT5_PASSWORD/MT5_SERVER env vars
+- `mt5.terminal_info()`: Returns None (no active connection)
+- `mt5.account_info()`: Returns None (no active connection)
+- No XM demo account credentials available in environment
+- No data retrieved; all read operations SKIPPED
+
+**What remains unverified:**
+- Whether XM provides API credentials for programmatic account access
+- Whether write operations (account provisioning, trade execution) are permitted via any method
+- Whether terminal bridge approach works reliably with current XM MT5 builds
+- Concurrent access patterns for real-time monitoring
+- Credential decryption in production context
+- Any data retrieval behavior (cannot test without logged-in terminal)
+
+**Recommended next experiment:**
+1. Log into MT5 terminal with XM demo account credentials (manual setup required)
+2. Initialize MetaTrader5 Python package with demo credentials
+3. Verify read access to all 7 required data items
+4. Document response formats, error codes, and reliability
+5. Security review of credential handling in worker process
+
+**Action required:** Proceed with terminal bridge proof-of-concept. Contact XM support to confirm whether programmatic account management is available before designing automated provisioning. Do not assume capabilities that have not been documented or approved.
 
 ### 4.2 Real-Time Monitoring Frequency
 
