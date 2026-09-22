@@ -18,7 +18,7 @@ async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
     { label: "orderItem.deleteMany", fn: () => prisma.orderItem.deleteMany({}) },
     { label: "ledgerEntry.deleteMany", fn: () => prisma.ledgerEntry.deleteMany({}) },
     { label: "order.deleteMany", fn: () => prisma.order.deleteMany({}) },
-    { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
+    { label: "auditLog.truncate", fn: () => prisma.$executeRaw`TRUNCATE TABLE "AuditLog" CASCADE` },
     { label: "evaluation.deleteMany", fn: () => prisma.evaluation.deleteMany({}) },
     { label: "accountAssignment.deleteMany", fn: () => prisma.accountAssignment.deleteMany({}) },
     { label: "rulesetVersion.deleteMany", fn: () => prisma.rulesetVersion.deleteMany({}) },

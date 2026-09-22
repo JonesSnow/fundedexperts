@@ -35,7 +35,7 @@ async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
     { label: "product.deleteMany", fn: () => prisma.product.deleteMany({}) },
     { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({}) },
     { label: "trader.deleteMany", fn: () => prisma.trader.deleteMany({}) },
-    { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
+    { label: "auditLog.truncate", fn: () => prisma.$executeRaw`TRUNCATE TABLE "AuditLog" CASCADE` },
   ];
   return runCleanupSteps(prisma, steps);
 }

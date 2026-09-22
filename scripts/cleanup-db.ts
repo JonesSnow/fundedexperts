@@ -1,4 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
+import { PrismaClient } from "@prisma/client";
 
 async function main() {
   const prisma = new PrismaClient();
@@ -10,7 +10,7 @@ async function main() {
       { label: "orderItem.deleteMany", fn: () => prisma.orderItem.deleteMany({}) },
       { label: "ledgerEntry.deleteMany", fn: () => prisma.ledgerEntry.deleteMany({}) },
       { label: "order.deleteMany", fn: () => prisma.order.deleteMany({}) },
-      { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
+      { label: "auditLog.truncate", fn: () => prisma.$executeRaw`TRUNCATE TABLE "AuditLog" CASCADE` },
       { label: "fundedAccount.deleteMany", fn: () => prisma.fundedAccount.deleteMany({}) },
       { label: "monitoringJob.deleteMany", fn: () => prisma.monitoringJob.deleteMany({}) },
       { label: "accountAssignment.deleteMany", fn: () => prisma.accountAssignment.deleteMany({}) },

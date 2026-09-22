@@ -27,12 +27,15 @@ import {
 const HAS_DB = process.env.DATABASE_URL !== undefined;
 const RUN_ID = Date.now().toString(36);
 
-const results: { pass: number; fail: number; tests: Array<{ name: string; result: string; detail: string }> } = {
+const results = {
   pass: 0,
   fail: 0,
+  unproven: 0,
   tests: [] as Array<{ name: string; result: string; detail: string }>,
 };
 let cleanupResult: CleanupResult | null = null;
+
+const prisma = new PrismaClient();
 
 function check(name: string, condition: boolean, detail: string = "") {
   if (condition) {
@@ -44,13 +47,18 @@ function check(name: string, condition: boolean, detail: string = "") {
   }
 }
 
+function checkUnproven(name: string, detail: string = "") {
+  results.unproven++;
+  results.tests.push({ name, result: "UNPROVEN", detail });
+}
+
 async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
   const steps = [
     { label: "ruleEvaluation.deleteMany", fn: () => prisma.ruleEvaluation.deleteMany({}) },
     { label: "orderItem.deleteMany", fn: () => prisma.orderItem.deleteMany({}) },
     { label: "ledgerEntry.deleteMany", fn: () => prisma.ledgerEntry.deleteMany({}) },
     { label: "order.deleteMany", fn: () => prisma.order.deleteMany({}) },
-    { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
+    { label: "auditLog.truncate", fn: () => prisma.$executeRaw`TRUNCATE TABLE "AuditLog" CASCADE` },
     { label: "fundedAccount.deleteMany", fn: () => prisma.fundedAccount.deleteMany({}) },
     { label: "monitoringJob.deleteMany", fn: () => prisma.monitoringJob.deleteMany({}) },
     { label: "accountAssignment.deleteMany", fn: () => prisma.accountAssignment.deleteMany({}) },
@@ -110,8 +118,6 @@ beforeEach(async () => {
   assertCleanup(cleanupResult, "Funded Account beforeEach");
   await prisma.$disconnect();
 });
-
-const prisma = new PrismaClient();
 
 if (!HAS_DB) {
   console.log("SKIPPED: DATABASE_URL not configured");
@@ -226,10 +232,8 @@ describe("Funded Account — Approval", () => {
     check("Funded account exists", fa !== null, "");
 
     if (fa) {
-      // Approve first
       await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
 
-      // Link account to make it ACTIVE
       const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-001`, trader.id);
       const linkResult = await linkAccount(prisma, {
         fundedAccountId: fa.id,
@@ -238,7 +242,10 @@ describe("Funded Account — Approval", () => {
       });
       check("Link succeeded", linkResult.success === true, "");
 
-      // Try to approve again (now ACTIVE)
+      if (linkResult.success) {
+        check("Status is ACTIVE", linkResult.account.status === "ACTIVE", `status=${linkResult.account.status}`);
+      }
+
       const r2 = await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
       check("Approval rejected from ACTIVE", r2.success === false, "");
       if (!r2.success) {
@@ -262,16 +269,8 @@ describe("Funded Account — Authorization", () => {
       const result = await getFundedAccount(prisma, fa.id);
       check("Fetch succeeded", result.success === true, "");
       if (result.success) {
-        // getFundedAccount doesn't do auth check — that's the API route's job
         check("Data returned", result.account.id === fa.id, "");
       }
-      // Try unauthorized mutation
-      const approveResult = await approveFundedAccount(prisma, {
-        id: fa.id,
-        performedBy: trader2.id,
-      });
-      // approveFundedAccount doesn't check authorization — that's API route's job
-      // So this test documents that auth is at the API layer, not service layer
       check("Service does not enforce auth (API does)", true, "Auth enforced at API route level");
     }
   });
@@ -285,7 +284,6 @@ describe("Funded Account — Authorization", () => {
       performedBy: trader.id,
     });
     check("Trader can create account (service layer)", result.success === true, "");
-    // Note: API route enforces ADMIN requirement for mutations; service layer allows caller
   });
 });
 
@@ -361,12 +359,10 @@ describe("Funded Account — Lifecycle Transitions", () => {
     check("Funded account exists", fa !== null, "");
 
     if (fa) {
-      // Approve and link
       await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
       const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-sus`, trader.id);
       await linkAccount(prisma, { fundedAccountId: fa.id, accountId: account.id, performedBy: trader.id });
 
-      // Suspend with reason
       const suspendResult = await transitionFundedAccountStatus(prisma, {
         id: fa.id,
         status: "SUSPENDED",
@@ -379,7 +375,6 @@ describe("Funded Account — Lifecycle Transitions", () => {
         const suspended = await prisma.fundedAccount.findUnique({ where: { id: fa.id } });
         check("Status is SUSPENDED", suspended?.status === "SUSPENDED", `status=${suspended?.status}`);
 
-        // Terminate with reason
         const termResult = await transitionFundedAccountStatus(prisma, {
           id: fa.id,
           status: "TERMINATED",
@@ -517,23 +512,97 @@ describe("Funded Account — List and Query", () => {
 
 describe("Funded Account — Concurrency", () => {
   it("concurrent creation: NOT PROVEN (Neon serverless limitations)", async () => {
-    check("Concurrency testing requires persistent DB connection", true, "NOT PROVEN — Neon serverless pooler prevents reliable concurrent test execution");
+    checkUnproven("Concurrent creation attempts", "NOT PROVEN — Neon serverless pooler prevents reliable concurrent test execution");
   });
 
   it("concurrent status transitions: NOT PROVEN (Neon serverless limitations)", async () => {
-    check("Concurrency testing requires persistent DB connection", true, "NOT PROVEN — Neon serverless pooler prevents reliable concurrent test execution");
+    checkUnproven("Concurrent status transitions", "NOT PROVEN — Neon serverless pooler prevents reliable concurrent test execution");
+  });
+});
+
+describe("Funded Account — AuditLog Immutability", () => {
+  it("should prevent UPDATE on AuditLog at database level", async () => {
+    const log = await prisma.auditLog.create({
+      data: {
+        action: "ACCOUNT_CREATED",
+        entityType: "FundedAccount",
+        entityId: "test-entity",
+        performedBy: "test-performed-by",
+        details: { test: true },
+      },
+    });
+    check("AuditLog created", log.id !== "", "");
+
+    let updateError = false;
+    try {
+      await prisma.auditLog.update({
+        where: { id: log.id },
+        data: { details: { test: false } },
+      });
+    } catch {
+      updateError = true;
+    }
+    check("UPDATE prevented by trigger", updateError, "");
+  });
+
+  it("should prevent DELETE on AuditLog at database level", async () => {
+    const log = await prisma.auditLog.create({
+      data: {
+        action: "ACCOUNT_CREATED",
+        entityType: "FundedAccount",
+        entityId: "test-entity-delete",
+        performedBy: "test-performed-by",
+        details: { test: true },
+      },
+    });
+    check("AuditLog created", log.id !== "", "");
+
+    let deleteError = false;
+    try {
+      await prisma.auditLog.delete({ where: { id: log.id } });
+    } catch {
+      deleteError = true;
+    }
+    check("DELETE prevented by trigger", deleteError, "");
+  });
+
+  it("should allow TRUNCATE on AuditLog (admin bypass)", async () => {
+    await prisma.auditLog.create({
+      data: {
+        action: "ACCOUNT_CREATED",
+        entityType: "FundedAccount",
+        entityId: "test-truncate",
+        performedBy: "test-performed-by",
+        details: { test: true },
+      },
+    });
+
+    let truncateSuccess = false;
+    try {
+      await prisma.$executeRaw`TRUNCATE TABLE "AuditLog" CASCADE`;
+      truncateSuccess = true;
+    } catch {
+      truncateSuccess = false;
+    }
+    check("TRUNCATE succeeds (admin bypass)", truncateSuccess, "");
   });
 });
 
 after(async () => {
   if (cleanupResult) {
-    assertCleanup(cleanupResult, "Funded Account Lifecycle");
+    assertCleanup(cleanupResult as CleanupResult, "Funded Account Lifecycle");
     console.log(
       `[cleanup] ${(cleanupResult as CleanupResult).passed}/${(cleanupResult as CleanupResult).total} succeeded, ${(cleanupResult as CleanupResult).failed} failed`,
     );
   }
   console.log(
-    `Funded Account Tests: ${results.pass}/${results.pass + results.fail} passed`,
+    `Funded Account Tests: ${results.pass}/${results.pass + results.fail} passed, ${results.fail} failed, ${results.unproven} unproven`,
   );
+  console.log(
+    `  Unproven tests:`,
+  );
+  for (const t of results.tests.filter(t => t.result === "UNPROVEN")) {
+    console.log(`    - ${t.name}: ${t.detail}`);
+  }
   await prisma.$disconnect();
 });
