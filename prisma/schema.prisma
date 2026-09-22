@@ -34,6 +34,7 @@ enum FundedAccountStatus {
   SUSPENDED
   TERMINATED
   COMPLETED
+  CLOSED
 }
 
 enum AccountStatus {

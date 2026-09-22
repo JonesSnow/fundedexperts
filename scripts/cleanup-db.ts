@@ -10,6 +10,8 @@ async function main() {
       { label: "orderItem.deleteMany", fn: () => prisma.orderItem.deleteMany({}) },
       { label: "ledgerEntry.deleteMany", fn: () => prisma.ledgerEntry.deleteMany({}) },
       { label: "order.deleteMany", fn: () => prisma.order.deleteMany({}) },
+      { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
+      { label: "fundedAccount.deleteMany", fn: () => prisma.fundedAccount.deleteMany({}) },
       { label: "monitoringJob.deleteMany", fn: () => prisma.monitoringJob.deleteMany({}) },
       { label: "accountAssignment.deleteMany", fn: () => prisma.accountAssignment.deleteMany({}) },
       { label: "evaluation.deleteMany", fn: () => prisma.evaluation.deleteMany({}) },
@@ -19,7 +21,6 @@ async function main() {
       { label: "product.deleteMany", fn: () => prisma.product.deleteMany({}) },
       { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({}) },
       { label: "trader.deleteMany", fn: () => prisma.trader.deleteMany({}) },
-      { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
     ];
     for (const step of steps) {
       const count = await step.fn();

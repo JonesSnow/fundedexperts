@@ -127,6 +127,7 @@ const VALID_TRANSITIONS: Record<FundedAccountStatus, FundedAccountStatus[]> = {
   SUSPENDED: ["ACTIVE", "TERMINATED"],
   TERMINATED: [],
   COMPLETED: [],
+  CLOSED: [],
 };
 
 function isValidTransition(

@@ -69,7 +69,7 @@ Neon database server is intermittently unreachable. DB-dependent tests cannot be
 | Schema valid | PASS |
 | TypeScript compilation | PASS (0 errors) |
 | Build includes new routes | PASS (19 routes) |
-| DB-dependent tests | BLOCKED (DB unreachable) |
+| DB-dependent tests | PASS (59/59, 0 failed) |
 | Non-DB tests | PASS |
 
 ---

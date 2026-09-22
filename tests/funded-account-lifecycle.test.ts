@@ -32,7 +32,7 @@ const results: { pass: number; fail: number; tests: Array<{ name: string; result
   fail: 0,
   tests: [] as Array<{ name: string; result: string; detail: string }>,
 };
-const cleanupResult: CleanupResult | null = null;
+let cleanupResult: CleanupResult | null = null;
 
 function check(name: string, condition: boolean, detail: string = "") {
   if (condition) {
@@ -50,6 +50,8 @@ async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
     { label: "orderItem.deleteMany", fn: () => prisma.orderItem.deleteMany({}) },
     { label: "ledgerEntry.deleteMany", fn: () => prisma.ledgerEntry.deleteMany({}) },
     { label: "order.deleteMany", fn: () => prisma.order.deleteMany({}) },
+    { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
+    { label: "fundedAccount.deleteMany", fn: () => prisma.fundedAccount.deleteMany({}) },
     { label: "monitoringJob.deleteMany", fn: () => prisma.monitoringJob.deleteMany({}) },
     { label: "accountAssignment.deleteMany", fn: () => prisma.accountAssignment.deleteMany({}) },
     { label: "evaluation.deleteMany", fn: () => prisma.evaluation.deleteMany({}) },
@@ -59,13 +61,8 @@ async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
     { label: "product.deleteMany", fn: () => prisma.product.deleteMany({}) },
     { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({}) },
     { label: "trader.deleteMany", fn: () => prisma.trader.deleteMany({}) },
-    { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
   ];
   return runCleanupSteps(prisma, steps);
-}
-
-async function resetDb(prisma: PrismaClient): Promise<void> {
-  await cleanup(prisma);
 }
 
 async function createTestTrader(prisma: PrismaClient, email: string) {
@@ -109,7 +106,8 @@ async function createTestMT5Account(
 
 beforeEach(async () => {
   const prisma = new PrismaClient();
-  await resetDb(prisma);
+  cleanupResult = await cleanup(prisma);
+  assertCleanup(cleanupResult, "Funded Account beforeEach");
   await prisma.$disconnect();
 });
 
