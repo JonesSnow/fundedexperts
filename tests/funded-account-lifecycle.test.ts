@@ -605,4 +605,5 @@ after(async () => {
     console.log(`    - ${t.name}: ${t.detail}`);
   }
   await prisma.$disconnect();
+  if (results.fail > 0) process.exit(1);
 });

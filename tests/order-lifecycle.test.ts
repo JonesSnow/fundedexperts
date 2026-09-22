@@ -338,4 +338,5 @@ after(async () => {
     `Order Tests: ${results.pass}/${results.pass + results.fail} passed`,
   );
   await prisma.$disconnect();
+  if (results.fail > 0) process.exit(1);
 });

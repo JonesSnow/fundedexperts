@@ -255,6 +255,7 @@ after(async () => {
     `Evaluations API Tests: ${results.pass}/${results.pass + results.fail} passed, ${results.fail} failed`,
   );
   await prisma.$disconnect();
+  if (results.fail > 0) process.exit(1);
 });
 
 describe("Evaluations API - Authentication", () => {
