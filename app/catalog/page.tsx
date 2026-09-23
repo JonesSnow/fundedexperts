@@ -14,9 +14,23 @@ interface Product {
   displayOrder: number;
 }
 
+interface OrderResult {
+  success: boolean;
+  order?: { id: string; orderNumber: string; status: string; totalAmount: number; currency: string };
+  error?: string;
+}
+
 export default function CatalogPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [purchasing, setPurchasing] = useState(false);
+  const [purchaseError, setPurchaseError] = useState("");
+  const [purchaseSuccess, setPurchaseSuccess] = useState("");
+
+  const [couponCode, setCouponCode] = useState("");
+  const [couponError, setCouponError] = useState("");
+  const [couponValidating, setCouponValidating] = useState(false);
+  const [couponDiscount, setCouponDiscount] = useState(0);
 
   useEffect(() => {
     fetch("/api/products")
@@ -28,6 +42,74 @@ export default function CatalogPage() {
       .catch(() => setLoading(false));
   }, []);
 
+  async function validateCoupon(code: string): Promise<void> {
+    if (!code) {
+      setCouponError("");
+      setCouponDiscount(0);
+      return;
+    }
+    setCouponValidating(true);
+    setCouponError("");
+    setCouponDiscount(0);
+    try {
+      const res = await fetch(`/api/coupons?code=${encodeURIComponent(code)}`);
+      const data = await res.json();
+      if (data.success && data.coupon) {
+        setCouponDiscount(data.coupon.discountPercent);
+      } else {
+        setCouponError(data.error || "Invalid coupon");
+        setCouponDiscount(0);
+      }
+    } catch {
+      setCouponError("Failed to validate coupon");
+      setCouponDiscount(0);
+    } finally {
+      setCouponValidating(false);
+    }
+  }
+
+  async function purchase(product: Product): Promise<OrderResult> {
+    try {
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: product.id,
+          couponCode: couponCode || undefined,
+        }),
+      });
+      const data = (await res.json()) as OrderResult;
+      return data;
+    } catch {
+      return { success: false, error: "Network error" };
+    }
+  }
+
+  async function handlePurchase(product: Product): Promise<void> {
+    setPurchasing(true);
+    setPurchaseError("");
+    setPurchaseSuccess("");
+
+    const result = await purchase(product);
+
+    setPurchasing(false);
+    if (result.success && result.order) {
+      setPurchaseSuccess(`Order ${result.order.orderNumber} created for $${result.order.totalAmount} ${result.order.currency}`);
+      setCouponCode("");
+      setCouponDiscount(0);
+    } else {
+      setPurchaseError(result.error || "Purchase failed");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-8 max-w-6xl mx-auto">
+        <p className="text-gray-500">Loading products...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <h1 className="text-3xl font-bold mb-2">Funded Accounts</h1>
@@ -35,7 +117,22 @@ export default function CatalogPage() {
         Choose a challenge package that fits your goals.
       </p>
 
-      {loading && <p>Loading products...</p>}
+      {purchaseSuccess && (
+        <div className="mb-6 rounded border border-green-200 bg-green-50 p-4 text-sm text-green-700">
+          {purchaseSuccess}
+        </div>
+      )}
+      {purchaseError && (
+        <div className="mb-6 rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {purchaseError}
+        </div>
+      )}
+
+      {couponDiscount > 0 && (
+        <div className="mb-4 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          Coupon applied: {couponDiscount}% discount
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {products.map((product) => (
@@ -64,6 +161,12 @@ export default function CatalogPage() {
                     : "N/A"}
                 </span>
               </div>
+              {couponDiscount > 0 && (
+                <div className="flex justify-between text-green-600">
+                  <span>Discount:</span>
+                  <span className="font-medium">{couponDiscount}% off</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-500">Ruleset:</span>
                 <span className="font-medium">
@@ -78,13 +181,43 @@ export default function CatalogPage() {
                   {product.isActive ? "Active" : "Inactive"}
                 </span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Price after coupon:</span>
+                <span className="font-medium">
+                  {product.price && couponDiscount > 0
+                    ? `$${(product.price * (1 - couponDiscount / 100)).toFixed(2)} ${product.currency}`
+                    : product.price
+                      ? `$${product.price} ${product.currency}`
+                      : "N/A"}
+                </span>
+              </div>
             </div>
-            <button
-              disabled={!product.isActive}
-              className="mt-4 w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {product.isActive ? "Get Started" : "Unavailable"}
-            </button>
+            <div className="mt-4 space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Coupon code"
+                  value={couponCode}
+                  onChange={(e) => setCouponCode(e.target.value)}
+                  onBlur={() => validateCoupon(couponCode)}
+                  disabled={!product.isActive || couponValidating}
+                  className="flex-1 rounded border px-3 py-1.5 text-sm"
+                />
+              </div>
+              {couponValidating && (
+                <p className="text-xs text-gray-500">Validating coupon...</p>
+              )}
+              {couponError && (
+                <p className="text-xs text-red-600">{couponError}</p>
+              )}
+              <button
+                disabled={!product.isActive || purchasing}
+                onClick={() => handlePurchase(product)}
+                className="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {purchasing ? "Processing..." : product.isActive ? "Purchase" : "Unavailable"}
+              </button>
+            </div>
           </div>
         ))}
       </div>
