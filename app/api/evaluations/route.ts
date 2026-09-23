@@ -64,6 +64,8 @@ function safeEvaluation(evaluation: {
       ? {
           id: evaluation.account.id,
           accountNumber: evaluation.account.accountNumber,
+          broker: evaluation.account.broker,
+          server: evaluation.account.server,
           status: evaluation.account.status,
           healthStatus: evaluation.account.healthStatus,
         }

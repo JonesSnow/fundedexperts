@@ -84,7 +84,7 @@ export default function DashboardPage() {
     rulesetName: string | null;
     rulesetVersion: string | null;
     status: string;
-    account: { accountNumber: string; status: string; healthStatus: string } | null;
+    account: { accountNumber: string; broker: string | null; server: string | null; status: string; healthStatus: string } | null;
     startedAt: string;
     completedAt: string | null;
     totalPnl: number | null;
@@ -490,6 +490,8 @@ export default function DashboardPage() {
                           {evalItem.account.accountNumber}
                         </span>{" "}
                         ({evalItem.account.status})
+                        {evalItem.account.broker ? ` · ${evalItem.account.broker}` : ""}
+                        {evalItem.account.server ? ` · ${evalItem.account.server}` : ""}
                       </span>
                     )}
                     {evalItem.totalPnl !== null && evalItem.totalPnl !== undefined && (

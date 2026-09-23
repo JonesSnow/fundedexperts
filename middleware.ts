@@ -31,7 +31,7 @@ export async function middleware(request: NextRequest) {
       select: { id: true, status: true },
     });
 
-    if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
+    if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE" || trader.role !== "ADMIN") {
       const url = new URL("/login", request.url);
       url.searchParams.set("from", pathname);
       return NextResponse.redirect(url);
