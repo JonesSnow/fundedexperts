@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
       firstName: true,
       lastName: true,
       status: true,
+      emailVerified: true,
     },
   });
 

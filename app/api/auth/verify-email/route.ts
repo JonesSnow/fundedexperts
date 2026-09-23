@@ -12,7 +12,7 @@ async function getAuthenticatedUser(request: NextRequest) {
   if (!session) return null;
   return prisma.trader.findUnique({
     where: { id: session.sub },
-    select: { id: true, email: true, role: true, status: true },
+    select: { id: true, email: true, role: true, status: true, emailVerified: true },
   });
 }
 
@@ -23,6 +23,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
         { status: 401 },
+      );
+    }
+
+    if (user.emailVerified) {
+      return NextResponse.json(
+        { success: false, error: "Email already verified" },
+        { status: 400 },
       );
     }
 
