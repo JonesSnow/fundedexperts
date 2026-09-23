@@ -144,6 +144,9 @@ model Trader {
   firstName            String?
   lastName             String?
   status               TraderStatus @default(PENDING)
+  emailVerified        Boolean      @default(false)
+  emailVerificationToken String?
+  emailVerificationExpires DateTime?
   passwordResetToken   String?
   passwordResetExpires DateTime?
   createdAt            DateTime     @default(now())

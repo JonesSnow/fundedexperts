@@ -4,6 +4,7 @@ import { hashPassword } from "@/lib/auth/hash";
 import { validateRegisterInput } from "@/lib/auth/validation";
 import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
+import { randomBytes } from "crypto";
 
 const prisma = new PrismaClient();
 
@@ -51,6 +52,9 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await hashPassword(body.password);
 
+    const verificationToken = randomBytes(32).toString("hex");
+    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
     const trader = await prisma.trader.create({
       data: {
         email: body.email,
@@ -58,6 +62,8 @@ export async function POST(request: NextRequest) {
         role: "TRADER",
         firstName: body.firstName,
         lastName: body.lastName,
+        emailVerificationToken: verificationToken,
+        emailVerificationExpires: verificationExpires,
       },
     });
 
@@ -86,7 +92,7 @@ export async function POST(request: NextRequest) {
     );
 
     return response;
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { success: false, error: "Registration failed" },
       { status: 500 }
