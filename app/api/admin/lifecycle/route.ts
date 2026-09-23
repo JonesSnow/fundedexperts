@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Role, TraderStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 
@@ -36,11 +36,11 @@ export async function GET(request: NextRequest) {
     let customer: {
       id: string;
       email: string;
-      role: string;
+      role: Role;
       firstName: string | null;
       lastName: string | null;
-      status: string;
-      createdAt: string;
+      status: TraderStatus;
+      createdAt: Date;
     } | null = null;
 
     if (customerId) {

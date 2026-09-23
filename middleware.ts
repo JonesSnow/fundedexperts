@@ -28,7 +28,7 @@ export async function middleware(request: NextRequest) {
   try {
     const trader = await prisma.trader.findUnique({
       where: { id: session.sub },
-      select: { id: true, status: true },
+      select: { id: true, status: true, role: true },
     });
 
     if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE" || trader.role !== "ADMIN") {

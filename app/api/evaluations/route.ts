@@ -36,7 +36,7 @@ function safeEvaluation(evaluation: {
   rulesetVersionId: string;
   rulesetVersion: { id: string; version: string; ruleset: { name: string } } | null;
   accountId: string | null;
-  account: { id: string; accountNumber: string; status: string; healthStatus: string } | null;
+  account: { id: string; accountNumber: string; broker: string | null; server: string | null; status: string; healthStatus: string } | null;
   status: string;
   startedAt: Date;
   completedAt: Date | null;
@@ -114,6 +114,8 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             accountNumber: true,
+            broker: true,
+            server: true,
             status: true,
             healthStatus: true,
           },
