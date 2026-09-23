@@ -137,21 +137,21 @@ enum RuleResult {
 }
 
 model Trader {
-  id                   String       @id @default(uuid())
-  email                String       @unique
-  password             String
-  role                 Role         @default(TRADER)
-  firstName            String?
-  lastName             String?
-  status               TraderStatus @default(PENDING)
-  emailVerified        Boolean      @default(false)
-  emailVerificationToken String?
+  id                       String         @id @default(uuid())
+  email                    String         @unique
+  password                 String
+  role                     Role           @default(TRADER)
+  firstName                String?
+  lastName                 String?
+  status                   TraderStatus   @default(PENDING)
+  emailVerified            Boolean        @default(false)
+  emailVerificationToken   String?
   emailVerificationExpires DateTime?
-  passwordResetToken   String?
-  passwordResetExpires DateTime?
-  notifications        Notification[]
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  passwordResetToken       String?
+  passwordResetExpires     DateTime?
+  notifications            Notification[]
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
 
   evaluations    Evaluation[]
   fundedAccounts FundedAccount[]
@@ -159,6 +159,8 @@ model Trader {
   auditLogs      AuditLog[]
   orders         Order[]
   ledgerEntries  LedgerEntry[]
+  coupons        Coupon[]
+  couponUsages   CouponUsage[]
 
   @@index([role])
 }
@@ -484,17 +486,17 @@ enum OrderItemStatus {
 }
 
 model Coupon {
-  id              String       @id @default(uuid())
-  code            String       @unique
+  id              String        @id @default(uuid())
+  code            String        @unique
   discountPercent Int
-  isActive        Boolean      @default(true)
+  isActive        Boolean       @default(true)
   expiresAt       DateTime?
   totalUsageLimit Int?
-  usedCount       Int          @default(0)
+  usedCount       Int           @default(0)
   createdById     String?
-  createdBy       Trader?      @relation(fields: [createdById], references: [id])
+  createdBy       Trader?       @relation(fields: [createdById], references: [id])
   usage           CouponUsage[]
-  createdAt       DateTime     @default(now())
+  createdAt       DateTime      @default(now())
 
   @@index([code])
 }
