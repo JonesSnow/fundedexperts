@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
+import { createLedgerEntry, CreateLedgerEntryInput } from "@/lib/ledger/service";
 
 const prisma = new PrismaClient();
 const logger = createLogger({
@@ -125,6 +126,30 @@ export async function POST(
       data: { status: "PAID" },
     });
 
+    const referenceId = `pay-${paidOrder.id}-${paidOrder.orderNumber}`;
+    const ledgerInput: CreateLedgerEntryInput = {
+      traderId: trader.id,
+      orderId: paidOrder.id,
+      entryType: "CUSTOMER_PAYMENT",
+      amount: paidOrder.totalAmount,
+      direction: "CREDIT",
+      currency: paidOrder.currency,
+      referenceId,
+      metadata: { paymentMethod: method, orderNumber: paidOrder.orderNumber },
+      createdBy: trader.id,
+    };
+
+    const ledgerResult = await createLedgerEntry(ledgerInput);
+
+    if (!ledgerResult.success) {
+      logger.error("PAYMENT", "Failed to create ledger entry for payment", {
+        correlationId,
+        actor: { type: "trader", id: trader.id },
+        entity: { type: "Order", id: paidOrder.id },
+        error: { code: "LEDGER_CREATE_FAILED", message: ledgerResult.error ?? "Unknown" },
+      });
+    }
+
     logger.info("PAYMENT", "Simulated payment completed", {
       correlationId,
       actor: { type: "trader", id: trader.id },
@@ -134,6 +159,7 @@ export async function POST(
         orderNumber: order.orderNumber,
         totalAmount: order.totalAmount,
         currency: order.currency,
+        ledgerEntryId: ledgerResult.ledgerEntry?.id ?? null,
       },
     });
 
