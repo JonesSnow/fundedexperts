@@ -1,6 +1,6 @@
 import {
   PrismaClient,
-  OrderStatus,
+  Prisma,
   Product,
   RulesetVersion,
   Coupon,
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
     }
 
     let coupon: Coupon | null = null;
-    let discountAmount = 0;
+    let discountAmount = new Prisma.Decimal(0);
     if (couponCode && typeof couponCode === "string") {
       coupon = await prisma.coupon.findUnique({ where: { code: couponCode } });
       if (!coupon) {
@@ -131,11 +131,12 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      discountAmount = Number(product.price ?? 0) * (coupon.discountPercent / 100);
+      const price = product.price ?? new Prisma.Decimal(0);
+      discountAmount = price.mul(coupon.discountPercent / 100);
     }
 
-    const subtotal = Number(product.price ?? 0);
-    const totalAmount = Math.max(0, subtotal - discountAmount);
+    const subtotal = product.price ?? new Prisma.Decimal(0);
+    const totalAmount = subtotal.sub(discountAmount).gt(0) ? subtotal.sub(discountAmount) : new Prisma.Decimal(0);
 
     const orderNumber = `ORD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
@@ -145,13 +146,24 @@ export async function POST(request: NextRequest) {
           orderNumber,
           traderId: trader.id,
           rulesetVersionId: rulesetVersion?.id ?? null,
+          status: "PENDING_PAYMENT",
           subtotal,
-          taxAmount: 0,
+          taxAmount: new Prisma.Decimal(0),
           totalAmount,
           currency: product.currency ?? "USD",
           idempotencyKey: idempotencyKey ?? null,
           notes: notes ?? null,
+          orderItems: {
+            create: {
+              productId: product.id,
+              unitPrice: subtotal,
+              currency: product.currency ?? "USD",
+              quantity: 1,
+              status: "PENDING",
+            },
+          },
         },
+        include: { orderItems: true },
       });
 
       if (coupon) {
