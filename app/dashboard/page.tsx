@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Header from "@/components/header";
+import NotificationsPanel from "@/components/notifications-panel";
 
 interface Trader {
   id: string;
@@ -627,6 +628,8 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
+
+        <NotificationsPanel sessionData={sessionData} />
       </main>
     </div>
   );

@@ -1,4 +1,4 @@
-import { PrismaClient, MT5Account, AccountAssignment, Evaluation, AuditAction, MT5AccountPurpose } from "@prisma/client";
+import { Prisma, PrismaClient, MT5Account, AccountAssignment, Evaluation, AuditAction, MT5AccountPurpose } from "@prisma/client";
 import { allocateAccount } from "../lib/allocation";
 import { linkEvaluation, LinkEvaluationInput } from "../lib/evaluation-link";
 import { recoverEvaluationLink } from "../lib/recovery";
@@ -27,7 +27,7 @@ async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
     { label: "ruleset.deleteMany", fn: () => prisma.ruleset.deleteMany({}) },
     { label: "product.deleteMany", fn: () => prisma.product.deleteMany({}) },
     { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({}) },
-    { label: "trader.deleteMany", fn: () => prisma.trader.deleteMany({}) },
+    { label: "trader.truncate", fn: () => prisma.$executeRaw(Prisma.raw(`TRUNCATE TABLE "Trader" CASCADE`)) },
     { label: "auditLog.truncate", fn: () => prisma.$executeRaw`TRUNCATE TABLE "AuditLog" CASCADE` },
   ];
   return runCleanupSteps(prisma, steps);

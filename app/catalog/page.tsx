@@ -26,6 +26,7 @@ export default function CatalogPage() {
   const [purchasing, setPurchasing] = useState(false);
   const [purchaseError, setPurchaseError] = useState("");
   const [purchaseSuccess, setPurchaseSuccess] = useState("");
+  const [productsError, setProductsError] = useState("");
 
   const [couponCode, setCouponCode] = useState("");
   const [couponError, setCouponError] = useState("");
@@ -37,9 +38,13 @@ export default function CatalogPage() {
       .then((res) => res.json())
       .then((data) => {
         setProducts(data.products || []);
-        setLoading(false);
+        setProductsError("");
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setProductsError("Failed to load products. Please try again later.");
+        setProducts([]);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   async function validateCoupon(code: string): Promise<void> {
@@ -112,6 +117,12 @@ export default function CatalogPage() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
+      {productsError && (
+        <div className="mb-6 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {productsError}
+        </div>
+      )}
+
       <h1 className="text-3xl font-bold mb-2">Funded Accounts</h1>
       <p className="text-gray-600 mb-8">
         Choose a challenge package that fits your goals.

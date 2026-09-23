@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
+import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { sendVerificationEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
@@ -24,6 +25,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
         { status: 401 },
+      );
+    }
+
+    const rateLimit = checkRateLimit(`verify-email:${user.id}`);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many attempts. Try again later." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfter) },
+        },
       );
     }
 

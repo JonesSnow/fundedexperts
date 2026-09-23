@@ -35,8 +35,28 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const { searchParams } = new URL(request.url);
+    const traderIdParam = searchParams.get("traderId");
+
+    let where: { traderId: string };
+    if (traderIdParam && trader.role === "ADMIN") {
+      const target = await prisma.trader.findUnique({
+        where: { id: traderIdParam },
+        select: { id: true },
+      });
+      if (!target) {
+        return NextResponse.json(
+          { success: false, error: "Trader not found" },
+          { status: 404 },
+        );
+      }
+      where = { traderId: traderIdParam };
+    } else {
+      where = { traderId: trader.id };
+    }
+
     const notifications = await prisma.notification.findMany({
-      where: { traderId: trader.id },
+      where,
       orderBy: { createdAt: "desc" },
     });
 

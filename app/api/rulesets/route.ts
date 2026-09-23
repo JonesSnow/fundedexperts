@@ -22,7 +22,22 @@ async function getAuthenticatedUser(request: NextRequest) {
 export async function GET(request: NextRequest) {
   const rulesets = await prisma.ruleset.findMany({
     where: { isActive: true },
-    include: { versions: { orderBy: { version: "desc" } } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      versions: {
+        select: {
+          id: true,
+          version: true,
+          status: true,
+        },
+        where: {
+          status: "PUBLISHED",
+        },
+        orderBy: { version: "desc" },
+      },
+    },
   });
 
   return NextResponse.json({ success: true, rulesets }, { status: 200 });

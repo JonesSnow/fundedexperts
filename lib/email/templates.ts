@@ -28,6 +28,18 @@ export async function sendPasswordResetEmail(to: string, token: string): Promise
   return result;
 }
 
+export async function sendWelcomeEmail(to: string): Promise<{ success: boolean; error?: string }> {
+  const text = `Welcome to Funded Experts!\n\nYour account has been created. Please verify your email address to get started.\n\nIf you have any questions, contact support.\n\nThank you for joining Funded Experts.`;
+
+  const result = await sendEmail({
+    to,
+    subject: "Welcome to Funded Experts",
+    text,
+  });
+
+  return result;
+}
+
 export async function sendNotificationEmail(to: string, title: string, message: string): Promise<{ success: boolean; error?: string }> {
   const text = `${title}\n\n${message}`;
 

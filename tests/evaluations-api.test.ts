@@ -1,6 +1,7 @@
 import { describe, it, after, beforeEach } from "node:test";
 import bcrypt from "bcrypt";
 import {
+  Prisma,
   PrismaClient,
   EvaluationStatus,
   RuleResult,
@@ -46,7 +47,7 @@ async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
     { label: "ruleset.deleteMany", fn: () => prisma.ruleset.deleteMany({}) },
     { label: "product.deleteMany", fn: () => prisma.product.deleteMany({}) },
     { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({}) },
-    { label: "trader.deleteMany", fn: () => prisma.trader.deleteMany({}) },
+    { label: "trader.truncate", fn: () => prisma.$executeRaw(Prisma.raw(`TRUNCATE TABLE "Trader" CASCADE`)) },
   ];
   return runCleanupSteps(prisma, steps);
 }
