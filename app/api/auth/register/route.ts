@@ -5,6 +5,7 @@ import { validateRegisterInput } from "@/lib/auth/validation";
 import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { randomBytes } from "crypto";
+import { sendVerificationEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
 
@@ -68,6 +69,8 @@ export async function POST(request: NextRequest) {
     });
 
     resetRateLimit(`register:${body.email}`);
+
+    await sendVerificationEmail(trader.email, verificationToken);
 
     const token = await createSession(trader.id, trader.role);
 

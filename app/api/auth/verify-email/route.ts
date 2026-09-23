@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
+import { sendVerificationEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
 
@@ -43,6 +44,8 @@ export async function POST(request: NextRequest) {
         emailVerificationExpires: expires,
       },
     });
+
+    await sendVerificationEmail(user.email, token);
 
     return NextResponse.json(
       { success: true, message: "Verification email sent" },
