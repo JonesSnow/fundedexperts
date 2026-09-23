@@ -30,9 +30,19 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  try {
+    try {
     const coupon = await prisma.coupon.findUnique({
       where: { code },
+      select: {
+        id: true,
+        code: true,
+        discountPercent: true,
+        isActive: true,
+        expiresAt: true,
+        totalUsageLimit: true,
+        usedCount: true,
+        createdAt: true,
+      },
     });
 
     if (!coupon) {
