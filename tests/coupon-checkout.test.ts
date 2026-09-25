@@ -1,5 +1,5 @@
 import { describe, it, beforeEach, after } from "node:test";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { runCleanupSteps, assertCleanup, type CleanupResult } from "../lib/cleanup-helper";
 

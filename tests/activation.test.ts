@@ -1,6 +1,6 @@
 import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { PrismaClient, OrderStatus } from "@prisma/client";
 import { createMockPaymentProvider } from "../lib/mock-payment-provider";
 import { activateEvaluation } from "../lib/activation";

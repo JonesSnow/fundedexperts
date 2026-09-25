@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { runCleanupSteps, assertCleanup, type CleanupResult } from "../lib/cleanup-helper";
 import { createLedgerEntry, CreateLedgerEntryInput } from "../lib/ledger/service";

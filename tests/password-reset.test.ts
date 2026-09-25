@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { PrismaClient, Prisma } from "@prisma/client";
 
 const prisma = new PrismaClient();

@@ -1,5 +1,5 @@
 import { describe, it, after, beforeEach } from "node:test";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import {
   Prisma,
   PrismaClient,
