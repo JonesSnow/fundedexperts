@@ -24,6 +24,13 @@ function getTransporter(): { transporter: Transporter; config: EmailConfig } | n
       user: config.user,
       pass: config.password,
     },
+    connectionTimeout: 5000,
+    greetingsTimeout: 5000,
+    socketTimeout: 10000,
+  } as Parameters<typeof nodemailer.createTransport>[0] & {
+    connectionTimeout?: number;
+    greetingsTimeout?: number;
+    socketTimeout?: number;
   });
 
   cachedTransporter = transporter;

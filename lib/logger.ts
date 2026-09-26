@@ -50,7 +50,7 @@ function isSensitive(key: string): boolean {
   return SENSITIVE_PATTERNS.some((p) => p.test(key));
 }
 
-function sanitizeSensitiveValue(value: string): string {
+export function sanitizeSensitiveValue(value: string): string {
   return value
     .replace(/password\s*[=:]\s*\S+/gi, "password=***REDACTED***")
     .replace(/token\s*[=:]\s*\S+/gi, "token=***REDACTED***")

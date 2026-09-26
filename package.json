@@ -13,7 +13,7 @@
     "prisma:studio": "prisma studio",
     "prisma:format": "prisma format",
     "prisma:validate": "prisma validate",
-    "test": "tsx tests/auth.test.ts && tsx tests/business-emails.test.ts && tsx tests/email-templates.test.ts && tsx tests/email-verification.test.ts && tsx tests/password-reset.test.ts && tsx tests/mt5-accounts.test.ts && tsx tests/products-and-rulesets.test.ts && tsx tests/mt5-accounts.integration.test.ts"
+    "test": "tsx tests/auth.test.ts && tsx tests/business-emails.test.ts && tsx tests/email-templates.test.ts && tsx tests/email-provider.test.ts && tsx tests/email-verification.test.ts && tsx tests/password-reset.test.ts && tsx tests/mt5-accounts.test.ts && tsx tests/products-and-rulesets.test.ts && tsx tests/mt5-accounts.integration.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

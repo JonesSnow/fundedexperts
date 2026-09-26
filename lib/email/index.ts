@@ -2,7 +2,8 @@ import { PrismaClient, EmailDeliveryStatus, EmailProviderType } from "@prisma/cl
 import { EmailMessage, EmailSendResult, EmailEventType, EmailSendOptions, EmailProvider } from "./types";
 import { GmailSmtpProvider } from "./provider";
 import { ConsoleProvider } from "./console-provider";
-import { getEmailConfig, validateEmailConfig } from "./config";
+import { sanitizeSensitiveValue } from "../logger";
+import { getEmailConfig, validateEmailConfig, EmailConfig } from "./config";
 import { createLogger } from "@/lib/logger";
 import type { EmailDelivery } from "@prisma/client";
 
@@ -17,8 +18,8 @@ const PROVIDER_MAP: Record<EmailProvider, EmailProviderType> = {
   none: "NONE",
 };
 
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [1000, 2000, 5000];
+export const MAX_RETRIES = 3;
+export const RETRY_DELAYS = [500, 1000];
 
 function getProvider(): { provider: GmailSmtpProvider | ConsoleProvider; configValid: boolean } {
   const config = getEmailConfig();
@@ -39,7 +40,23 @@ export async function sendEmail(
   message: EmailMessage,
   options?: EmailSendOptions
 ): Promise<EmailSendResult> {
-  const config = getEmailConfig();
+  let config: EmailConfig;
+  try {
+    config = getEmailConfig();
+  } catch (configError) {
+    const errMsg = configError instanceof Error ? configError.message : "Email configuration invalid";
+    logger.error("EMAIL", "Email configuration error", {
+      metadata: {
+        template: message.templateId,
+        recipientDomain: extractDomain(message.to),
+        error: errMsg,
+      },
+    });
+    return {
+      success: false,
+      error: "Email configuration invalid",
+    };
+  }
 
   if (config.provider === "console" && process.env.NODE_ENV === "production") {
     logger.error("EMAIL", "Console email mode is not allowed in production", {
@@ -118,7 +135,10 @@ export async function sendEmail(
       },
     });
 
-    const result = await provider.send(message);
+    const result = await provider.send(message).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false as const, error: msg };
+    });
 
     if (result.success) {
       await prisma.emailDelivery.update({
@@ -158,28 +178,30 @@ export async function sendEmail(
     }
   }
 
+  const sanitizedError = lastError ? sanitizeSensitiveValue(lastError) : undefined;
+
   await prisma.emailDelivery.update({
     where: { id: delivery.id },
     data: {
       status: "FAILED",
       failedAt: new Date(),
-      failureReason: lastError ?? "Unknown error after retries",
+      failureReason: sanitizedError ?? "Unknown error after retries",
     },
   });
 
   logger.error("EMAIL", "Email delivery failed after retries", {
     metadata: {
       template: message.templateId,
-       provider: PROVIDER_MAP[config.provider],
-       recipientDomain: extractDomain(message.to),
+      provider: PROVIDER_MAP[config.provider],
+      recipientDomain: extractDomain(message.to),
       attempts: attempt,
-      error: lastError,
+      error: sanitizedError,
     },
   });
 
   return {
     success: false,
-    error: lastError ?? "Email delivery failed",
+    error: sanitizedError ?? "Email delivery failed",
     deliveryId: delivery.id,
   };
 }
