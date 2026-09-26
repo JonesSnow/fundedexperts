@@ -124,9 +124,6 @@ export async function GET(
             rule: { select: { ruleType: true, name: true } },
           },
         },
-        order: {
-          select: { id: true, orderNumber: true, status: true, totalAmount: true, currency: true },
-        },
       },
     });
 

@@ -11,25 +11,25 @@ describe("Email Templates", () => {
   it("should render verification email", async () => {
     const result = await sendVerificationEmail("test@example.com", "abc123");
     check(result.success === true || result.success === false, "Verification email returned result", "");
-    if (!result.success) check(result.error, "Error message present", "");
+    if (!result.success) check(result.error !== undefined, "Error message present", "");
   });
 
   it("should render password reset email", async () => {
     const result = await sendPasswordResetEmail("test@example.com", "xyz789");
     check(result.success === true || result.success === false, "Reset email returned result", "");
-    if (!result.success) check(result.error, "Error message present", "");
+    if (!result.success) check(result.error !== undefined, "Error message present", "");
   });
 
   it("should render welcome email", async () => {
     const result = await sendWelcomeEmail("test@example.com");
     check(result.success === true || result.success === false, "Welcome email returned result", "");
-    if (!result.success) check(result.error, "Error message present", "");
+    if (!result.success) check(result.error !== undefined, "Error message present", "");
   });
 
   it("should render notification email", async () => {
     const result = await sendNotificationEmail("test@example.com", "Test Title", "Test message body");
     check(result.success === true || result.success === false, "Notification email returned result", "");
-    if (!result.success) check(result.error, "Error message present", "");
+    if (!result.success) check(result.error !== undefined, "Error message present", "");
   });
 
   it("should include link in verification email", async () => {

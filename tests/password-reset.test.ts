@@ -29,6 +29,7 @@ describe("Password Reset", () => {
     await prisma.$executeRaw(Prisma.raw(`TRUNCATE TABLE "Notification" CASCADE`));
     await prisma.$executeRaw(Prisma.raw(`TRUNCATE TABLE "Trader" CASCADE`));
     const trader = await createTraderForReset("reset-test@example.com");
+    assert(trader.passwordResetToken);
     testTraderId = trader.id;
     testToken = trader.passwordResetToken;
   });

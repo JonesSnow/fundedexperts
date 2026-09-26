@@ -7,7 +7,7 @@ import { allocateAccount, AllocateAccountResult } from "@/lib/allocation";
 
 const prisma = new PrismaClient();
 const logger = createLogger({
-  environment: process.env.NODE_ENV as "development" | "production" | "test",
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
 });
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -113,7 +113,9 @@ export async function POST(
         correlationId,
         actor: { type: "trader", id: trader.id },
         entity: { type: "Order", id: order.id },
-        error: { code: "ALLOCATION_FAILED", message: allocationResult.error },
+        metadata: {
+          error: { code: "ALLOCATION_FAILED", message: allocationResult.error },
+        },
       });
       return NextResponse.json(
         { success: false, error: allocationResult.error },

@@ -9,7 +9,7 @@ import { createLedgerEntry } from "@/lib/ledger/service";
 
 const prisma = new PrismaClient();
 const logger = createLogger({
-  environment: process.env.NODE_ENV as "development" | "production" | "test",
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
 });
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -188,15 +188,16 @@ export async function POST(
           where: { evaluationId: evaluation.id },
         });
         if (existingRules.length === 0) {
+          const evaluationId = evaluation.id;
           await prisma.$transaction(async (tx) => {
             for (const rule of rulesetVersion.rules) {
               await tx.ruleEvaluation.create({
                 data: {
-                  evaluationId: evaluation.id,
+                  evaluationId,
                   ruleId: rule.id,
                   result: "PASS",
-                  actualValue: null,
-                  expectedValue: null,
+                  actualValue: Prisma.JsonNull,
+                  expectedValue: Prisma.JsonNull,
                   details: "Initial state - awaiting monitoring",
                   evaluatedAt: new Date(),
                 },
@@ -225,7 +226,9 @@ export async function POST(
         correlationId,
         actor: { type: "trader", id: trader.id },
         entity: { type: "Order", id: order.id },
-        error: { code: "LEDGER_CREATE_FAILED", message: ledgerResult.error ?? "Unknown" },
+        metadata: {
+          error: { code: "LEDGER_CREATE_FAILED", message: ledgerResult.error ?? "Unknown" },
+        },
       });
     }
 

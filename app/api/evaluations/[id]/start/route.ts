@@ -6,7 +6,7 @@ import { createLogger, generateCorrelationId } from "@/lib/logger";
 
 const prisma = new PrismaClient();
 const logger = createLogger({
-  environment: process.env.NODE_ENV as "development" | "production" | "test",
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
 });
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -61,7 +61,6 @@ export async function POST(
       include: {
         account: true,
         rulesetVersion: { include: { ruleset: true, rules: true } },
-        order: true,
       },
     });
 
@@ -113,8 +112,8 @@ export async function POST(
               evaluationId: evaluation.id,
               ruleId: rule.id,
               result: "PASS",
-              actualValue: null,
-              expectedValue: null,
+              actualValue: Prisma.JsonNull,
+              expectedValue: Prisma.JsonNull,
               details: "Initial state - awaiting monitoring",
               evaluatedAt: new Date(),
             },
