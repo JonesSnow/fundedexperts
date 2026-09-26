@@ -1,6 +1,6 @@
 import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { PrismaClient, OrderStatus } from "@prisma/client";
 import { createMockPaymentProvider } from "../lib/mock-payment-provider";
 import { activateEvaluation } from "../lib/activation";
@@ -18,7 +18,7 @@ const results = {
   fail: 0,
   tests: [] as Array<{ name: string; result: string; detail: string }>,
 };
-let cleanupResult: CleanupResult | null = null;
+const cleanupResult: CleanupResult | null = null;
 
 function check(name: string, condition: boolean, detail: string = "") {
   if (condition) {
@@ -473,4 +473,5 @@ after(async () => {
     `Activation Tests: ${results.pass}/${results.pass + results.fail} passed`,
   );
   await prisma.$disconnect();
+  if (results.fail > 0) process.exit(1);
 });

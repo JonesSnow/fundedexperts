@@ -1,8 +1,10 @@
 import {
   PrismaClient,
-  OrderStatus,
+  Prisma,
   Product,
   RulesetVersion,
+  Coupon,
+  CouponUsage,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
@@ -13,6 +15,8 @@ const prisma = new PrismaClient();
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
 });
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "http://localhost:3000";
 
 export async function POST(request: NextRequest) {
   const correlationId = generateCorrelationId();
@@ -45,7 +49,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { productId, rulesetVersionId, idempotencyKey, notes } = body;
+    const { productId, rulesetVersionId, idempotencyKey, notes, couponCode } = body;
 
     if (idempotencyKey) {
       const existing = await prisma.order.findUnique({
@@ -99,20 +103,84 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    let coupon: Coupon | null = null;
+    let discountAmount = new Prisma.Decimal(0);
+    if (couponCode && typeof couponCode === "string") {
+      coupon = await prisma.coupon.findUnique({ where: { code: couponCode } });
+      if (!coupon) {
+        return NextResponse.json(
+          { success: false, error: "Invalid coupon code" },
+          { status: 400 },
+        );
+      }
+      if (!coupon.isActive) {
+        return NextResponse.json(
+          { success: false, error: "Coupon is inactive" },
+          { status: 400 },
+        );
+      }
+      if (coupon.expiresAt && coupon.expiresAt < new Date()) {
+        return NextResponse.json(
+          { success: false, error: "Coupon has expired" },
+          { status: 400 },
+        );
+      }
+      if (coupon.totalUsageLimit !== null && coupon.totalUsageLimit !== undefined && coupon.usedCount >= coupon.totalUsageLimit) {
+        return NextResponse.json(
+          { success: false, error: "Coupon usage limit reached" },
+          { status: 400 },
+        );
+      }
+      const price = product.price ?? new Prisma.Decimal(0);
+      discountAmount = price.mul(coupon.discountPercent / 100);
+    }
+
+    const subtotal = product.price ?? new Prisma.Decimal(0);
+    const totalAmount = subtotal.sub(discountAmount).gt(0) ? subtotal.sub(discountAmount) : new Prisma.Decimal(0);
+
     const orderNumber = `ORD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
-    const order = await prisma.order.create({
-      data: {
-        orderNumber,
-        traderId: trader.id,
-        rulesetVersionId: rulesetVersion?.id ?? null,
-        subtotal: product.price ?? 0,
-        taxAmount: 0,
-        totalAmount: product.price ?? 0,
-        currency: product.currency ?? "USD",
-        idempotencyKey: idempotencyKey ?? null,
-        notes: notes ?? null,
-      },
+    const order = await prisma.$transaction(async (tx) => {
+      const createdOrder = await tx.order.create({
+        data: {
+          orderNumber,
+          traderId: trader.id,
+          rulesetVersionId: rulesetVersion?.id ?? null,
+          status: "PENDING_PAYMENT",
+          subtotal,
+          taxAmount: new Prisma.Decimal(0),
+          totalAmount,
+          currency: product.currency ?? "USD",
+          idempotencyKey: idempotencyKey ?? null,
+          notes: notes ?? null,
+          orderItems: {
+            create: {
+              productId: product.id,
+              unitPrice: subtotal,
+              currency: product.currency ?? "USD",
+              quantity: 1,
+              status: "PENDING",
+            },
+          },
+        },
+        include: { orderItems: true },
+      });
+
+      if (coupon) {
+        await tx.couponUsage.create({
+          data: {
+            couponId: coupon.id,
+            traderId: trader.id,
+            orderId: createdOrder.id,
+          },
+        });
+        await tx.coupon.update({
+          where: { id: coupon.id },
+          data: { usedCount: { increment: 1 } },
+        });
+      }
+
+      return createdOrder;
     });
 
     logger.info("ORDER", "Order created", {
@@ -125,6 +193,8 @@ export async function POST(request: NextRequest) {
         totalAmount: order.totalAmount,
         currency: order.currency,
         rulesetVersionId: order.rulesetVersionId,
+        couponCode: coupon?.code ?? null,
+        discountAmount,
       },
     });
 
@@ -210,6 +280,9 @@ function validateOrderInput(body: Record<string, unknown>): {
     typeof body.rulesetVersionId !== "string"
   ) {
     errors.rulesetVersionId = "Ruleset version ID must be a string";
+  }
+  if (body.couponCode !== undefined && typeof body.couponCode !== "string") {
+    errors.couponCode = "Coupon code must be a string";
   }
   return { valid: Object.keys(errors).length === 0, errors };
 }

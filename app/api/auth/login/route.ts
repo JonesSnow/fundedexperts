@@ -9,8 +9,8 @@ const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
-    const email = (await request.json()).email as string | undefined;
-    const rateLimit = checkRateLimit(`login:${email || "unknown"}`);
+    const body = await request.json();
+    const rateLimit = checkRateLimit(`login:${body.email || "unknown"}`);
 
     if (!rateLimit.allowed) {
       return NextResponse.json(
@@ -22,7 +22,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
     const validation = validateLoginInput({
       email: body.email,
       password: body.password,

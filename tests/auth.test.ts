@@ -1,9 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 import { createSession, getSession, SESSION_COOKIE } from "../lib/auth/session";
-import { hashPassword } from "../lib/auth/hash";
+import { hashPassword, verifyPassword } from "../lib/auth/hash";
 import { validateEmail, validatePassword, validateRegisterInput, validateLoginInput } from "../lib/auth/validation";
 
 const PASSWORD = "TestPass123";
@@ -49,6 +49,21 @@ describe("Password Hashing", () => {
     assert.notEqual(hash, PASSWORD);
     assert.equal(await bcrypt.compare(PASSWORD, hash), true);
     assert.equal(await bcrypt.compare("WrongPass123", hash), false);
+  });
+
+  it("should hash and verify via hashPassword utility", async () => {
+    const hash = await hashPassword(PASSWORD);
+    assert.notEqual(hash, PASSWORD);
+    assert.equal(await verifyPassword(PASSWORD, hash), true);
+    assert.equal(await verifyPassword("WrongPass123", hash), false);
+  });
+
+  it("should produce bcrypt-compatible hashes ($2b$ format) from hashPassword", async () => {
+    const hash = await hashPassword(PASSWORD);
+    assert.match(hash, /^\$2b\$12\$/);
+    const legacyHash = await bcrypt.hash(PASSWORD, 12);
+    assert.equal(await verifyPassword(PASSWORD, legacyHash), true);
+    assert.equal(await bcrypt.compare(PASSWORD, hash), true);
   });
 });
 
@@ -139,7 +154,7 @@ describe("Account Status Enforcement", () => {
   });
 
   it("should enforce account status check in session lookup", async () => {
-    const bcrypt = await import("bcrypt");
+    const bcrypt = await import("bcryptjs");
     const { PrismaClient } = await import("@prisma/client");
       const { createSession, getSession } = await import(
       "../lib/auth/session"

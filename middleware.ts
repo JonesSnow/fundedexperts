@@ -28,10 +28,16 @@ export async function middleware(request: NextRequest) {
   try {
     const trader = await prisma.trader.findUnique({
       where: { id: session.sub },
-      select: { id: true, status: true },
+      select: { id: true, status: true, role: true },
     });
 
     if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
+      const url = new URL("/login", request.url);
+      url.searchParams.set("from", pathname);
+      return NextResponse.redirect(url);
+    }
+
+    if (pathname.startsWith("/admin") && trader.role !== "ADMIN") {
       const url = new URL("/login", request.url);
       url.searchParams.set("from", pathname);
       return NextResponse.redirect(url);
@@ -48,3 +54,5 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: ["/admin/:path*", "/dashboard/:path*"],
 };
+
+export const runtime = "nodejs";

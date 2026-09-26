@@ -18,6 +18,7 @@ interface Product {
 export default function ProductShowcase() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetch("/api/products")
@@ -26,6 +27,7 @@ export default function ProductShowcase() {
         setProducts(data.products || []);
       })
       .catch(() => {
+        setError("Failed to load products. Please try again later.");
         setProducts([]);
       })
       .finally(() => setLoading(false));
@@ -33,6 +35,14 @@ export default function ProductShowcase() {
 
   if (loading) {
     return <p className="py-8 text-center text-gray-500">Loading products…</p>;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded border border-red-200 bg-red-50 p-4 text-center text-sm text-red-700">
+        {error}
+      </div>
+    );
   }
 
   if (products.length === 0) {
@@ -53,7 +63,7 @@ export default function ProductShowcase() {
             {product.description || "No description available"}
           </p>
           <div className="mt-4 space-y-1 text-sm">
-            {product.accountSize && (
+            {product.accountSize != null && (
               <div className="flex justify-between">
                 <span className="text-gray-500">Account Size</span>
                 <span className="font-medium">
@@ -61,7 +71,7 @@ export default function ProductShowcase() {
                 </span>
               </div>
             )}
-            {product.price && (
+            {product.price != null && (
               <div className="flex justify-between">
                 <span className="text-gray-500">Price</span>
                 <span className="font-medium">

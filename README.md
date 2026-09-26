@@ -54,9 +54,14 @@ docker-compose up -d
 | Start production | `pnpm start` |
 | Lint | `pnpm lint` |
 | Type check | `pnpm tsc --noEmit` |
+| Run tests (sequential) | `node scripts/run-tests.js npx tsx tests/<file>.ts` |
 | Prisma migrate | `cd prisma && npx prisma migrate dev` |
 | Prisma generate | `cd prisma && npx prisma generate` |
 | Prisma studio | `cd prisma && npx prisma studio` |
+
+**Note:** Full `tsc --noEmit` and `next build` may exceed memory limits in constrained environments. Run type checks on individual files via IDE or use `npx tsc --noEmit` on specific directories.
+
+**Note:** Tests share a database. Run test files sequentially, not in parallel. Use `node scripts/run-tests.js npx tsx tests/<file>.ts` for one file at a time.
 
 ## Project Structure
 
@@ -82,4 +87,4 @@ public/           Static assets
 
 ## Current Implementation Phase
 
-**Phase 1: Foundation** — Project scaffolding, tooling configuration, and environment setup. No business features implemented yet.
+**Phase 21: Baseline Audit** — Comprehensive platform audit covering authentication, products, rulesets, MT5 accounts, monitoring, orders, coupons, notifications, security, and test infrastructure. Commercial global prop-firm platform.

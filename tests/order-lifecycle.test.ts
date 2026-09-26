@@ -1,6 +1,6 @@
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { PrismaClient, OrderStatus } from "@prisma/client";
 import { validateCreateOrderInput } from "../lib/order-validation";
 import {
@@ -338,4 +338,5 @@ after(async () => {
     `Order Tests: ${results.pass}/${results.pass + results.fail} passed`,
   );
   await prisma.$disconnect();
+  if (results.fail > 0) process.exit(1);
 });

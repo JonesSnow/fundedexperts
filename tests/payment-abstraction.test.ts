@@ -154,4 +154,5 @@ after(() => {
   console.log(
     `Payment Tests: ${results.pass}/${results.pass + results.fail} passed`,
   );
+  if (results.fail > 0) process.exit(1);
 });

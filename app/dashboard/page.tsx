@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Header from "@/components/header";
+import NotificationsPanel from "@/components/notifications-panel";
 
 interface Trader {
   id: string;
@@ -84,7 +85,7 @@ export default function DashboardPage() {
     rulesetName: string | null;
     rulesetVersion: string | null;
     status: string;
-    account: { accountNumber: string; status: string; healthStatus: string } | null;
+    account: { accountNumber: string; broker: string | null; server: string | null; status: string; healthStatus: string } | null;
     startedAt: string;
     completedAt: string | null;
     totalPnl: number | null;
@@ -184,7 +185,7 @@ export default function DashboardPage() {
           const res = await fetch("/api/evaluations");
           if (res.ok) {
             const data = await res.json();
-            if (!cancelled) setEvaluations((data as { evaluations?: Array<{ id: string; rulesetName: string | null; rulesetVersion: string | null; status: string; account: { accountNumber: string; status: string; healthStatus: string } | null; startedAt: string; completedAt: string | null; totalPnl: number | null; rulePassedCount: number; ruleFailedCount: number; ruleWarningCount: number }> }).evaluations || []);
+            if (!cancelled) setEvaluations((data as { evaluations?: Array<{ id: string; rulesetName: string | null; rulesetVersion: string | null; status: string; account: { accountNumber: string; broker: string | null; server: string | null; status: string; healthStatus: string } | null; startedAt: string; completedAt: string | null; totalPnl: number | null; rulePassedCount: number; ruleFailedCount: number; ruleWarningCount: number }> }).evaluations || []);
           } else {
             const body = await res.json().catch(() => ({}));
             if (!cancelled) setEvaluationsError((body as { error?: string }).error || "Failed to load evaluations");
@@ -490,6 +491,8 @@ export default function DashboardPage() {
                           {evalItem.account.accountNumber}
                         </span>{" "}
                         ({evalItem.account.status})
+                        {evalItem.account.broker ? ` · ${evalItem.account.broker}` : ""}
+                        {evalItem.account.server ? ` · ${evalItem.account.server}` : ""}
                       </span>
                     )}
                     {evalItem.totalPnl !== null && evalItem.totalPnl !== undefined && (
@@ -625,6 +628,8 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
+
+        <NotificationsPanel sessionData={sessionData} />
       </main>
     </div>
   );

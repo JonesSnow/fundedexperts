@@ -137,17 +137,21 @@ enum RuleResult {
 }
 
 model Trader {
-  id                   String       @id @default(uuid())
-  email                String       @unique
-  password             String
-  role                 Role         @default(TRADER)
-  firstName            String?
-  lastName             String?
-  status               TraderStatus @default(PENDING)
-  passwordResetToken   String?
-  passwordResetExpires DateTime?
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  id                       String         @id @default(uuid())
+  email                    String         @unique
+  password                 String
+  role                     Role           @default(TRADER)
+  firstName                String?
+  lastName                 String?
+  status                   TraderStatus   @default(PENDING)
+  emailVerified            Boolean        @default(false)
+  emailVerificationToken   String?
+  emailVerificationExpires DateTime?
+  passwordResetToken       String?
+  passwordResetExpires     DateTime?
+  notifications            Notification[]
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
 
   evaluations    Evaluation[]
   fundedAccounts FundedAccount[]
@@ -155,8 +159,25 @@ model Trader {
   auditLogs      AuditLog[]
   orders         Order[]
   ledgerEntries  LedgerEntry[]
+  coupons        Coupon[]
+  couponUsages   CouponUsage[]
 
   @@index([role])
+}
+
+model Notification {
+  id                String   @id @default(uuid())
+  traderId          String
+  trader            Trader   @relation(fields: [traderId], references: [id])
+  type              String
+  title             String
+  message           String
+  read              Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  relatedEntityType String?
+  relatedEntityId   String?
+
+  @@index([traderId, read])
 }
 
 model Product {
@@ -462,6 +483,34 @@ enum OrderItemStatus {
   ACTIVE
   CANCELLED
   FAILED
+}
+
+model Coupon {
+  id              String        @id @default(uuid())
+  code            String        @unique
+  discountPercent Int
+  isActive        Boolean       @default(true)
+  expiresAt       DateTime?
+  totalUsageLimit Int?
+  usedCount       Int           @default(0)
+  createdById     String?
+  createdBy       Trader?       @relation(fields: [createdById], references: [id])
+  usage           CouponUsage[]
+  createdAt       DateTime      @default(now())
+
+  @@index([code])
+}
+
+model CouponUsage {
+  id        String   @id @default(uuid())
+  couponId  String
+  coupon    Coupon   @relation(fields: [couponId], references: [id])
+  traderId  String
+  trader    Trader   @relation(fields: [traderId], references: [id])
+  orderId   String?
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, traderId, orderId])
 }
 
 model AuditLog {

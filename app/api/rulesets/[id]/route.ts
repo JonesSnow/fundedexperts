@@ -25,9 +25,25 @@ export async function GET(
 ) {
   const { id } = await params;
   const ruleset = await prisma.ruleset.findUnique({
-    where: { id },
-    include: {
-      versions: { orderBy: { version: "desc" } },
+    where: {
+      id,
+      isActive: true,
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      versions: {
+        select: {
+          id: true,
+          version: true,
+          status: true,
+        },
+        where: {
+          status: "PUBLISHED",
+        },
+        orderBy: { version: "desc" },
+      },
     },
   });
 

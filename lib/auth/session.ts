@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { SignJWT, jwtVerify } from "jose";
 
 const JWT_SECRET_VALUE = process.env.JWT_SECRET;
@@ -38,11 +39,9 @@ export async function getSession(token: string): Promise<SessionPayload | null> 
   }
 }
 
-export function getSessionCookie(request: Request): string | null {
-  const cookieHeader = request.headers.get("cookie");
-  if (!cookieHeader) return null;
-  const match = cookieHeader.match(/(?:^|;\s*)session=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
+export function getSessionCookie(request: NextRequest): string | null {
+  const sessionCookie = request.cookies.get(SESSION_COOKIE);
+  return sessionCookie ? sessionCookie.value : null;
 }
 
 export function getSessionCookieOptions(): {
