@@ -50,6 +50,31 @@ function isSensitive(key: string): boolean {
   return SENSITIVE_PATTERNS.some((p) => p.test(key));
 }
 
+function sanitizeSensitiveValue(value: string): string {
+  return value
+    .replace(/password\s*[=:]\s*\S+/gi, "password=***REDACTED***")
+    .replace(/token\s*[=:]\s*\S+/gi, "token=***REDACTED***")
+    .replace(/secret\s*[=:]\s*\S+/gi, "secret=***REDACTED***")
+    .replace(/api[_-]?key\s*[=:]\s*\S+/gi, "apiKey=***REDACTED***")
+    .replace(/credential[s]?\s*[=:]\s*\S+/gi, "credentials=***REDACTED***")
+    .replace(/authorization\s*[=:]\s*\S+/gi, "authorization=***REDACTED***")
+    .replace(/Bearer\s+\S+/gi, "Bearer ***REDACTED***");
+}
+
+function sanitizeError(err: LogError): LogError {
+  const result: Record<string, unknown> = { code: err.code };
+
+  if (typeof err.message === "string") {
+    result.message = sanitizeSensitiveValue(err.message);
+  }
+
+  if (typeof err.stack === "string") {
+    result.stack = err.stack;
+  }
+
+  return result as unknown as LogError;
+}
+
 function sanitize(value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") return value;
@@ -90,7 +115,7 @@ function buildEntry(
   if (opts?.actor) entry.actor = opts.actor;
   if (opts?.entity) entry.entity = opts.entity;
   if (opts?.metadata) entry.metadata = sanitize(opts.metadata) as Record<string, unknown>;
-  if (opts?.error) entry.error = opts.error;
+  if (opts?.error) entry.error = sanitizeError(opts.error);
   return entry;
 }
 

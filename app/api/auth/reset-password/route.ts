@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { hashPassword } from "@/lib/auth/hash";
 import { validatePassword } from "@/lib/auth/validation";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { sendPasswordChangedEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
 
@@ -67,6 +68,11 @@ export async function POST(request: NextRequest) {
         passwordResetExpires: null,
       },
     });
+
+    await sendPasswordChangedEmail(
+      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+      { changedByAdmin: false },
+    );
 
     return NextResponse.json(
       { success: true, message: "Password has been reset" },

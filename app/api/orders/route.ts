@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
+import { sendOrderCreatedEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
 const logger = createLogger({
@@ -188,7 +189,7 @@ export async function POST(request: NextRequest) {
       actor: { type: "trader", id: trader.id },
       entity: { type: "Order", id: order.id },
       metadata: {
-        orderNumber: order.orderNumber,
+        orderNumber,
         productId: product.id,
         totalAmount: order.totalAmount,
         currency: order.currency,
@@ -197,6 +198,18 @@ export async function POST(request: NextRequest) {
         discountAmount,
       },
     });
+
+    await sendOrderCreatedEmail(
+      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+      {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        productName: product.name,
+        totalAmount: Number(order.totalAmount),
+        currency: order.currency ?? "USD",
+        orderStatus: order.status,
+      },
+    );
 
     return NextResponse.json({ success: true, order }, { status: 201 });
   } catch (error) {
@@ -244,10 +257,10 @@ async function getAuthenticatedUser(
   if (!token) return null;
   const session = await getSession(token);
   if (!session) return null;
-  const trader = await prisma.trader.findUnique({
-    where: { id: session.sub },
-    select: { id: true, role: true, status: true },
-  });
+    const trader = await prisma.trader.findUnique({
+      where: { id: session.sub },
+      select: { id: true, role: true, status: true, email: true, firstName: true, lastName: true },
+    });
   if (
     !trader ||
     trader.status === "SUSPENDED" ||

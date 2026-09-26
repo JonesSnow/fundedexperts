@@ -4,6 +4,7 @@ import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { createLedgerEntry, CreateLedgerEntryInput } from "@/lib/ledger/service";
+import { sendPaymentConfirmedEmail, sendPaymentFailedEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
 const logger = createLogger({
@@ -17,7 +18,7 @@ async function getAuthenticatedUser(request: NextRequest) {
   if (!session) return null;
   const trader = await prisma.trader.findUnique({
     where: { id: session.sub },
-    select: { id: true, role: true, status: true },
+    select: { id: true, role: true, status: true, email: true, firstName: true, lastName: true },
   });
   if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
     return null;
@@ -115,6 +116,16 @@ export async function POST(
         metadata: { paymentMethod: method, orderNumber: order.orderNumber },
       });
 
+      await sendPaymentFailedEmail(
+        { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+        {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          totalAmount: Number(order.totalAmount),
+          currency: order.currency ?? "USD",
+        },
+      );
+
       return NextResponse.json(
         { success: false, error: "Payment failed", order: failedOrder },
         { status: 400 }
@@ -162,6 +173,17 @@ export async function POST(
         ledgerEntryId: ledgerResult.ledgerEntry?.id ?? null,
       },
     });
+
+    await sendPaymentConfirmedEmail(
+      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+      {
+        orderId: paidOrder.id,
+        orderNumber: paidOrder.orderNumber,
+        totalAmount: Number(paidOrder.totalAmount),
+        currency: paidOrder.currency ?? "USD",
+        canActivate: true,
+      },
+    );
 
     return NextResponse.json(
       { success: true, order: paidOrder, message: "Payment completed (simulated)" },

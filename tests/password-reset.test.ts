@@ -31,7 +31,7 @@ describe("Password Reset", () => {
     const trader = await createTraderForReset("reset-test@example.com");
     assert(trader.passwordResetToken);
     testTraderId = trader.id;
-    testToken = trader.passwordResetToken;
+    testToken = trader.passwordResetToken ?? "";
   });
 
   after(async () => {

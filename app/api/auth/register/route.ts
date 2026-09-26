@@ -70,7 +70,11 @@ export async function POST(request: NextRequest) {
 
     resetRateLimit(`register:${body.email}`);
 
-    await sendVerificationEmail(trader.email, verificationToken);
+    await sendVerificationEmail(
+      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+      verificationToken,
+      verificationExpires,
+    );
 
     const token = await createSession(trader.id, trader.role);
 

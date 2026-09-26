@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { sendWelcomeEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
 
@@ -37,6 +38,11 @@ export async function POST(request: NextRequest) {
         emailVerificationExpires: null,
       },
     });
+
+    await sendWelcomeEmail(
+      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+      { isVerified: true },
+    );
 
     return NextResponse.json(
       { success: true, message: "Email verified successfully" },

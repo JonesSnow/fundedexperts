@@ -7,7 +7,6 @@ import {
   LedgerEntryType,
   LedgerDirection,
   AuditAction,
-  Order,
   OrderStatus,
 } from "@prisma/client";
 import type { LogActor, LogEntity, LogError } from "./logger";
@@ -16,6 +15,7 @@ import { linkEvaluation } from "./evaluation-link";
 import { PaymentProvider } from "./payment";
 import { createLedgerEntry, CreateLedgerEntryInput } from "./ledger";
 import { createLogger, generateCorrelationId } from "./logger";
+import { sendEvaluationStartedEmail, sendAccountAllocatedEmail } from "./email/templates";
 
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
@@ -70,6 +70,7 @@ export async function activateEvaluation(
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
+    include: { orderItems: { include: { product: true } } },
   });
 
   if (!order) {
@@ -285,6 +286,40 @@ export async function activateEvaluation(
       recoverable: linkResult.failureCategory === "TRANSACTION_ERROR",
       correlationId,
     } as ActivateEvaluationFailure;
+  }
+
+  if (!wasAlreadyActivated) {
+    const product = order.orderItems?.[0]?.product;
+    const productName = product?.name ?? "Challenge";
+    const accountSize = product?.accountSize ? String(product.accountSize) : "N/A";
+
+    const traderRecord = await prisma.trader.findUnique({
+      where: { id: order.traderId },
+      select: { id: true, email: true, firstName: true },
+    });
+
+    if (traderRecord) {
+      const traderRef = { id: traderRecord.id, email: traderRecord.email, firstName: traderRecord.firstName ?? undefined };
+
+      try {
+        await sendEvaluationStartedEmail(traderRef, {
+          evaluationId: evaluation.id,
+          productName,
+          accountSize,
+        });
+        await sendAccountAllocatedEmail(traderRef, {
+          evaluationId: evaluation.id,
+          accountNumber: allocationResult.account.accountNumber,
+        });
+      } catch {
+        logger.error("ACTIVATION", "Evaluation notification email failed", {
+          correlationId,
+          actor: makeActor(performedBy),
+          entity: makeEntity("Evaluation", evaluation.id),
+          error: { code: "EMAIL_FAILED", message: "Failed to send evaluation emails" },
+        });
+      }
+    }
   }
 
   let ledgerEntry: LedgerEntry | undefined;

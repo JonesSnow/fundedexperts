@@ -1,4 +1,16 @@
-import { PrismaClient, AccountAssignment, AccountAssignmentStatus, MT5Account, AccountStatus, Evaluation, EvaluationStatus, AuditAction } from "@prisma/client";
+import { PrismaClient, AccountAssignment, MT5Account, AccountStatus, EvaluationStatus } from "@prisma/client";
+import { createLogger, generateCorrelationId } from "./logger";
+import { sendEvaluationPassedEmail, sendEvaluationFailedEmail } from "./email/templates";
+
+const logger = createLogger({ environment: process.env.NODE_ENV as "development" | "production" | "test" });
+
+function makeActor(id: string): { type: "trader"; id: string } {
+  return { type: "trader", id };
+}
+
+function makeEntity(type: string, id?: string): { type: string; id?: string } {
+  return { type, id };
+}
 
 export type ReleaseReason =
   | "EVALUATION_FAILED"
@@ -34,19 +46,24 @@ export async function releaseAccount(
   prisma: PrismaClient,
   input: ReleaseAccountInput
 ): Promise<ReleaseAccountResult> {
+  const correlationId = generateCorrelationId();
   const { traderId, accountId, reason, isAdminOverride } = input;
+
+  let evaluationChallengeName: string | undefined;
+  let evaluationTotalPnl: string | undefined;
+  let evaluationIdRef: string | undefined;
 
   const result = await prisma.$transaction(async (tx) => {
     const assignment = await tx.accountAssignment.findFirst({
-      where: {
-        accountId: accountId,
-        status: "ASSIGNED",
-      },
-      include: {
-        trader: true,
-        account: true,
-      },
-    });
+           where: {
+             accountId: accountId,
+             status: "ASSIGNED",
+           },
+           include: {
+             trader: true,
+             account: true,
+           },
+         });
 
     if (!assignment) {
       return { success: false, error: "No active assignment found for this account" } as ReleaseAccountFailure;
@@ -67,9 +84,15 @@ export async function releaseAccount(
           accountId: accountId,
           status: { in: ["IN_PROGRESS", "PASSED"] },
         },
+        include: {
+          rulesetVersion: { include: { ruleset: true } },
+        },
       });
 
       if (evaluation) {
+        evaluationChallengeName = evaluation.rulesetVersion?.ruleset?.name ?? undefined;
+        evaluationTotalPnl = evaluation.totalPnl ? String(evaluation.totalPnl) : undefined;
+        evaluationIdRef = evaluation.id;
         if (reason === "EVALUATION_FAILED") {
           await tx.evaluation.update({
             where: { id: evaluation.id },
@@ -143,6 +166,37 @@ export async function releaseAccount(
       evaluationStatus,
     } as ReleaseAccountSuccess;
   });
+
+  if (result.success && result.evaluationUpdated && result.evaluationStatus) {
+    const assignment = result.assignment as AccountAssignment & { trader?: { id: string; email: string; firstName?: string | null } };
+    const trader = assignment.trader;
+    if (trader) {
+      const traderRef = { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined };
+      const productName = evaluationChallengeName ?? "Challenge";
+      try {
+        if (result.evaluationStatus === "PASSED") {
+          await sendEvaluationPassedEmail(traderRef, {
+            evaluationId: evaluationIdRef ?? "",
+            productName,
+            totalPnl: evaluationTotalPnl,
+          });
+        } else if (result.evaluationStatus === "FAILED") {
+          await sendEvaluationFailedEmail(traderRef, {
+            evaluationId: evaluationIdRef ?? "",
+            productName,
+            failureReason: reason,
+          });
+        }
+      } catch {
+        logger.error("RELEASE", "Evaluation notification email failed", {
+          correlationId,
+          actor: makeActor(traderId),
+          entity: makeEntity("Evaluation"),
+          error: { code: "EMAIL_FAILED", message: "Failed to send evaluation notification email" },
+        });
+      }
+    }
+  }
 
   return result;
 }

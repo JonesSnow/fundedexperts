@@ -153,14 +153,15 @@ model Trader {
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 
-  evaluations    Evaluation[]
-  fundedAccounts FundedAccount[]
-  assignments    AccountAssignment[]
-  auditLogs      AuditLog[]
-  orders         Order[]
-  ledgerEntries  LedgerEntry[]
-  coupons        Coupon[]
-  couponUsages   CouponUsage[]
+   evaluations    Evaluation[]
+   fundedAccounts FundedAccount[]
+   assignments    AccountAssignment[]
+   auditLogs      AuditLog[]
+   orders         Order[]
+   ledgerEntries  LedgerEntry[]
+   coupons        Coupon[]
+   couponUsages   CouponUsage[]
+   emailDeliveries EmailDelivery[]
 
   @@index([role])
 }
@@ -528,4 +529,68 @@ model AuditLog {
   mt5Accounts    MT5Account[]
   evaluations    Evaluation[]
   fundedAccounts FundedAccount[]
+}
+
+enum EmailDeliveryStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum EmailProviderType {
+  GMAIL_SMTP
+  CONSOLE
+  NONE
+}
+
+enum EmailEventType {
+  EMAIL_VERIFICATION_REQUESTED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_CHANGED
+  WELCOME
+  LOGIN_SECURITY_ALERT
+  ORDER_CREATED
+  PAYMENT_CONFIRMED
+  PAYMENT_FAILED
+  EVALUATION_STARTED
+  EVALUATION_PASSED
+  EVALUATION_FAILED
+  ACCOUNT_ALLOCATED
+  FUNDED_ACCOUNT_ACTIVATED
+  ACCOUNT_STATUS_CHANGED
+  RULE_BREACH_CONFIRMED
+  PAYOUT_REQUESTED
+  PAYOUT_APPROVED
+  PAYOUT_REJECTED
+}
+
+model EmailDelivery {
+  id                String              @id @default(uuid())
+  traderId          String?
+  trader            Trader?             @relation(fields: [traderId], references: [id])
+  recipient         String
+  template          String
+  subject           String?
+  status            EmailDeliveryStatus @default(QUEUED)
+  provider          EmailProviderType   @default(NONE)
+  providerMessageId String?
+  relatedEntityType String?
+  relatedEntityId   String?
+  idempotencyKey    String?             @unique
+  attemptCount      Int                 @default(0)
+  lastAttemptAt     DateTime?
+  sentAt            DateTime?
+  failedAt          DateTime?
+  failureReason     String?
+  metadata          Json?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([traderId])
+  @@index([status])
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([template])
+  @@index([createdAt])
 }

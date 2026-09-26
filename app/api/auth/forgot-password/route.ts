@@ -54,7 +54,11 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      await sendPasswordResetEmail(trader.email, token);
+      await sendPasswordResetEmail(
+        { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+        token,
+        expires,
+      );
     }
 
     return NextResponse.json(

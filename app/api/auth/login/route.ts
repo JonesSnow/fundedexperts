@@ -4,6 +4,7 @@ import { verifyPassword } from "@/lib/auth/hash";
 import { validateLoginInput } from "@/lib/auth/validation";
 import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
+import { sendLoginSecurityAlertEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
 
@@ -65,6 +66,12 @@ export async function POST(request: NextRequest) {
     resetRateLimit(`login:${body.email}`);
 
     const token = await createSession(trader.id, trader.role);
+
+    sendLoginSecurityAlertEmail(
+      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+      new Date().toISOString(),
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip") ?? "unknown",
+    ).catch(() => {});
 
     const response = NextResponse.json(
       {

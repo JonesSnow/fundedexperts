@@ -3,14 +3,10 @@ import {
   Prisma,
   FundedAccount,
   FundedAccountStatus,
-  MT5Account,
-  AccountAssignment,
-  Evaluation,
   AuditAction,
-  Order,
-  OrderStatus,
 } from "@prisma/client";
 import { createLogger, generateCorrelationId } from "./logger";
+import { sendFundedAccountActivatedEmail, sendAccountStatusChangedEmail } from "./email/templates";
 
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
@@ -335,6 +331,7 @@ export async function linkAccount(
 
   const fundedAccount = await prisma.fundedAccount.findUnique({
     where: { id: fundedAccountId },
+    include: { trader: true },
   });
 
   if (!fundedAccount) {
@@ -415,6 +412,21 @@ export async function linkAccount(
       metadata: { accountId: account.id, status: "ACTIVE" },
     });
 
+    await sendFundedAccountActivatedEmail(
+      { id: fundedAccount.traderId, email: fundedAccount.trader?.email ?? "", firstName: fundedAccount.trader?.firstName ?? undefined },
+      {
+        accountId: updated.id,
+        accountSize: account.accountSize ? String(account.accountSize) : "N/A",
+        status: updated.status,
+      },
+    ).catch(() => {
+      logger.error("FUNDED_ACCOUNT", "Funded account activated email failed", {
+        correlationId,
+        entity: makeEntity("FundedAccount", fundedAccountId),
+        error: { code: "EMAIL_FAILED", message: "Failed to send funded account activated email" },
+      });
+    });
+
     return { success: true, account: updated, correlationId };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
@@ -441,6 +453,7 @@ export async function transitionFundedAccountStatus(
 
   const account = await prisma.fundedAccount.findUnique({
     where: { id },
+    include: { trader: true, account: true },
   });
 
   if (!account) {
@@ -517,6 +530,36 @@ export async function transitionFundedAccountStatus(
       entity: makeEntity("FundedAccount", account.id),
       metadata: { from: account.status, to: status, reason: reason ?? undefined },
     });
+
+    if (account.trader) {
+      try {
+        if (status === "ACTIVE") {
+          await sendFundedAccountActivatedEmail(
+            { id: account.traderId, email: account.trader.email, firstName: account.trader.firstName ?? undefined },
+            {
+              accountId: account.id,
+              accountSize: account.account?.accountSize ? String(account.account.accountSize) : "N/A",
+              status: updated.status,
+            },
+          );
+        }
+        await sendAccountStatusChangedEmail(
+          { id: account.traderId, email: account.trader.email, firstName: account.trader.firstName ?? undefined },
+          {
+            accountId: account.id,
+            oldStatus: account.status,
+            newStatus: updated.status,
+            reason: reason,
+          },
+        );
+      } catch {
+        logger.error("FUNDED_ACCOUNT", "Status change notification email failed", {
+          correlationId,
+          entity: makeEntity("FundedAccount", account.id),
+          error: { code: "EMAIL_FAILED", message: "Failed to send status change notification email" },
+        });
+      }
+    }
 
     return { success: true, account: updated, correlationId };
   } catch (e) {

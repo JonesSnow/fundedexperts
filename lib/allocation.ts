@@ -1,5 +1,6 @@
 import { PrismaClient, MT5Account, AccountAssignment, MT5AccountPurpose, AuditAction } from "@prisma/client";
 import { createLogger, generateCorrelationId } from "./logger";
+import { sendAccountAllocatedEmail } from "./email/templates";
 
 const logger = createLogger({ environment: process.env.NODE_ENV as "development" | "production" | "test" });
 
@@ -158,6 +159,30 @@ export async function allocateAccount(
   }
 
   if (result.success) {
+    if (evaluationId) {
+      const traderRecord = await prisma.trader.findUnique({
+        where: { id: traderId },
+        select: { id: true, email: true, firstName: true },
+      });
+      if (traderRecord) {
+        try {
+          await sendAccountAllocatedEmail(
+            { id: traderRecord.id, email: traderRecord.email, firstName: traderRecord.firstName ?? undefined },
+            {
+              evaluationId,
+              accountNumber: (result as AllocateAccountSuccess).account.accountNumber,
+            },
+          );
+        } catch {
+          logger.error("ALLOCATION", "Account allocated email failed", {
+            correlationId: generateCorrelationId(),
+            actor: { type: "trader", id: traderId },
+            entity: { type: "Evaluation", id: evaluationId },
+            error: { code: "EMAIL_FAILED", message: "Failed to send account allocated email" },
+          });
+        }
+      }
+    }
     return { ...result, evaluationLinked } as AllocateAccountSuccess;
   }
 
