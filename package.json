@@ -16,7 +16,7 @@
     "test": "tsx tests/auth.test.ts && tsx tests/mt5-accounts.test.ts && tsx tests/products-and-rulesets.test.ts && tsx tests/mt5-accounts.integration.test.ts"
   },
   "dependencies": {
-    "bcryptjs": "^3.1.1",
+    "bcryptjs": "^3.0.3",
     "jose": "^6.2.12",
     "next": "16.3.5",
     "react": "19.2.8",
