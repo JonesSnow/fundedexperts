@@ -72,10 +72,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(request: NextRequest) {
   const trader = await getAuthenticatedUser(request);
   if (!trader) {
     return NextResponse.json(
