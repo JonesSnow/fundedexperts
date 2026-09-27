@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     resetRateLimit(`register:${body.email}`);
 
-    await sendVerificationEmail(
+    const emailResult = await sendVerificationEmail(
       { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
       verificationToken,
       verificationExpires,
@@ -81,6 +81,8 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json(
       {
         success: true,
+        emailSent: emailResult.success,
+        emailError: emailResult.success ? undefined : "Failed to send verification email",
         trader: {
           id: trader.id,
           email: trader.email,
@@ -88,6 +90,7 @@ export async function POST(request: NextRequest) {
           firstName: trader.firstName,
           lastName: trader.lastName,
           status: trader.status,
+          emailVerified: trader.emailVerified,
         },
       },
       { status: 201 }

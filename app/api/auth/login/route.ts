@@ -76,6 +76,7 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json(
       {
         success: true,
+        emailVerified: trader.emailVerified,
         trader: {
           id: trader.id,
           email: trader.email,

@@ -16,22 +16,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const trader = await prisma.trader.findFirst({
-      where: {
-        emailVerificationToken: token,
-        emailVerificationExpires: { gt: new Date() },
-      },
+    const existing = await prisma.trader.findFirst({
+      where: { emailVerificationToken: token },
     });
 
-    if (!trader) {
+    if (!existing) {
       return NextResponse.json(
-        { success: false, error: "Invalid or expired verification token" },
+        {
+          success: false,
+          error: "Invalid verification token",
+          alreadyVerified: false,
+          canResend: true,
+        },
         { status: 400 },
       );
     }
 
+    if (existing.emailVerified) {
+      return NextResponse.json(
+        {
+          success: true,
+          message: "Email already verified. You can log in.",
+          alreadyVerified: true,
+        },
+        { status: 200 },
+      );
+    }
+
+    if (!existing.emailVerificationExpires || existing.emailVerificationExpires < new Date()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Verification link has expired",
+          alreadyVerified: false,
+          canResend: true,
+        },
+        { status: 410 },
+      );
+    }
+
     await prisma.trader.update({
-      where: { id: trader.id },
+      where: { id: existing.id },
       data: {
         emailVerified: true,
         emailVerificationToken: null,
@@ -39,10 +64,10 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    await sendWelcomeEmail(
-      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+    sendWelcomeEmail(
+      { id: existing.id, email: existing.email, firstName: existing.firstName ?? undefined },
       { isVerified: true },
-    );
+    ).catch(() => {});
 
     return NextResponse.json(
       { success: true, message: "Email verified successfully" },

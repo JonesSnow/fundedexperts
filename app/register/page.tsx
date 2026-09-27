@@ -29,7 +29,7 @@ export default function RegisterPage() {
       const data = await res.json();
 
       if (res.ok) {
-        router.push("/login");
+        router.push(`/verify-email-pending?email=${encodeURIComponent(data.trader.email)}`);
         router.refresh();
       } else if (data.errors) {
         setErrors(data.errors);

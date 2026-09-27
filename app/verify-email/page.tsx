@@ -6,7 +6,7 @@ import { extractTokenFromHash } from "@/lib/email/urls";
 
 export default function VerifyEmailPage() {
   const router = useRouter();
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "success" | "error" | "expired" | "already-verified">("loading");
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -28,14 +28,27 @@ export default function VerifyEmailPage() {
           body: JSON.stringify({ token }),
         });
         const data = await res.json();
-        if (!res.ok || !data.success) {
-          setStatus("error");
-          setMessage(data.error ?? "Failed to verify email.");
+
+        if (data.alreadyVerified) {
+          setStatus("already-verified");
+          setMessage("Your email is already verified. You can log in.");
           return;
         }
+
+        if (!res.ok || !data.success) {
+          if (res.status === 410 || data.error?.includes("expired")) {
+            setStatus("expired");
+            setMessage("Your verification link has expired. Please request a new one.");
+          } else {
+            setStatus("error");
+            setMessage(data.error ?? "Invalid verification link.");
+          }
+          return;
+        }
+
         setStatus("success");
         setMessage("Your email has been verified successfully!");
-        setTimeout(() => router.push("/login"), 2000);
+        setTimeout(() => router.push("/login?verified=true"), 2000);
       } catch {
         setStatus("error");
         setMessage("An unexpected error occurred.");
@@ -69,20 +82,45 @@ export default function VerifyEmailPage() {
           </div>
         )}
 
-        {status === "error" && (
+        {status === "already-verified" && (
+          <div className="text-center py-8">
+            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-blue-800 font-medium mb-6">{message}</p>
+            <button
+              onClick={() => router.push("/login")}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Go to Login
+            </button>
+          </div>
+        )}
+
+        {(status === "error" || status === "expired") && (
           <div className="text-center py-8">
             <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg className="h-6 w-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12M6 6l12 12" />
               </svg>
             </div>
             <p className="text-red-800 font-medium mb-6">{message}</p>
-            <button
-              onClick={() => router.push("/")}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Return to Home
-            </button>
+            <div className="space-y-3">
+              <button
+                onClick={() => router.push("/login")}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Back to Login
+              </button>
+              <p className="text-sm text-gray-500">
+                Need a new verification email?{" "}
+                <a href="/login" className="text-blue-600 hover:underline">Log in</a>
+                {" "}and use the resend option in your dashboard, or{" "}
+                <a href="/register" className="text-blue-600 hover:underline">register again</a>.
+              </p>
+            </div>
           </div>
         )}
       </div>

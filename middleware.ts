@@ -28,12 +28,18 @@ export async function middleware(request: NextRequest) {
   try {
     const trader = await prisma.trader.findUnique({
       where: { id: session.sub },
-      select: { id: true, status: true, role: true },
+      select: { id: true, status: true, role: true, emailVerified: true, email: true },
     });
 
     if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
       const url = new URL("/login", request.url);
       url.searchParams.set("from", pathname);
+      return NextResponse.redirect(url);
+    }
+
+    if (pathname.startsWith("/dashboard") && !trader.emailVerified) {
+      const url = new URL("/verify-email-pending", request.url);
+      url.searchParams.set("email", trader.email);
       return NextResponse.redirect(url);
     }
 

@@ -35,17 +35,10 @@ export async function POST(request: NextRequest) {
 
     resetRateLimit(`forgot-password:${email}`);
 
-    if (trader && !trader.emailVerified) {
-      return NextResponse.json(
-        { success: false, error: "If an account exists, a reset email has been sent" },
-        { status: 200 },
-      );
-    }
-
-    const token = randomBytes(32).toString("hex");
-    const expires = new Date(Date.now() + 15 * 60 * 1000);
-
     if (trader) {
+      const token = randomBytes(32).toString("hex");
+      const expires = new Date(Date.now() + 15 * 60 * 1000);
+
       await prisma.trader.update({
         where: { id: trader.id },
         data: {

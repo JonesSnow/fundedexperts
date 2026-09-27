@@ -25,7 +25,11 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (res.ok) {
-        router.push("/dashboard");
+        if (data.emailVerified) {
+          router.push("/dashboard");
+        } else {
+          router.push(`/verify-email-pending?email=${encodeURIComponent(data.trader.email)}`);
+        }
         router.refresh();
       } else {
         setError(data.error || "Login failed");
