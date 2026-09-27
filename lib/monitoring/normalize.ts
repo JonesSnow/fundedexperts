@@ -126,22 +126,22 @@ function normalizeAccountInfo(
     errors.push({
       code: "NULL_ACCOUNT_INFO",
       message: "Provider returned no account information",
-      severity: "HIGH",
+      severity: "CRITICAL",
       field: "accountInfo",
     });
     return null;
   }
 
-  if (info.balance !== null && info.balance !== undefined && isNaN(info.balance)) {
+  if (info.balance !== null && info.balance !== undefined && !Number.isFinite(info.balance)) {
     errors.push({ code: "INVALID_BALANCE", message: "Balance is not a valid number", severity: "HIGH", field: "balance" });
   }
-  if (info.equity !== null && info.equity !== undefined && isNaN(info.equity)) {
+  if (info.equity !== null && info.equity !== undefined && !Number.isFinite(info.equity)) {
     errors.push({ code: "INVALID_EQUITY", message: "Equity is not a valid number", severity: "HIGH", field: "equity" });
   }
-  if (info.margin !== null && info.margin !== undefined && isNaN(info.margin)) {
+  if (info.margin !== null && info.margin !== undefined && !Number.isFinite(info.margin)) {
     errors.push({ code: "INVALID_MARGIN", message: "Margin is not a valid number", severity: "HIGH", field: "margin" });
   }
-  if (info.freeMargin !== null && info.freeMargin !== undefined && isNaN(info.freeMargin)) {
+  if (info.freeMargin !== null && info.freeMargin !== undefined && !Number.isFinite(info.freeMargin)) {
     errors.push({ code: "INVALID_FREE_MARGIN", message: "Free margin is not a valid number", severity: "HIGH", field: "freeMargin" });
   }
 
