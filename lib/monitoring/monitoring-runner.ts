@@ -9,45 +9,35 @@ import { completeJob, failJob, updateMonitoringState } from "./monitoring-job";
 import { generateCorrelationId } from "../logger";
 import { processMonitoringSnapshot, scheduleMonitoringJob } from "../monitoring-pipeline";
 import type { ProviderCredentials } from "./credential-boundary";
-import { isEncryptionAvailable, decrypt } from "../encryption";
-import { createLogger } from "../logger";
-
-const runnerLogger = createLogger({
-  environment: process.env.NODE_ENV as "development" | "production" | "test",
-});
+import { isEncryptionAvailable } from "../encryption";
 
 function resolveCredentials(account: {
   accountNumber: string;
+  login: string | null;
   server: string | null;
   credentials: string | null;
 }): ProviderCredentials {
   if (account.credentials && isEncryptionAvailable()) {
-    try {
-      const decrypted = decrypt(account.credentials);
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(decrypted);
-      } catch {
-        parsed = { password: decrypted };
-      }
-      return {
-        providerType: "mt5",
-        server: String(parsed.server ?? account.server ?? "default-server"),
-        login: Number(parsed.login ?? account.accountNumber),
-        password: String(parsed.password ?? ""),
-        connectionTimeoutMs: 5000,
-      };
-    } catch (e) {
-      runnerLogger.error("MONITORING_RUNNER", "Failed to decrypt MT5 credentials", {
-        error: { code: "DECRYPTION_FAILED", message: "Credential decryption failed", stack: e instanceof Error ? e.stack : undefined },
-      });
-    }
+    return {
+      providerType: "mt5",
+      server: account.server ?? "default-server",
+      login: Number(account.login ?? account.accountNumber),
+      password: account.credentials,
+      connectionTimeoutMs: 5000,
+    };
+  }
+
+  let loginNum: number;
+  try {
+    loginNum = Number(account.login ?? account.accountNumber);
+  } catch {
+    loginNum = 0;
   }
 
   return {
     providerType: "mt5",
     server: account.server ?? "default-server",
-    login: Number(account.accountNumber),
+    login: loginNum,
     password: process.env.MT5_MASTER_PASSWORD ?? "mock-password",
     connectionTimeoutMs: 5000,
   };
