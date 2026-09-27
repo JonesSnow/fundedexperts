@@ -39,18 +39,26 @@ export function parseRuleValue(value: unknown): RuleValue {
   return {};
 }
 
-function computeTotalPnl(snapshot: MonitoringSnapshot): number {
-  const equity = snapshot.equity ?? 0;
-  const balance = snapshot.balance ?? 0;
-  const positionPnl = (snapshot.positions ?? []).reduce((sum, p) => sum + (p.profit ?? 0), 0);
-  return positionPnl + (equity - balance);
+export function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function computeCurrentDrawdown(snapshot: MonitoringSnapshot): number {
+function computeTotalPnl(snapshot: MonitoringSnapshot): number {
+  const realizedPnl = snapshot.historySummary?.totalRealizedPnl ?? 0;
+  const unrealizedPnl = (snapshot.positions ?? []).reduce((sum, p) => sum + (p.profit ?? 0), 0);
+  return round2(realizedPnl + unrealizedPnl);
+}
+
+export function computeCurrentDrawdown(snapshot: MonitoringSnapshot, startingBalance?: number | null): number {
   const balance = snapshot.balance ?? 0;
   const equity = snapshot.equity ?? 0;
-  const peakEquity = Math.max(balance, equity);
-  return peakEquity - equity;
+
+  let peakEquity = Math.max(balance, equity);
+  if (startingBalance !== undefined && startingBalance !== null) {
+    peakEquity = Math.max(peakEquity, startingBalance);
+  }
+
+  return round2(Math.max(0, peakEquity - equity));
 }
 
 function computeOpenTradeCount(snapshot: MonitoringSnapshot): number {
@@ -59,7 +67,14 @@ function computeOpenTradeCount(snapshot: MonitoringSnapshot): number {
   return positions.length + openOrders.length;
 }
 
-function evaluateProfitTarget(rule: Rule, snapshot: MonitoringSnapshot): RuleEvaluationOutcome {
+export interface EvaluateRuleOptions {
+  startingBalance?: number | null;
+}
+
+export function evaluateProfitTarget(
+  rule: Rule,
+  snapshot: MonitoringSnapshot,
+): RuleEvaluationOutcome {
   const rv = parseRuleValue(rule.value);
   const target = rv.target;
   const actual = computeTotalPnl(snapshot);
@@ -79,7 +94,7 @@ function evaluateProfitTarget(rule: Rule, snapshot: MonitoringSnapshot): RuleEva
   return {
     ruleId: rule.id,
     ruleType: rule.ruleType,
-    result: passed ? "PASS" : "FAIL",
+    result: passed ? "PASS" : "WARNING",
     actualValue: actual,
     expectedValue: { target },
     details: passed
@@ -88,15 +103,20 @@ function evaluateProfitTarget(rule: Rule, snapshot: MonitoringSnapshot): RuleEva
   };
 }
 
-function evaluateDrawdownLimit(rule: Rule, snapshot: MonitoringSnapshot): RuleEvaluationOutcome {
+export function evaluateDrawdownLimit(
+  rule: Rule,
+  snapshot: MonitoringSnapshot,
+  options?: EvaluateRuleOptions,
+): RuleEvaluationOutcome {
   const rv = parseRuleValue(rule.value);
-  const currentDrawdown = computeCurrentDrawdown(snapshot);
+  const startingBalance = options?.startingBalance ?? rv.startingBalance;
+  const currentDrawdown = computeCurrentDrawdown(snapshot, startingBalance);
 
   let maxAllowed: number | null = null;
   if (rv.maxDrawdown !== undefined && rv.maxDrawdown !== null) {
     maxAllowed = rv.maxDrawdown;
-  } else if (rv.maxDrawdownPercent !== undefined && rv.startingBalance !== undefined) {
-    maxAllowed = rv.startingBalance * (rv.maxDrawdownPercent / 100);
+  } else if (rv.maxDrawdownPercent !== undefined && startingBalance !== undefined && startingBalance !== null) {
+    maxAllowed = round2(startingBalance * (rv.maxDrawdownPercent / 100));
   }
 
   if (maxAllowed === null) {
@@ -129,7 +149,7 @@ function evaluateMinTrades(rule: Rule, snapshot: MonitoringSnapshot): RuleEvalua
   const historyCount = snapshot.historySummary?.dealCount ?? 0;
   const positionsCount = snapshot.positions?.length ?? 0;
   const totalTrades = historyCount + positionsCount;
-  const actual = totalTrades;
+  const actual = round2(totalTrades);
 
   if (minTrades === undefined || minTrades === null) {
     return {
@@ -157,9 +177,9 @@ function evaluateMinTrades(rule: Rule, snapshot: MonitoringSnapshot): RuleEvalua
 
 function evaluateMaxDailyLoss(rule: Rule, snapshot: MonitoringSnapshot): RuleEvaluationOutcome {
   const rv = parseRuleValue(rule.value);
-  const maxLoss = rv.maxLoss;
-  const realizedPnl = snapshot.historySummary?.totalRealizedPnl ?? 0;
-  const actual = realizedPnl < 0 ? Math.abs(realizedPnl) : realizedPnl;
+    const maxLoss = rv.maxLoss;
+    const realizedPnl = snapshot.historySummary?.totalRealizedPnl ?? 0;
+    const actual = round2(realizedPnl < 0 ? Math.abs(realizedPnl) : realizedPnl);
 
   if (maxLoss === undefined || maxLoss === null) {
     return {
@@ -339,7 +359,7 @@ function evaluateTradingSession(rule: Rule, snapshot: MonitoringSnapshot): RuleE
   };
 }
 
-const RULE_EVALUATORS: Record<RuleType, (rule: Rule, snapshot: MonitoringSnapshot) => RuleEvaluationOutcome> = {
+const RULE_EVALUATORS: Record<RuleType, (rule: Rule, snapshot: MonitoringSnapshot, options?: EvaluateRuleOptions) => RuleEvaluationOutcome> = {
   PROFIT_TARGET: evaluateProfitTarget,
   DRAWDOWN_LIMIT: evaluateDrawdownLimit,
   TRADING_HOURS: evaluateTradingHours,
@@ -350,7 +370,7 @@ const RULE_EVALUATORS: Record<RuleType, (rule: Rule, snapshot: MonitoringSnapsho
   TRADING_SESSION: evaluateTradingSession,
 };
 
-export function evaluateRule(rule: Rule, snapshot: MonitoringSnapshot): RuleEvaluationOutcome {
+export function evaluateRule(rule: Rule, snapshot: MonitoringSnapshot, options?: EvaluateRuleOptions): RuleEvaluationOutcome {
   const evaluator = RULE_EVALUATORS[rule.ruleType];
   if (!evaluator) {
     return {
@@ -362,11 +382,11 @@ export function evaluateRule(rule: Rule, snapshot: MonitoringSnapshot): RuleEval
       details: `No evaluator defined for rule type: ${rule.ruleType}`,
     };
   }
-  return evaluator(rule, snapshot);
+  return evaluator(rule, snapshot, options);
 }
 
-export function evaluateAllRules(rules: Rule[], snapshot: MonitoringSnapshot): RuleEvaluationOutcome[] {
-  return rules.map((rule) => evaluateRule(rule, snapshot));
+export function evaluateAllRules(rules: Rule[], snapshot: MonitoringSnapshot, options?: EvaluateRuleOptions): RuleEvaluationOutcome[] {
+  return rules.map((rule) => evaluateRule(rule, snapshot, options));
 }
 
 export function getOverallResult(outcomes: RuleEvaluationOutcome[]): "PASS" | "FAIL" | "WARNING" {

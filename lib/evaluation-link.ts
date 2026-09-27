@@ -1,4 +1,4 @@
-import { PrismaClient, Evaluation, MT5Account, AccountAssignment, AuditAction } from "@prisma/client";
+import { PrismaClient, Evaluation, AuditAction } from "@prisma/client";
 
 export interface LinkEvaluationInput {
   evaluationId: string;
@@ -105,12 +105,22 @@ export async function linkEvaluation(
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      const updateData: {
+        accountId: string;
+        completedAt: Date;
+        startingBalance?: { set: number };
+      } = {
+        accountId: accountId,
+        completedAt: new Date(),
+      };
+
+      if (account.accountSize !== null && account.accountSize !== undefined) {
+        updateData.startingBalance = { set: Number(account.accountSize) };
+      }
+
       await tx.evaluation.update({
         where: { id: evaluationId },
-        data: {
-          accountId: accountId,
-          completedAt: new Date(),
-        },
+        data: updateData,
       });
 
       await tx.auditLog.create({

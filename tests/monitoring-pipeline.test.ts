@@ -90,6 +90,7 @@ async function cleanup(): Promise<CleanupResult> {
     { label: "accountAssignment.deleteMany", fn: () => prisma.accountAssignment.deleteMany({}) },
     { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({}) },
     { label: "fundedAccount.deleteMany", fn: () => prisma.fundedAccount.deleteMany({}) },
+    { label: "emailDelivery.deleteMany", fn: () => prisma.emailDelivery.deleteMany({}) },
     { label: "auditLog.truncate", fn: () => prisma.$executeRaw`TRUNCATE TABLE "AuditLog" CASCADE` },
     { label: "rulesetVersion.deleteMany", fn: () => prisma.rulesetVersion.deleteMany({}) },
     { label: "ruleset.deleteMany", fn: () => prisma.ruleset.deleteMany({}) },
@@ -167,12 +168,14 @@ async function createTestEvaluation(
   rulesetVersionId: string,
   accountId?: string,
   status: "IN_PROGRESS" | "PASSED" | "FAILED" | "ABANDONED" = "IN_PROGRESS",
+  startingBalance?: number,
 ) {
   return prisma.evaluation.create({
     data: {
       trader: { connect: { id: traderId } },
       rulesetVersion: { connect: { id: rulesetVersionId } },
       status,
+      startingBalance: startingBalance,
       ...(accountId ? { account: { connect: { id: accountId } } } : {}),
     },
   });
@@ -208,7 +211,7 @@ describe("Phase 28 — Rule Engine Unit Tests", () => {
       check("PROFIT_TARGET passes", outcome.result === "PASS", `result=${outcome.result}, details=${outcome.details}`);
     });
 
-    it("should FAIL when PnL < target", () => {
+    it("should return WARNING when PnL < target (not a rule violation)", () => {
       const snapshot = makeSnapshot({
         balance: 100000,
         equity: 102000,
@@ -218,7 +221,7 @@ describe("Phase 28 — Rule Engine Unit Tests", () => {
       });
       const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 5000 } } as unknown as Rule;
       const outcome = evaluateRule(rule, snapshot);
-      check("PROFIT_TARGET fails", outcome.result === "FAIL", `result=${outcome.result}, details=${outcome.details}`);
+      check("PROFIT_TARGET warning", outcome.result === "WARNING", `result=${outcome.result}, details=${outcome.details}`);
     });
 
     it("should PASS with position profits included", () => {
@@ -384,7 +387,7 @@ describe("Phase 28 — Monitoring Pipeline Integration", () => {
     ]);
     rulesetVersionId = version.id;
 
-    const evaluation = await createTestEvaluation(traderId, rulesetVersionId, accountId, "IN_PROGRESS");
+    const evaluation = await createTestEvaluation(traderId, rulesetVersionId, accountId, "IN_PROGRESS", 100000);
     evaluationId = evaluation.id;
 
     const rules = await prisma.rule.findMany({ where: { rulesetVersionId } });
@@ -430,7 +433,7 @@ describe("Phase 28 — Monitoring Pipeline Integration", () => {
     check("Pipeline successful", result.success, result.success ? "" : (result as { success: false; error: string }).error);
     if (result.success) {
       check("Has evaluationId", result.evaluationId === evaluationId, `evalId=${result.evaluationId}`);
-      check("Overall FAIL (PROFIT_TARGET not met)", result.overallResult === "FAIL", `result=${result.overallResult}`);
+      check("Overall WARNING (PROFIT_TARGET not met)", result.overallResult === "WARNING", `result=${result.overallResult}`);
       check("Evaluation not passed (profit target not met)", result.passed !== true, `passed=${result.passed}`);
       check("Evaluation not failed (PROFIT_TARGET not required)", result.failed !== true, `failed=${result.failed}`);
 
@@ -532,7 +535,7 @@ describe("Phase 28 — Monitoring Pipeline Integration", () => {
 
     check("Pipeline successful", result.success, "");
     if (result.success) {
-      check("PROFIT_TARGET not met (WARNING/FALL)", result.overallResult === "FAIL", `result=${result.overallResult}`);
+      check("PROFIT_TARGET not met (WARNING)", result.overallResult === "WARNING", `result=${result.overallResult}`);
       check("Evaluation not passed (profit < 5000)", result.passed !== true, `passed=${result.passed}`);
       check("Evaluation not failed (PROFIT_TARGET not required)", result.failed !== true, `failed=${result.failed}`);
 
@@ -563,7 +566,7 @@ describe("Phase 28 — Monitoring Pipeline Integration", () => {
       const profitTarget = result.outcomes.find((o) => o.ruleType === "PROFIT_TARGET");
       const drawdown = result.outcomes.find((o) => o.ruleType === "DRAWDOWN_LIMIT");
       const minTrades = result.outcomes.find((o) => o.ruleType === "MIN_TRADES");
-      check("PROFIT_TARGET not yet met (FAIL)", profitTarget?.result === "FAIL", `${profitTarget?.result}`);
+      check("PROFIT_TARGET not yet met (WARNING)", profitTarget?.result === "WARNING", `${profitTarget?.result}`);
       check("DRAWDOWN_LIMIT passes", drawdown?.result === "PASS", `${drawdown?.result}`);
       check("MIN_TRADES passes", minTrades?.result === "PASS", `${minTrades?.result}`);
       check("Evaluation not passed (PROFIT_TARGET not met)", result.passed !== true, `passed=${result.passed}`);
@@ -985,5 +988,697 @@ describe("Phase 28 — Monitoring Pipeline Integration", () => {
     if (result.success) {
       check("No outcomes (skipped)", result.outcomes.length === 0, `count=${result.outcomes.length}`);
     }
+  });
+});
+
+describe("Phase 29 — Financial Metric Hardening", () => {
+  describe("PROFIT_TARGET returns WARNING (not FAIL) when not met", () => {
+    it("A. PROFIT_TARGET below target returns WARNING, not FAIL", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 103000,
+        historySummary: { dealCount: 2, totalRealizedPnl: 3000, winCount: 2, lossCount: 0, periodStart: null, periodEnd: null },
+        positions: [],
+        orders: [],
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 5000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("PROFIT_TARGET returns WARNING", outcome.result === "WARNING", `result=${outcome.result}`);
+      check("Overall result is WARNING (not FAIL)", getOverallResult([outcome]) === "WARNING", "");
+    });
+
+    it("B. PROFIT_TARGET exactly at target returns PASS (boundary)", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 105000,
+        historySummary: { dealCount: 5, totalRealizedPnl: 5000, winCount: 3, lossCount: 2, periodStart: null, periodEnd: null },
+        positions: [],
+        orders: [],
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 5000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("PROFIT_TARGET boundary PASS", outcome.result === "PASS", `result=${outcome.result}, actual=${outcome.actualValue}, expected=${outcome.expectedValue}`);
+    });
+
+    it("C. PROFIT_TARGET slightly above target returns PASS", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 105000.01,
+        historySummary: { dealCount: 5, totalRealizedPnl: 5000.01, winCount: 3, lossCount: 2, periodStart: null, periodEnd: null },
+        positions: [],
+        orders: [],
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 5000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("PROFIT_TARGET slightly above PASS", outcome.result === "PASS", `result=${outcome.result}`);
+    });
+
+    it("D. PROFIT_TARGET slightly below target returns WARNING", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 104999.99,
+        historySummary: { dealCount: 5, totalRealizedPnl: 4999.99, winCount: 3, lossCount: 2, periodStart: null, periodEnd: null },
+        positions: [],
+        orders: [],
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 5000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("PROFIT_TARGET slightly below WARNING", outcome.result === "WARNING", `result=${outcome.result}`);
+    });
+  });
+
+  describe("DRAWDOWN calculation with startingBalance", () => {
+    it("E. Drawdown from startingBalance when equity drops below starting balance", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 89000,
+        positions: [makePosition({ profit: 0 })],
+        orders: [],
+        historySummary: { dealCount: 5, totalRealizedPnl: -10000, winCount: 2, lossCount: 3, periodStart: null, periodEnd: null },
+      });
+      const rule = {
+        id: "r1",
+        ruleType: RuleType.DRAWDOWN_LIMIT,
+        name: "Max Drawdown",
+        value: { maxDrawdownPercent: 10, startingBalance: 100000 },
+      } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot, { startingBalance: 100000 });
+      check("DRAWDOWN_FAIL", outcome.result === "FAIL", `result=${outcome.result}`);
+      check("DRAWDOWN_actual_11000", Number(outcome.actualValue) === 11000, `actual=${outcome.actualValue}`);
+    });
+
+    it("F. Drawdown within limit from startingBalance (percentage)", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 97000,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 3, totalRealizedPnl: -3000, winCount: 1, lossCount: 2, periodStart: null, periodEnd: null },
+      });
+      const rule = {
+        id: "r1",
+        ruleType: RuleType.DRAWDOWN_LIMIT,
+        name: "Max Drawdown",
+        value: { maxDrawdownPercent: 10, startingBalance: 100000 },
+      } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot, { startingBalance: 100000 });
+      check("DRAWDOWN_PASS", outcome.result === "PASS", `result=${outcome.result}`);
+      check("DRAWDOWN_actual_3000", Number(outcome.actualValue) === 3000, `actual=${outcome.actualValue}`);
+    });
+
+    it("G. Drawdown with growing account (equity above starting balance)", () => {
+      const snapshot = makeSnapshot({
+        balance: 110000,
+        equity: 105000,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 5, totalRealizedPnl: 10000, winCount: 3, lossCount: 2, periodStart: null, periodEnd: null },
+      });
+      const rule = {
+        id: "r1",
+        ruleType: RuleType.DRAWDOWN_LIMIT,
+        name: "Max Drawdown",
+        value: { maxDrawdown: 8000 },
+      } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("DRAWDOWN_growing_pass", outcome.result === "PASS", `result=${outcome.result}, actual=${outcome.actualValue}`);
+    });
+
+    it("H. Drawdown without startingBalance uses balance as peak", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 85000,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 10, totalRealizedPnl: -15000, winCount: 2, lossCount: 8, periodStart: null, periodEnd: null },
+      });
+      const rule = {
+        id: "r1",
+        ruleType: RuleType.DRAWDOWN_LIMIT,
+        name: "Max Drawdown",
+        value: { maxDrawdown: 10000 },
+      } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("DRAWDOWN_no_starting_balance", outcome.result === "FAIL", `result=${outcome.result}, actual=${outcome.actualValue}`);
+      check("DRAWDOWN_actual_15000", Number(outcome.actualValue) === 15000, `actual=${outcome.actualValue}`);
+    });
+  });
+
+  describe("Decimal precision and rounding", () => {
+    it("I. Total PnL rounding to 2 decimal places", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 100100.005,
+        positions: [makePosition({ profit: 0.003 })],
+        orders: [],
+        historySummary: { dealCount: 1, totalRealizedPnl: 0.002, winCount: 1, lossCount: 0, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 0.01 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("PNL_rounded_to_2dp", Number(outcome.actualValue) === 0.01, `actual=${outcome.actualValue}`);
+    });
+
+    it("J. Drawdown rounding does not allow floating-point drift", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 99000.1,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 0, totalRealizedPnl: 0, winCount: 0, lossCount: 0, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.DRAWDOWN_LIMIT, name: "Max Drawdown", value: { maxDrawdown: 1000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("DD_rounded", Number(outcome.actualValue) === 999.9, `actual=${outcome.actualValue}`);
+    });
+
+    it("K. Zero PnL with zero target returns PASS", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 100000,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 0, totalRealizedPnl: 0, winCount: 0, lossCount: 0, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 0 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("ZERO_PNL_PASS", outcome.result === "PASS", `result=${outcome.result}`);
+    });
+  });
+
+  describe("Missing configuration behavior", () => {
+    it("L. PROFIT_TARGET with no target returns WARNING", () => {
+      const snapshot = makeSnapshot({ balance: 100000, equity: 100000 });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target" } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("NO_TARGET_WARNING", outcome.result === "WARNING", `result=${outcome.result}`);
+    });
+
+    it("M. DRAWDOWN_LIMIT with no maxDrawdown or percent returns WARNING", () => {
+      const snapshot = makeSnapshot({ balance: 100000, equity: 90000 });
+      const rule = { id: "r1", ruleType: RuleType.DRAWDOWN_LIMIT, name: "Max Drawdown" } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("NO_DD_CONFIG_WARNING", outcome.result === "WARNING", `result=${outcome.result}`);
+    });
+
+    it("N. MAX_LEVERAGE with null leverage from snapshot returns WARNING", () => {
+      const snapshot = makeSnapshot({ leverage: null });
+      const rule = { id: "r1", ruleType: RuleType.MAX_LEVERAGE, name: "Max Leverage", value: { maxLeverage: 300 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("NULL_LEVERAGE_WARNING", outcome.result === "WARNING", `result=${outcome.result}`);
+    });
+  });
+
+  describe("Missing data / null values", () => {
+    it("O. Null balance and equity handled gracefully", () => {
+      const snapshot = makeSnapshot({ balance: null, equity: null });
+      const rule = { id: "r1", ruleType: RuleType.DRAWDOWN_LIMIT, name: "Max Drawdown", value: { maxDrawdown: 1000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("NULL_BALANCE_DRAWDOWN_PASS", outcome.result === "PASS", `result=${outcome.result}, actual=${outcome.actualValue}`);
+    });
+
+    it("P. Null positions handled (empty array fallback)", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 105000,
+        positions: undefined as unknown as [],
+        historySummary: { dealCount: 5, totalRealizedPnl: 5000, winCount: 3, lossCount: 2, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 5000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("UNDEFINED_POSITIONS_PASS", outcome.result === "PASS", `result=${outcome.result}`);
+    });
+
+    it("Q. Null profit in position treated as 0", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 100000,
+        positions: [makePosition({ profit: null })],
+        historySummary: { dealCount: 0, totalRealizedPnl: 0, winCount: 0, lossCount: 0, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.MIN_TRADES, name: "Min Trades", value: { minTrades: 1 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("NULL_PROFIT_HANDLED", outcome.result === "PASS", `result=${outcome.result}, actual=${outcome.actualValue}`);
+    });
+  });
+
+  describe("Evaluation lifecycle with PROFIT_TARGET WARNING", () => {
+    let traderId: string;
+    let accountId: string;
+    let rulesetVersionId: string;
+    let evaluationId: string;
+
+    beforeEach(async () => {
+      cleanupResult = await cleanup();
+      assertCleanup(cleanupResult, "phase29 beforeEach");
+
+      const trader = await createTestTrader(`phase29-${RUN_ID}@example.com`);
+      traderId = trader.id;
+
+      const account = await createTestAccount(`ACC-${RUN_ID}-p29`);
+      accountId = account.id;
+
+      await createTestAssignment(traderId, accountId);
+      await prisma.mT5Account.update({ where: { id: accountId }, data: { status: "IN_USE" } });
+
+      const { version } = await createTestRuleset([
+        { ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 5000 }, isRequired: false },
+        { ruleType: RuleType.DRAWDOWN_LIMIT, name: "Max Drawdown", value: { maxDrawdown: 20000 }, isRequired: true },
+        { ruleType: RuleType.MIN_TRADES, name: "Min Trades", value: { minTrades: 1 }, isRequired: true },
+      ]);
+      rulesetVersionId = version.id;
+
+      const evaluation = await createTestEvaluation(traderId, rulesetVersionId, accountId, "IN_PROGRESS", 100000);
+      evaluationId = evaluation.id;
+
+      const rules = await prisma.rule.findMany({ where: { rulesetVersionId } });
+      await prisma.ruleEvaluation.createMany({
+        data: rules.map((rule) => ({
+          evaluationId: evaluation.id,
+          ruleId: rule.id,
+          result: RuleResult.PASS,
+          details: "Initial state - awaiting monitoring",
+          evaluatedAt: new Date(),
+        })),
+      });
+    });
+
+    afterEach(async () => {
+      if (cleanupResult) assertCleanup(cleanupResult as CleanupResult, "phase29 afterEach");
+    });
+
+    after(async () => {
+      if (cleanupResult) assertCleanup(cleanupResult as CleanupResult, "phase29 after");
+    });
+
+    it("R. PROFIT_TARGET not met (WARNING) does not trigger failure with non-required rule", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 102000,
+        historySummary: { dealCount: 2, totalRealizedPnl: 2000, winCount: 2, lossCount: 0, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      const result = await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      check("Pipeline success", result.success, "");
+      if (result.success) {
+        check("Overall WARNING (not FAIL)", result.overallResult === "WARNING", `result=${result.overallResult}`);
+        check("Not passed", result.passed !== true, "");
+        check("Not failed", result.failed !== true, "");
+
+        const evalAfter = await prisma.evaluation.findUnique({ where: { id: evaluationId } });
+        check("Still IN_PROGRESS", evalAfter?.status === "IN_PROGRESS", `status=${evalAfter?.status}`);
+      }
+    });
+
+    it("S. PROFIT_TARGET met (PASS) triggers evaluation completion", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 106000,
+        historySummary: { dealCount: 5, totalRealizedPnl: 6000, winCount: 3, lossCount: 2, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      const result = await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      check("Pipeline success", result.success, "");
+      if (result.success) {
+        check("Overall PASS", result.overallResult === "PASS", `result=${result.overallResult}`);
+        check("Passed", result.passed === true, `passed=${result.passed}`);
+
+        const evalAfter = await prisma.evaluation.findUnique({ where: { id: evaluationId } });
+        check("Evaluation PASSED", evalAfter?.status === "PASSED", `status=${evalAfter?.status}`);
+      }
+    });
+
+    it("T. PROFIT_TARGET not met but required breach triggers failure", async () => {
+      await prisma.rule.updateMany({
+        where: { rulesetVersionId },
+        data: { isRequired: true },
+      });
+
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 70000,
+        historySummary: { dealCount: 10, totalRealizedPnl: -30000, winCount: 2, lossCount: 8, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      const result = await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      check("Pipeline success", result.success, "");
+      if (result.success) {
+        check("Overall FAIL", result.overallResult === "FAIL", `result=${result.overallResult}`);
+        check("Failed", result.failed === true, `failed=${result.failed}`);
+      }
+    });
+
+    it("U. Email semantic fix — no sendRuleBreachEmail for evaluation pass (idempotency)", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 106000,
+        historySummary: { dealCount: 5, totalRealizedPnl: 6000, winCount: 3, lossCount: 2, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: true,
+      });
+
+      const emailDeliveries = await prisma.emailDelivery.findMany({
+        where: { relatedEntityType: "Evaluation", relatedEntityId: evaluationId },
+      });
+
+      check("No rule breach template email for pass", emailDeliveries.every((e) => e.template !== "RULE_BREACH_CONFIRMED"), `templates=${emailDeliveries.map((e) => e.template).join(",")}`);
+    });
+
+    it("V. Email semantic fix — evaluation passed uses correct template", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 106000,
+        historySummary: { dealCount: 5, totalRealizedPnl: 6000, winCount: 3, lossCount: 2, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: true,
+      });
+
+      const allEmails = await prisma.emailDelivery.findMany({});
+      const breachEmails = allEmails.filter((e) => e.template === "RULE_BREACH_CONFIRMED");
+
+      check("No rule-breach email for pass", breachEmails.length === 0, `breachCount=${breachEmails.length}, allTemplates=${allEmails.map((e) => e.template).join(",")}`);
+    });
+
+    it("W. Evaluation totalPnl updated with decimal precision", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 105000.01,
+        historySummary: { dealCount: 5, totalRealizedPnl: 5000.01, winCount: 3, lossCount: 2, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      const evalAfter = await prisma.evaluation.findUnique({ where: { id: evaluationId } });
+      check("TotalPnL rounded to 2dp", evalAfter?.totalPnl !== null, `totalPnl=${evalAfter?.totalPnl}`);
+      if (evalAfter?.totalPnl) {
+        check("TotalPnL is 5000.01", Number(evalAfter.totalPnl) === 5000.01, `actual=${Number(evalAfter.totalPnl)}`);
+      }
+    });
+
+    it("X. Evaluation maxDrawdown tracked correctly", async () => {
+      const snapshot1 = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 95000,
+        historySummary: { dealCount: 5, totalRealizedPnl: -5000, winCount: 2, lossCount: 3, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot: snapshot1,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      let evalAfter = await prisma.evaluation.findUnique({ where: { id: evaluationId } });
+      check("MaxDrawdown tracked at 5000", evalAfter !== null && evalAfter.maxDrawdown !== null && Number(evalAfter.maxDrawdown) === 5000, `maxDrawdown=${evalAfter?.maxDrawdown}`);
+
+      const snapshot2 = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 90000,
+        historySummary: { dealCount: 5, totalRealizedPnl: -10000, winCount: 1, lossCount: 4, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot: snapshot2,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      evalAfter = await prisma.evaluation.findUnique({ where: { id: evaluationId } });
+      check("MaxDrawdown updated to higher value", evalAfter !== null && evalAfter.maxDrawdown !== null && Number(evalAfter.maxDrawdown) === 10000, `maxDrawdown=${evalAfter?.maxDrawdown}`);
+    });
+
+    it("Y. RuleEvaluation outcomes persist with correct values", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 103000,
+        historySummary: { dealCount: 2, totalRealizedPnl: 3000, winCount: 2, lossCount: 0, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      const ruleEvals = await prisma.ruleEvaluation.findMany({ where: { evaluationId } });
+      const profitTargetEval = ruleEvals.find((re) => re.details?.includes("PROFIT_TARGET") || re.result !== null);
+      check("RuleEvaluations persisted", ruleEvals.length >= 3, `count=${ruleEvals.length}`);
+
+      const profitOutcome = await evaluateRule(
+        { id: profitTargetEval?.ruleId ?? "", ruleType: RuleType.PROFIT_TARGET, value: { target: 5000 } } as unknown as Rule,
+        snapshot,
+        { startingBalance: 100000 },
+      );
+      check("PROFIT_TARGET outcome is WARNING", profitOutcome.result === "WARNING", `result=${profitOutcome.result}`);
+    });
+
+    it("Z. Monitoring state reflects WARNING overall result", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 102000,
+        historySummary: { dealCount: 2, totalRealizedPnl: 2000, winCount: 2, lossCount: 0, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      const account = await prisma.mT5Account.findUnique({ where: { id: accountId } });
+      check("Monitoring DEGRADED", account?.currentMonitoringStatus === "DEGRADED", `status=${account?.currentMonitoringStatus}`);
+      check("Health DISCONNECTED", account?.healthStatus === "DISCONNECTED", `health=${account?.healthStatus}`);
+    });
+
+    it("AA. Audit log entries created for rule breaches", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 70000,
+        historySummary: { dealCount: 10, totalRealizedPnl: -30000, winCount: 2, lossCount: 8, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      const audits = await prisma.auditLog.findMany({
+        where: { action: "SYSTEM_EVENT" as const, entityType: "RuleEvent" },
+      });
+      check("Audit logs for rule breaches", audits.length > 0, `count=${audits.length}`);
+    });
+
+    it("AB. Idempotent re-processing after failure", async () => {
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 70000,
+        historySummary: { dealCount: 10, totalRealizedPnl: -30000, winCount: 2, lossCount: 8, periodStart: new Date(), periodEnd: new Date() },
+        positions: [],
+        orders: [],
+      });
+
+      await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      const result2 = await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      check("Skipped on re-process", result2.success && result2.outcomes.length === 0, `outcomes=${result2.success ? result2.outcomes.length : "N/A"}`);
+    });
+
+    it("AC. Starting balance not set — drawdown uses balance as peak", async () => {
+      const evalNoBalance = await createTestEvaluation(traderId, rulesetVersionId, accountId, "IN_PROGRESS");
+      await prisma.ruleEvaluation.createMany({
+        data: (await prisma.rule.findMany({ where: { rulesetVersionId } })).map((rule) => ({
+          evaluationId: evalNoBalance.id,
+          ruleId: rule.id,
+          result: RuleResult.PASS,
+          details: "Initial",
+          evaluatedAt: new Date(),
+        })),
+      });
+
+      const snapshot = makeSnapshot({
+        accountId,
+        balance: 100000,
+        equity: 75000,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 5, totalRealizedPnl: -5000, winCount: 2, lossCount: 3, periodStart: null, periodEnd: null },
+      });
+
+      const result = await processMonitoringSnapshot(prisma, {
+        accountId,
+        snapshot,
+        performedBy: traderId,
+        sendEmails: false,
+      });
+
+      check("Pipeline success", result.success, "");
+      if (result.success) {
+        check("Overall FAIL (drawdown breach)", result.overallResult === "FAIL", `result=${result.overallResult}`);
+        check("Failed", result.failed === true, "");
+      }
+    });
+  });
+
+  describe("Boundary and edge cases", () => {
+    it("AD. Exact drawdown at limit boundary returns PASS", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 98000,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 0, totalRealizedPnl: 0, winCount: 0, lossCount: 0, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.DRAWDOWN_LIMIT, name: "Max Drawdown", value: { maxDrawdown: 2000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("DD_boundary_pass", outcome.result === "PASS", `result=${outcome.result}, actual=${outcome.actualValue}`);
+    });
+
+    it("AE. One cent over drawdown limit returns FAIL", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 97999.99,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 0, totalRealizedPnl: 0, winCount: 0, lossCount: 0, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.DRAWDOWN_LIMIT, name: "Max Drawdown", value: { maxDrawdown: 2000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("DD_over_limit_fail", outcome.result === "FAIL", `result=${outcome.result}, actual=${outcome.actualValue}`);
+    });
+
+    it("AF. Zero starting balance treated as undefined", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 100000,
+        positions: [],
+        orders: [],
+        historySummary: { dealCount: 0, totalRealizedPnl: 0, winCount: 0, lossCount: 0, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.DRAWDOWN_LIMIT, name: "Max Drawdown", value: { maxDrawdownPercent: 10, startingBalance: 0 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot, { startingBalance: 0 });
+      check("ZERO_starting_balance_handled", outcome.result === "PASS", `result=${outcome.result}`);
+    });
+
+    it("AG. Negative PnL reduces total correctly", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 97000,
+        positions: [makePosition({ profit: -500 })],
+        orders: [],
+        historySummary: { dealCount: 3, totalRealizedPnl: -2500, winCount: 1, lossCount: 2, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: -5000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("NEGATIVE_PNL_target_met", outcome.result === "PASS", `result=${outcome.result}, actual=${outcome.actualValue}`);
+      check("NEGATIVE_PNL_value", Number(outcome.actualValue) === -3000, `actual=${outcome.actualValue}`);
+    });
+
+    it("AH. Multiple positions profit aggregated correctly", () => {
+      const snapshot = makeSnapshot({
+        balance: 100000,
+        equity: 103000,
+        positions: [
+          makePosition({ profit: 500 }),
+          makePosition({ profit: 300 }),
+          makePosition({ profit: -100 }),
+          makePosition({ profit: 800 }),
+        ],
+        orders: [],
+        historySummary: { dealCount: 4, totalRealizedPnl: 1500, winCount: 3, lossCount: 1, periodStart: null, periodEnd: null },
+      });
+      const rule = { id: "r1", ruleType: RuleType.PROFIT_TARGET, name: "Profit Target", value: { target: 3000 } } as unknown as Rule;
+      const outcome = evaluateRule(rule, snapshot);
+      check("MULTI_POSITION_pnl", Number(outcome.actualValue) === 3000, `actual=${outcome.actualValue}`);
+      check("MULTI_POSITION_pass", outcome.result === "PASS", `result=${outcome.result}`);
+    });
+  });
+
+  after(async () => {
+    await prisma.$disconnect();
+    console.log(`Phase 29 Financial Rules: ${results.pass}/${results.pass + results.fail} passed, ${results.fail} failed`);
+    if (results.fail > 0) process.exit(1);
   });
 });

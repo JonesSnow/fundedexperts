@@ -37,16 +37,26 @@ export interface ProcessSnapshotFailure {
 
 export type ProcessSnapshotResult = ProcessSnapshotSuccess | ProcessSnapshotFailure;
 
+function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 function computeTotalPnl(snapshot: MonitoringSnapshot): number {
   const realizedPnl = snapshot.historySummary?.totalRealizedPnl ?? 0;
   const unrealizedPnl = (snapshot.positions ?? []).reduce((sum, p) => sum + (p.profit ?? 0), 0);
-  return realizedPnl + unrealizedPnl;
+  return round2(realizedPnl + unrealizedPnl);
 }
 
-function computeCurrentDrawdown(snapshot: MonitoringSnapshot): number {
+function computeCurrentDrawdown(snapshot: MonitoringSnapshot, startingBalance?: number | null): number {
   const balance = snapshot.balance ?? 0;
   const equity = snapshot.equity ?? 0;
-  return Math.max(0, balance - equity);
+
+  let peakEquity = Math.max(balance, equity);
+  if (startingBalance !== undefined && startingBalance !== null) {
+    peakEquity = Math.max(peakEquity, startingBalance);
+  }
+
+  return round2(Math.max(0, peakEquity - equity));
 }
 
 function getRuleSeverity(ruleType: RuleType): "HIGH" | "MEDIUM" | "LOW" {
@@ -138,7 +148,9 @@ export async function processMonitoringSnapshot(
     };
   }
 
-  const outcomes = evaluateAllRules(rules, snapshot);
+  const outcomes = evaluateAllRules(rules, snapshot, {
+    startingBalance: evaluation.startingBalance ? Number(evaluation.startingBalance) : undefined,
+  });
   const overallResult = getOverallResult(outcomes);
 
   const hasRequiredFailure = outcomes.some(
@@ -225,9 +237,10 @@ export async function processMonitoringSnapshot(
     }
 
     const totalPnl = computeTotalPnl(snapshot);
-    const currentDrawdown = computeCurrentDrawdown(snapshot);
+    const startingBalanceNum = evaluation.startingBalance ? Number(evaluation.startingBalance) : undefined;
+    const currentDrawdown = computeCurrentDrawdown(snapshot, startingBalanceNum);
     const maxDrawdown = evaluation.maxDrawdown
-      ? Math.max(Number(evaluation.maxDrawdown), currentDrawdown)
+      ? round2(Math.max(Number(evaluation.maxDrawdown), currentDrawdown))
       : currentDrawdown;
 
     await tx.evaluation.update({
@@ -319,30 +332,6 @@ export async function processMonitoringSnapshot(
   } else if (overallResult === "PASS") {
     const profitTargetOutcome = outcomes.find((o) => o.ruleType === "PROFIT_TARGET");
     const profitTargetMet = profitTargetOutcome && profitTargetOutcome.result === "PASS";
-
-    if (profitTargetMet && sendEmails && evaluation.trader) {
-      try {
-        await sendRuleBreachEmail(
-          account.accountNumber,
-          {
-            id: evaluation.trader.id,
-            email: evaluation.trader.email,
-            firstName: evaluation.trader.firstName ?? undefined,
-          } as TraderRef,
-          {
-            violationType: "EVALUATION_PASSED",
-            detectedAt: new Date().toISOString(),
-            currentStatus: "PASSED",
-          },
-        );
-      } catch {
-        logger.error("MONITORING_PIPELINE", "Evaluation passed notification email failed", {
-          correlationId,
-          entity: { type: "Evaluation", id: evaluation.id },
-          error: { code: "EMAIL_FAILED", message: "Failed to send evaluation passed email" },
-        });
-      }
-    }
 
     if (profitTargetMet) {
       const releaseResult = await releaseAccount(prisma, {

@@ -315,9 +315,10 @@ model Evaluation {
   status           EvaluationStatus @default(IN_PROGRESS)
   startedAt        DateTime         @default(now())
   completedAt      DateTime?
-  totalPnl         Decimal?         @db.Decimal(18, 2)
-  maxDrawdown      Decimal?         @db.Decimal(18, 2)
-  notes            String?
+   totalPnl         Decimal?         @db.Decimal(18, 2)
+   maxDrawdown      Decimal?         @db.Decimal(18, 2)
+   startingBalance  Decimal?         @db.Decimal(18, 2)
+   notes            String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
