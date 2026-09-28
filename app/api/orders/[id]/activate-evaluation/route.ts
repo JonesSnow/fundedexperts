@@ -5,7 +5,7 @@ import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { allocateAccount } from "@/lib/allocation";
 import { linkEvaluation } from "@/lib/evaluation-link";
-import { createLedgerEntry } from "@/lib/ledger/service";
+import { releaseAccount } from "@/lib/release";
 
 const prisma = new PrismaClient();
 const logger = createLogger({
@@ -177,6 +177,23 @@ export async function POST(
           entity: { type: "Evaluation", id: evaluation.id },
           error: { code: "LINK_FAILED", message: linkResult.error },
         });
+
+        if (account) {
+          const rollback = await releaseAccount(prisma, {
+            traderId: trader.id,
+            accountId: account.id,
+            reason: "ADMINISTRATIVE_CORRECTION",
+          });
+          if (!rollback.success) {
+            logger.error("ACTIVATION", "Rollback release failed after link failure", {
+              correlationId,
+              actor: { type: "trader", id: trader.id },
+              entity: { type: "MT5Account", id: account.id },
+              error: { code: "ROLLBACK_FAILED", message: rollback.error },
+            });
+          }
+        }
+
         return NextResponse.json(
           { success: false, error: `Evaluation linking failed: ${linkResult.error}` },
           { status: 400 }
@@ -206,30 +223,6 @@ export async function POST(
           });
         }
       }
-    }
-
-    const referenceId = `payment-${order.id}`;
-    const ledgerResult = await createLedgerEntry({
-      traderId: trader.id,
-      orderId: order.id,
-      entryType: "CUSTOMER_PAYMENT",
-      amount: order.totalAmount,
-      direction: "CREDIT",
-      currency: order.currency,
-      referenceId,
-      metadata: { paymentMethod: "SIMULATED", orderNumber: order.orderNumber },
-      createdBy: trader.id,
-    });
-
-    if (!ledgerResult.success) {
-      logger.warn("ACTIVATION", "Ledger entry creation failed", {
-        correlationId,
-        actor: { type: "trader", id: trader.id },
-        entity: { type: "Order", id: order.id },
-        metadata: {
-          error: { code: "LEDGER_CREATE_FAILED", message: ledgerResult.error ?? "Unknown" },
-        },
-      });
     }
 
     logger.info("ACTIVATION", "Evaluation activated", {

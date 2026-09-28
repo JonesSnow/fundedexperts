@@ -132,11 +132,36 @@ export async function POST(
       );
     }
 
-    const paidOrder = await prisma.order.update({
-      where: { id },
-      data: { status: "PAID" },
+    const updateResult = await prisma.$transaction(async (tx) => {
+      const affected = await tx.order.updateMany({
+        where: { id, status: { in: ["CREATED", "PENDING_PAYMENT"] } },
+        data: { status: "PAID" },
+      });
+
+      if (affected.count === 0) {
+        const current = await tx.order.findUnique({ where: { id } });
+        return { order: current, alreadyPaid: current?.status === "PAID" };
+      }
+
+      const updated = await tx.order.findUnique({ where: { id } });
+      return { order: updated, alreadyPaid: false };
     });
 
+    if (updateResult.alreadyPaid) {
+      return NextResponse.json(
+        { success: false, error: "Order already paid", order: updateResult.order },
+        { status: 400 },
+      );
+    }
+
+    if (!updateResult.order) {
+      return NextResponse.json(
+        { success: false, error: "Order not found after update" },
+        { status: 404 },
+      );
+    }
+
+    const paidOrder = updateResult.order;
     const referenceId = `pay-${paidOrder.id}-${paidOrder.orderNumber}`;
     const ledgerInput: CreateLedgerEntryInput = {
       traderId: trader.id,

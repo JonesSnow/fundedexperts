@@ -32,12 +32,19 @@ function check(name: string, condition: boolean, detail: string = "") {
 
 async function cleanup(prisma: PrismaClient): Promise<CleanupResult> {
   const steps = [
+    { label: "ruleEvaluation.deleteMany", fn: () => prisma.ruleEvaluation.deleteMany({}) },
+    { label: "rule.deleteMany", fn: () => prisma.rule.deleteMany({}) },
     { label: "order.deleteMany", fn: () => prisma.order.deleteMany({}) },
     { label: "evaluation.deleteMany", fn: () => prisma.evaluation.deleteMany({}) },
     { label: "ledgerEntry.deleteMany", fn: () => prisma.ledgerEntry.deleteMany({}) },
+    { label: "accountAssignment.deleteMany", fn: () => prisma.accountAssignment.deleteMany({}) },
+    { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({}) },
     { label: "rulesetVersion.deleteMany", fn: () => prisma.rulesetVersion.deleteMany({}) },
     { label: "product.deleteMany", fn: () => prisma.product.deleteMany({}) },
     { label: "ruleset.deleteMany", fn: () => prisma.ruleset.deleteMany({}) },
+    { label: "trader.deleteMany", fn: () => prisma.trader.deleteMany({}) },
+    { label: "auditLog.deleteMany", fn: () => prisma.auditLog.deleteMany({}) },
+    { label: "emailDelivery.deleteMany", fn: () => prisma.emailDelivery.deleteMany({}) },
   ];
   return runCleanupSteps(prisma, steps);
 }
@@ -322,6 +329,56 @@ describe("Activation - Idempotency", () => {
       evals.length === 1,
       `count=${evals.length}`,
     );
+  });
+});
+
+describe("Activation - Evaluation Reuse Without Account", () => {
+  it("should reuse existing evaluation without account instead of creating new one", async () => {
+    const trader = await createTestTrader(
+      prisma,
+      `act-reuse-${RUN_ID}@example.com`,
+    );
+    const { order } = await setupOrder(prisma, trader.id, OrderStatus.PAID);
+
+    await provider.processPayment({
+      orderId: order.id,
+      amount: 100,
+      currency: "USD",
+      provider: "MOCK",
+      idempotencyKey: `pay-reuse-${order.id}`,
+    });
+
+    const evalNoAccount = await prisma.evaluation.create({
+      data: {
+        traderId: trader.id,
+        rulesetVersionId: order.rulesetVersionId!,
+        status: "IN_PROGRESS",
+      },
+    });
+
+    const beforeCount = await prisma.evaluation.count({
+      where: { traderId: trader.id },
+    });
+    check("One evaluation exists before activation", beforeCount === 1, `count=${beforeCount}`);
+
+    const result1 = await activateEvaluation(prisma, provider, {
+      orderId: order.id,
+      performedBy: trader.id,
+      paymentReference: `pay-reuse-${order.id}`,
+    });
+    check("First activation reuses existing evaluation", result1.success === true, "");
+    if (result1.success) {
+      check(
+        "Same evaluation ID",
+        result1.evaluation.id === evalNoAccount.id,
+        `expected=${evalNoAccount.id}, got=${result1.evaluation.id}`,
+      );
+    }
+
+    const afterCount = await prisma.evaluation.count({
+      where: { traderId: trader.id },
+    });
+    check("Still one evaluation after activation", afterCount === 1, `count=${afterCount}`);
   });
 });
 

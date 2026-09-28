@@ -264,30 +264,6 @@ export async function processMonitoringSnapshot(
     const breachRules = outcomes.filter((o) => o.result === "FAIL");
     const primaryViolation = breachRules[0];
 
-    if (sendEmails && evaluation.trader) {
-      try {
-        await sendRuleBreachEmail(
-          account.accountNumber,
-          {
-            id: evaluation.trader.id,
-            email: evaluation.trader.email,
-            firstName: evaluation.trader.firstName ?? undefined,
-          } as TraderRef,
-          {
-            violationType: primaryViolation.ruleType,
-            detectedAt: new Date().toISOString(),
-            currentStatus: "FAILED",
-          },
-        );
-      } catch {
-        logger.error("MONITORING_PIPELINE", "Rule breach email failed", {
-          correlationId,
-          entity: { type: "Evaluation", id: evaluation.id },
-          error: { code: "EMAIL_FAILED", message: "Failed to send rule breach email" },
-        });
-      }
-    }
-
     const releaseResult = await releaseAccount(prisma, {
       traderId: evaluation.traderId,
       accountId: evaluation.accountId!,
@@ -322,6 +298,30 @@ export async function processMonitoringSnapshot(
           } as Prisma.InputJsonObject,
         },
       });
+
+      if (sendEmails && evaluation.trader) {
+        try {
+          await sendRuleBreachEmail(
+            account.accountNumber,
+            {
+              id: evaluation.trader.id,
+              email: evaluation.trader.email,
+              firstName: evaluation.trader.firstName ?? undefined,
+            } as TraderRef,
+            {
+              violationType: primaryViolation.ruleType,
+              detectedAt: new Date().toISOString(),
+              currentStatus: "FAILED",
+            },
+          );
+        } catch {
+          logger.error("MONITORING_PIPELINE", "Rule breach email failed", {
+            correlationId,
+            entity: { type: "Evaluation", id: evaluation.id },
+            error: { code: "EMAIL_FAILED", message: "Failed to send rule breach email" },
+          });
+        }
+      }
     } else {
       logger.error("MONITORING_PIPELINE", "Failed to release account after evaluation failure", {
         correlationId,

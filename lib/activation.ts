@@ -12,6 +12,7 @@ import {
 import type { LogActor, LogEntity, LogError } from "./logger";
 import { allocateAccount } from "./allocation";
 import { linkEvaluation } from "./evaluation-link";
+import { releaseAccount } from "./release";
 import { PaymentProvider } from "./payment";
 import { createLedgerEntry, CreateLedgerEntryInput } from "./ledger";
 import { createLogger, generateCorrelationId } from "./logger";
@@ -188,7 +189,7 @@ export async function activateEvaluation(
         },
       });
 
-      if (existing && existing.accountId) {
+      if (existing) {
         return { evaluation: existing, created: false };
       }
 
@@ -214,8 +215,7 @@ export async function activateEvaluation(
     });
 
     evaluation = result.evaluation;
-    wasAlreadyActivated =
-      !result.created && result.evaluation.accountId !== null;
+    wasAlreadyActivated = !result.created && evaluation.accountId !== null;
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : "Unknown error";
     logger.error("ACTIVATION", "Failed to create evaluation", {
@@ -279,6 +279,21 @@ export async function activateEvaluation(
       entity: makeEntity("Evaluation", evaluation.id),
       error: makeError("LINK_FAILED", linkResult.error),
     });
+    if (allocationResult.account && allocationResult.assignment) {
+      const rollback = await releaseAccount(prisma, {
+        traderId: order.traderId,
+        accountId: allocationResult.account.id,
+        reason: "ADMINISTRATIVE_CORRECTION",
+      });
+      if (!rollback.success) {
+        logger.error("ACTIVATION", "Rollback release failed after link failure", {
+          correlationId,
+          actor: makeActor(performedBy),
+          entity: makeEntity("MT5Account", allocationResult.account.id),
+          error: makeError("ROLLBACK_FAILED", rollback.error),
+        });
+      }
+    }
     return {
       success: false,
       error: `Evaluation linking failed: ${linkResult.error}`,
@@ -323,9 +338,14 @@ export async function activateEvaluation(
   }
 
   let ledgerEntry: LedgerEntry | undefined;
-  if (paymentReference) {
+  const paymentReferenceId = `pay-${order.id}-${order.orderNumber}`;
+  const existingLedger = await prisma.ledgerEntry.findUnique({
+    where: { referenceId: paymentReferenceId },
+  });
+
+  if (!existingLedger && paymentReference) {
     const ledgerResult = await createLedgerEntry(prisma, {
-      referenceId: `payment-${orderId}`,
+      referenceId: paymentReferenceId,
       entryType: LedgerEntryType.CUSTOMER_PAYMENT,
       amount: order.totalAmount.toNumber(),
       direction: LedgerDirection.CREDIT,
@@ -344,6 +364,14 @@ export async function activateEvaluation(
         entity: makeEntity("Order", orderId),
       });
     }
+  } else if (existingLedger) {
+    ledgerEntry = existingLedger;
+    logger.info("ACTIVATION", "Ledger entry already exists for payment, skipping creation", {
+      correlationId,
+      actor: makeActor(performedBy),
+      entity: makeEntity("LedgerEntry", existingLedger.id),
+      metadata: { referenceId: paymentReferenceId },
+    });
   }
 
   logger.info("ACTIVATION", "Evaluation activated successfully", {
