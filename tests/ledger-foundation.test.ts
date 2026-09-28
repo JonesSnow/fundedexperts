@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { runCleanupSteps, assertCleanup, type CleanupResult } from "../lib/cleanup-helper";
-import { createLedgerEntry, CreateLedgerEntryInput } from "../lib/ledger/service";
+import { createLedgerEntry, CreateLedgerEntryInput } from "../lib/ledger";
 
 const HAS_DB = process.env.DATABASE_URL !== undefined;
 const RUN_ID = Date.now().toString(36);
@@ -115,7 +115,7 @@ describe("Ledger Foundation - createLedgerEntry", () => {
       traderId,
       orderId: order.id,
       entryType: "CUSTOMER_PAYMENT",
-      amount: new Prisma.Decimal(99.99),
+      amount: 99.99,
       direction: "CREDIT",
       currency: "USD",
       referenceId: `pay-${order.id}-${order.orderNumber}`,
@@ -123,14 +123,14 @@ describe("Ledger Foundation - createLedgerEntry", () => {
       createdBy: traderId,
     };
 
-    const result = await createLedgerEntry(input);
+    const result = await createLedgerEntry(prisma, input);
 
     check("Ledger entry created", result.success === true, "");
-    if (result.success && result.ledgerEntry) {
-      check("Amount preserved", result.ledgerEntry.amount.toString() === "99.99", `got: ${result.ledgerEntry.amount}`);
-      check("Direction CREDIT", result.ledgerEntry.direction === "CREDIT", `got: ${result.ledgerEntry.direction}`);
-      check("Status POSTED", result.ledgerEntry.status === "POSTED", `got: ${result.ledgerEntry.status}`);
-      check("Currency USD", result.ledgerEntry.currency === "USD", `got: ${result.ledgerEntry.currency}`);
+    if (result.success && result.entry) {
+      check("Amount preserved", result.entry.amount.toString() === "99.99", `got: ${result.entry.amount}`);
+      check("Direction CREDIT", result.entry.direction === "CREDIT", `got: ${result.entry.direction}`);
+      check("Status POSTED", result.entry.status === "POSTED", `got: ${result.entry.status}`);
+      check("Currency USD", result.entry.currency === "USD", `got: ${result.entry.currency}`);
     }
   });
 
@@ -142,19 +142,19 @@ describe("Ledger Foundation - createLedgerEntry", () => {
       traderId,
       orderId: order.id,
       entryType: "CUSTOMER_PAYMENT",
-      amount: new Prisma.Decimal(49.50),
+      amount: 49.5,
       direction: "CREDIT",
       currency: "USD",
       referenceId: `pay-${order.id}-${order.orderNumber}`,
     };
 
-    const result1 = await createLedgerEntry(input);
-    const result2 = await createLedgerEntry(input);
+    const result1 = await createLedgerEntry(prisma, input);
+    const result2 = await createLedgerEntry(prisma, input);
 
     check("First creation succeeds", result1.success === true, "");
     check("Second creation succeeds (idempotent)", result2.success === true, "");
     if (result1.success && result2.success) {
-      check("Same entry returned", result1.ledgerEntry?.id === result2.ledgerEntry?.id, `got: ${result1.ledgerEntry?.id} vs ${result2.ledgerEntry?.id}`);
+      check("Same entry returned", result1.entry?.id === result2.entry?.id, `got: ${result1.entry?.id} vs ${result2.entry?.id}`);
     }
 
     const count = await prisma.ledgerEntry.count({ where: { referenceId: input.referenceId } });
@@ -169,21 +169,21 @@ describe("Ledger Foundation - createLedgerEntry", () => {
       traderId,
       orderId: order.id,
       entryType: "CUSTOMER_PAYMENT",
-      amount: new Prisma.Decimal("123.45"),
+      amount: 123.45,
       direction: "CREDIT",
       currency: "USD",
       referenceId: `pay-precision-${order.id}`,
     };
 
-    const result = await createLedgerEntry(input);
+    const result = await createLedgerEntry(prisma, input);
 
     check("Ledger entry created", result.success === true, "");
-    if (result.success && result.ledgerEntry) {
-      check("Decimal precision preserved", result.ledgerEntry.amount.toString() === "123.45", `got: ${result.ledgerEntry.amount}`);
+    if (result.success && result.entry) {
+      check("Decimal precision preserved", result.entry.amount.toString() === "123.45", `got: ${result.entry.amount}`);
     }
   });
 
-  it("handles zero amount correctly", async () => {
+  it("rejects zero amount as invalid", async () => {
     const traderId = await createTestTrader(prisma, `ledger-trader4-${RUN_ID}@example.com`);
     const order = await createTestOrder(prisma, traderId, 0, "PAID");
 
@@ -191,17 +191,17 @@ describe("Ledger Foundation - createLedgerEntry", () => {
       traderId,
       orderId: order.id,
       entryType: "CUSTOMER_PAYMENT",
-      amount: new Prisma.Decimal(0),
+      amount: 0,
       direction: "CREDIT",
       currency: "USD",
       referenceId: `pay-zero-${order.id}`,
     };
 
-    const result = await createLedgerEntry(input);
+    const result = await createLedgerEntry(prisma, input);
 
-    check("Zero amount accepted", result.success === true, "");
-    if (result.success && result.ledgerEntry) {
-      check("Amount is zero", result.ledgerEntry.amount.toNumber() === 0, `got: ${result.ledgerEntry.amount}`);
+    check("Zero amount rejected", result.success === false, "");
+    if (!result.success) {
+      check("Error category is VALIDATION_ERROR", result.errorCategory === "VALIDATION_ERROR", `got: ${result.errorCategory}`);
     }
   });
 });
@@ -240,13 +240,13 @@ describe("Ledger Foundation - Payment Integration", () => {
       traderId,
       orderId: order.id,
       entryType: "CUSTOMER_PAYMENT",
-      amount: new Prisma.Decimal(100),
+      amount: 100,
       direction: "CREDIT",
       currency: "USD",
       referenceId,
     };
 
-    const result = await createLedgerEntry(input);
+    const result = await createLedgerEntry(prisma, input);
     check("Entry created for already-paid order", result.success === true, "");
   });
 });

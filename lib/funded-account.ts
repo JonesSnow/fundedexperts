@@ -194,7 +194,7 @@ export async function createFundedAccount(
         traderId: evaluation.traderId,
         evaluationId: evaluation.id,
         rulesetVersionId: evaluation.rulesetVersionId ?? undefined,
-        status: "PENDING",
+        status: "ELIGIBLE",
       },
     });
 

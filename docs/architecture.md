@@ -1,7 +1,7 @@
 # Architecture Document
 
 **Status:** Phase 1 — Foundation  
-**Last Updated:** 2026-09-20
+**Last Updated:** 2026-09-28
 
 ## 1. Architecture Decisions
 
@@ -40,7 +40,14 @@ MT5 accounts are created and managed through the admin panel, not via automated 
 - It is designed to be testable independently of the web framework
 - Can be run as a background service or invoked on-demand via API routes
 
-### 1.6 Evidence and Audit Logging
+### 1.6 Financial Ledger
+
+- A single ledger implementation lives in `lib/ledger.ts` with dependency-injected `PrismaClient`
+- `createLedgerEntry(prisma, input)` validates inputs, enforces idempotency via `referenceId` (@unique), and logs with correlation IDs
+- Ledger entries are append-only; duplicates are ignored after the unique constraint check
+- `lib/ledger/service.ts` (the non-injectable variant without validation) was removed in favor of the single implementation
+
+### 1.7 Evidence and Audit Logging
 
 - All evaluation decisions, rule changes, and admin actions are logged
 - Audit logs are append-only records stored in PostgreSQL
@@ -99,9 +106,9 @@ Immutable system events — evaluation decisions, rule changes, admin actions.
 
 ### 4.1 XM MT5 Connectivity
 
-> **Status:** BLOCKED — Terminal Not Logged In
-> **Owner:** Architecture lead / Backend team
-> **Last Updated:** 2026-09-20
+> **Status:** RESOLVED — Terminal logged in, credentials available  
+> **Owner:** Architecture lead / Backend team  
+> **Last Updated:** 2026-09-28
 > **Per POC:** docs/mt5-poc-results.md
 
 **What was confirmed (research-based):**

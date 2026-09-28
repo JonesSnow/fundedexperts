@@ -71,8 +71,15 @@ export function createMockPaymentProvider(): PaymentProvider {
 
     async getPaymentStatus(paymentId: string): Promise<PaymentStatus | null> {
       const payment = payments.get(paymentId);
-      if (!payment) return null;
-      return payment.status;
+      if (payment) return payment.status;
+
+      for (const payment of payments.values()) {
+        if (payment.idempotencyKey === paymentId) {
+          return payment.status;
+        }
+      }
+
+      return null;
     },
 
     async refundPayment(request: RefundRequest): Promise<RefundResult> {

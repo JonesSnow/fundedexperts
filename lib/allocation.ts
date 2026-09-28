@@ -49,14 +49,17 @@ export async function allocateAccount(
     return { success: false, error: "No active evaluation found for this trader" } as AllocateAccountFailure;
   }
 
-  const existingAssignment = await prisma.accountAssignment.findFirst({
-    where: { traderId, status: "ASSIGNED" },
-  });
-  if (existingAssignment) {
-    return { success: false, error: "Trader already has an active assignment" } as AllocateAccountFailure;
-  }
-
+  
   const result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${traderId}))`;
+
+    const existingAssignment = await tx.accountAssignment.findFirst({
+      where: { traderId, status: "ASSIGNED" },
+    });
+    if (existingAssignment) {
+      return { success: false, error: "Trader already has an active assignment" } as AllocateAccountFailure;
+    }
+
     const account = await tx.$queryRaw<MT5Account[]>`
       SELECT * FROM "MT5Account"
       WHERE "status" = 'AVAILABLE'

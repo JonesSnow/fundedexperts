@@ -3,6 +3,7 @@ import type { MonitoringSnapshot } from "./monitoring/types";
 import { createLogger, generateCorrelationId } from "./logger";
 import { evaluateAllRules, getOverallResult, type RuleEvaluationOutcome } from "./rule-engine";
 import { releaseAccount } from "./release";
+import { createFundedAccount } from "./funded-account";
 import { sendRuleBreachEmail } from "./email/templates";
 import type { TraderRef } from "./email/templates";
 import { computeLeaseExpiry } from "./monitoring/repository";
@@ -328,6 +329,55 @@ export async function processMonitoringSnapshot(
         entity: { type: "Evaluation", id: evaluation.id },
         error: { code: "RELEASE_FAILED", message: releaseResult.error },
       });
+      failed = true;
+      evaluationStatus = "FAILED";
+      await prisma.evaluation.update({
+        where: { id: evaluation.id },
+        data: { status: "FAILED", completedAt: new Date() },
+      });
+      await prisma.auditLog.create({
+        data: {
+          action: "SYSTEM_EVENT" as AuditAction,
+          entityType: "Evaluation",
+          entityId: evaluation.id,
+          performedBy,
+          details: {
+            event: "EVALUATION_FAILED",
+            accountId: evaluation.accountId,
+            accountNumber: account.accountNumber,
+            breachRules: breachRules.map((o) => ({
+              ruleType: o.ruleType,
+              details: o.details,
+              actualValue: o.actualValue as Prisma.InputJsonValue,
+              expectedValue: o.expectedValue as Prisma.InputJsonValue,
+            })),
+            reason: "RELEASE_FAILED",
+          } as Prisma.InputJsonObject,
+        },
+      });
+      if (sendEmails && evaluation.trader) {
+        try {
+          await sendRuleBreachEmail(
+            account.accountNumber,
+            {
+              id: evaluation.traderId,
+              email: evaluation.trader.email,
+              firstName: evaluation.trader.firstName ?? undefined,
+            } as TraderRef,
+            {
+              violationType: primaryViolation.ruleType,
+              detectedAt: new Date().toISOString(),
+              currentStatus: "FAILED",
+            },
+          );
+        } catch {
+          logger.error("MONITORING_PIPELINE", "Rule breach email failed", {
+            correlationId,
+            entity: { type: "Evaluation", id: evaluation.id },
+            error: { code: "EMAIL_FAILED", message: "Failed to send rule breach email" },
+          });
+        }
+      }
     }
   } else if (overallResult === "PASS") {
     const profitTargetOutcome = outcomes.find((o) => o.ruleType === "PROFIT_TARGET");
@@ -368,6 +418,11 @@ export async function processMonitoringSnapshot(
               })),
             } as Prisma.InputJsonObject,
           },
+        });
+
+        await createFundedAccount(prisma, {
+          evaluationId: evaluation.id,
+          performedBy: "system",
         });
       } else {
         logger.error("MONITORING_PIPELINE", "Failed to release account after evaluation pass", {

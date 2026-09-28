@@ -139,6 +139,7 @@ export async function releaseAccount(
         status: "RETURNED",
         returnedAt: new Date(),
       },
+      include: { trader: true },
     });
 
     await tx.auditLog.create({

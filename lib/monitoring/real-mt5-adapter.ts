@@ -150,6 +150,37 @@ def safe_dict_result(result):
     except (TypeError, ValueError):
         return {"raw": str(result)}
 
+def check_terminal_only():
+    """Check if MT5 terminal is running without requiring credentials."""
+    init_result = mt5.initialize()
+    if not init_result:
+        err = mt5.last_error()
+        err_code = err[0] if err else None
+        err_msg = str(err[1]) if err and len(err) > 1 else "Terminal not running"
+        print(json.dumps({
+            "connected": False,
+            "error": "INITIALIZATION_FAILED",
+            "errorCode": err_code,
+            "errorMessage": err_msg,
+        }))
+        sys.exit(0)
+
+    terminal_info = safe_call(mt5.terminal_info)
+    ti = safe_dict_result(terminal_info) if terminal_info else {}
+    result = {
+        "connected": True,
+        "terminalInfo": {
+            "connected": ti.get("connected") if ti else None,
+            "version": ti.get("version") if ti else None,
+            "build": str(ti.get("build")) if ti and ti.get("build") else None,
+            "serverTime": ti.get("server_time") if ti and isinstance(ti, dict) else None,
+        },
+        "timestamp": time.time(),
+    }
+    mt5.shutdown()
+    print(json.dumps(result))
+    sys.exit(0)
+
 def main():
     creds_json = sys.stdin.read()
     try:
@@ -157,6 +188,11 @@ def main():
     except json.JSONDecodeError as e:
         print(json.dumps({"error": "INVALID_CREDENTIALS_FORMAT", "message": str(e)}))
         sys.exit(0)
+
+    check_only = creds.get("checkOnly", False)
+    if check_only:
+        check_terminal_only()
+        return
 
     login = creds.get("login")
     password = creds.get("password")
@@ -353,29 +389,37 @@ export class RealMT5Adapter extends MT5Adapter {
   async testConnection(): Promise<{ connected: boolean; message: string }> {
     try {
       const result = await this.executePythonScript(
-        JSON.stringify({ login: 0, password: "test", server: "test" }),
+        JSON.stringify({ checkOnly: true }),
         this.config.scriptTimeoutMs,
       );
 
       if (result.error === "INITIALIZATION_FAILED") {
         const msg = result.errorMessage ?? result.message ?? "Connection failed";
-        if (msg.toLowerCase().includes("invalid") || result.errorCode === 4 || result.errorCode === 6) {
-          return { connected: false, message: "Invalid credentials" };
-        }
         if (result.errorCode === 2) {
           return { connected: false, message: "Terminal not running" };
+        }
+        if (msg.toLowerCase().includes("invalid") || result.errorCode === 4 || result.errorCode === 6) {
+          return { connected: false, message: "Invalid credentials" };
         }
         return { connected: false, message: sanitizeCredentialMessage(msg) };
       }
 
-      return { connected: true, message: "MT5 terminal connected successfully" };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      if (result.error) {
+        if (result.error === "MT5_PACKAGE_NOT_FOUND") {
+          return { connected: false, message: "MT5 package not installed" };
+        }
+        return { connected: false, message: sanitizeCredentialMessage(result.message ?? result.error ?? "Connection failed") };
+      }
+
+      return { connected: result.connected ?? false, message: result.connected ? "MT5 terminal connected successfully" : "Unknown status" };
+    } catch (e: unknown) {
+      const err = e as { message?: string; code?: string };
+      const msg = e instanceof Error ? e.message : (err?.message || err?.code || String(e));
       if (msg.includes("TIMEOUT")) {
         return { connected: false, message: "Connection timed out" };
       }
-      if (msg.includes("ENOENT")) {
-        return { connected: false, message: "MT5 terminal not found" };
+      if (msg.includes("ENOENT") || msg.includes("not found") || msg.includes("not running") || msg.includes("TERMINAL")) {
+        return { connected: false, message: "Terminal not running in this environment" };
       }
       return { connected: false, message: sanitizeCredentialMessage(msg) };
     }

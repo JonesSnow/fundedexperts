@@ -266,41 +266,55 @@ export async function activateEvaluation(
     } as ActivateEvaluationFailure;
   }
 
-  const linkResult = await linkEvaluation(prisma, {
-    evaluationId: evaluation.id,
-    accountId: allocationResult.account.id,
-    performedBy,
-  });
-
-  if (!linkResult.success) {
-    logger.error("ACTIVATION", "Evaluation linking failed", {
-      correlationId,
-      actor: makeActor(performedBy),
-      entity: makeEntity("Evaluation", evaluation.id),
-      error: makeError("LINK_FAILED", linkResult.error),
+  if (!allocationResult.evaluationLinked) {
+    const linkResult = await linkEvaluation(prisma, {
+      evaluationId: evaluation.id,
+      accountId: allocationResult.account.id,
+      performedBy,
     });
-    if (allocationResult.account && allocationResult.assignment) {
-      const rollback = await releaseAccount(prisma, {
-        traderId: order.traderId,
-        accountId: allocationResult.account.id,
-        reason: "ADMINISTRATIVE_CORRECTION",
+
+    if (!linkResult.success) {
+      logger.error("ACTIVATION", "Evaluation linking failed", {
+        correlationId,
+        actor: makeActor(performedBy),
+        entity: makeEntity("Evaluation", evaluation.id),
+        error: makeError("LINK_FAILED", linkResult.error),
       });
-      if (!rollback.success) {
-        logger.error("ACTIVATION", "Rollback release failed after link failure", {
-          correlationId,
-          actor: makeActor(performedBy),
-          entity: makeEntity("MT5Account", allocationResult.account.id),
-          error: makeError("ROLLBACK_FAILED", rollback.error),
+      if (allocationResult.account && allocationResult.assignment) {
+        const rollback = await releaseAccount(prisma, {
+          traderId: order.traderId,
+          accountId: allocationResult.account.id,
+          reason: "ADMINISTRATIVE_CORRECTION",
         });
+        if (!rollback.success) {
+          logger.error("ACTIVATION", "Rollback release failed after link failure", {
+            correlationId,
+            actor: makeActor(performedBy),
+            entity: makeEntity("MT5Account", allocationResult.account.id),
+            error: makeError("ROLLBACK_FAILED", rollback.error),
+          });
+        }
       }
+      return {
+        success: false,
+        error: `Evaluation linking failed: ${linkResult.error}`,
+        errorCategory: "LINK_FAILED",
+        recoverable: linkResult.failureCategory === "TRANSACTION_ERROR",
+        correlationId,
+      } as ActivateEvaluationFailure;
     }
-    return {
-      success: false,
-      error: `Evaluation linking failed: ${linkResult.error}`,
-      errorCategory: "LINK_FAILED",
-      recoverable: linkResult.failureCategory === "TRANSACTION_ERROR",
-      correlationId,
-    } as ActivateEvaluationFailure;
+  } else {
+    await prisma.evaluation.update({
+      where: { id: evaluation.id },
+      data: {
+        completedAt: new Date(),
+        startingBalance:
+          allocationResult.account.accountSize !== null &&
+          allocationResult.account.accountSize !== undefined
+            ? Number(allocationResult.account.accountSize)
+            : undefined,
+      },
+    });
   }
 
   if (!wasAlreadyActivated) {

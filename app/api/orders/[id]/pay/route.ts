@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
-import { createLedgerEntry, CreateLedgerEntryInput } from "@/lib/ledger/service";
+import { createLedgerEntry, CreateLedgerEntryInput } from "@/lib/ledger";
 import { sendPaymentConfirmedEmail, sendPaymentFailedEmail } from "@/lib/email/templates";
 
 const prisma = new PrismaClient();
@@ -167,7 +167,7 @@ export async function POST(
       traderId: trader.id,
       orderId: paidOrder.id,
       entryType: "CUSTOMER_PAYMENT",
-      amount: paidOrder.totalAmount,
+      amount: paidOrder.totalAmount.toNumber(),
       direction: "CREDIT",
       currency: paidOrder.currency,
       referenceId,
@@ -175,7 +175,7 @@ export async function POST(
       createdBy: trader.id,
     };
 
-    const ledgerResult = await createLedgerEntry(ledgerInput);
+    const ledgerResult = await createLedgerEntry(prisma, ledgerInput);
 
     if (!ledgerResult.success) {
       logger.error("PAYMENT", "Failed to create ledger entry for payment", {
@@ -195,7 +195,7 @@ export async function POST(
         orderNumber: order.orderNumber,
         totalAmount: order.totalAmount,
         currency: order.currency,
-        ledgerEntryId: ledgerResult.ledgerEntry?.id ?? null,
+        ledgerEntryId: ledgerResult.success ? ledgerResult.entry?.id ?? null : null,
       },
     });
 
