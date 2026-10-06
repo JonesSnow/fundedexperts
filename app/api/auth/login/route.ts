@@ -1,12 +1,11 @@
-import { PrismaClient } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { verifyPassword } from "@/lib/auth/hash";
+import { verifyPassword, performDummyPasswordVerification } from "@/lib/auth/hash";
 import { validateLoginInput } from "@/lib/auth/validation";
 import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { sendLoginSecurityAlertEmail } from "@/lib/email/templates";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,19 +27,42 @@ export async function POST(request: NextRequest) {
       password: body.password,
     });
 
+    // NOTE: the rate-limit counter is deliberately NOT reset here.
+    // validateLoginInput fails when either field is malformed, so resetting on
+    // validation failure let a caller clear the counter for any target email by
+    // sending a valid email with a too-short password, which defeated the
+    // brute-force lockout entirely. Malformed requests still consume an attempt
+    // (checkRateLimit runs before validation). Only a successful authentication
+    // clears the counter.
     if (!validation.valid) {
-      resetRateLimit(`login:${body.email || "unknown"}`);
       return NextResponse.json(
         { success: false, errors: validation.errors },
         { status: 400 }
       );
     }
 
-    const trader = await prisma.trader.findUnique({
+    // Only the columns this handler actually reads are fetched. Previously the full
+// trader row was loaded, which also pulled the password reset token and the
+// email verification token into memory on every login attempt.
+const trader = await prisma.trader.findUnique({
       where: { email: body.email },
+      select: {
+        id: true,
+        email: true,
+        password: true,
+        role: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        emailVerified: true,
+      },
     });
 
+    // Each authentication failure below performs the same amount of password work
+    // so that response timing cannot be used to discover which email addresses
+    // are registered. Status codes and bodies are unchanged from before.
     if (!trader) {
+      await performDummyPasswordVerification(body.password);
       return NextResponse.json(
         { success: false, error: "Invalid credentials" },
         { status: 401 }
@@ -48,6 +70,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
+      await performDummyPasswordVerification(body.password);
       return NextResponse.json(
         { success: false, error: "Account suspended" },
         { status: 403 }

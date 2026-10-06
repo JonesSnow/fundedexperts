@@ -28,6 +28,12 @@ export interface ProcessSnapshotSuccess {
   evaluationStatus?: string;
   passed?: boolean;
   failed?: boolean;
+  /**
+   * Non-null when the evaluation passed but the funded account could not be
+   * created. The evaluation outcome itself is still valid, so this is reported
+   * separately rather than flipping `success` to false.
+   */
+  fundedAccountError?: string | null;
 }
 
 export interface ProcessSnapshotFailure {
@@ -260,6 +266,9 @@ export async function processMonitoringSnapshot(
   let evaluationStatus: string | undefined;
   let passed = false;
   let failed = false;
+  // Set when a PASS evaluation did not yield a funded account. Surfaced on the
+  // result so the failure is observable instead of silently discarded.
+  let fundedAccountError: string | null = null;
 
   if (hasRequiredFailure) {
     const breachRules = outcomes.filter((o) => o.result === "FAIL");
@@ -420,10 +429,34 @@ export async function processMonitoringSnapshot(
           },
         });
 
-        await createFundedAccount(prisma, {
+        const fundedResult = await createFundedAccount(prisma, {
           evaluationId: evaluation.id,
           performedBy: "system",
         });
+
+        // The result was previously discarded, so a failed funded-account
+        // creation was completely invisible. It is now logged and surfaced on
+        // the pipeline result so the caller can detect it.
+        if (!fundedResult.success) {
+          logger.error("MONITORING_PIPELINE", "Failed to create funded account after evaluation pass", {
+            correlationId,
+            entity: { type: "Evaluation", id: evaluation.id },
+            error: {
+              code: fundedResult.errorCategory,
+              message: fundedResult.error,
+            },
+          });
+
+          fundedAccountError = fundedResult.error;
+        } else {
+          logger.info("MONITORING_PIPELINE", "Funded account created after evaluation pass", {
+            correlationId,
+            entity: { type: "FundedAccount", id: fundedResult.account.id },
+            metadata: {
+              wasAlreadyCreated: fundedResult.wasAlreadyCreated,
+            },
+          });
+        }
       } else {
         logger.error("MONITORING_PIPELINE", "Failed to release account after evaluation pass", {
           correlationId,
@@ -443,6 +476,7 @@ export async function processMonitoringSnapshot(
     evaluationStatus,
     passed,
     failed,
+    fundedAccountError,
   } as ProcessSnapshotSuccess;
 }
 

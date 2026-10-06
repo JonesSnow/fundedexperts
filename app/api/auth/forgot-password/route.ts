@@ -1,10 +1,9 @@
-import { PrismaClient } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { sendPasswordResetEmail } from "@/lib/email/templates";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {

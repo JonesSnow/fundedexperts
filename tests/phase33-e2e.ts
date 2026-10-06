@@ -1,4 +1,4 @@
-import { PrismaClient, RuleType, type Rule, type Mt5Credentials } from "@prisma/client";
+import { PrismaClient, RuleType, AuditAction, LedgerEntryType, LedgerDirection, Prisma, type LedgerEntry } from "@prisma/client";
 import { createMockPaymentProvider } from "../lib/mock-payment-provider";
 import { activateEvaluation } from "../lib/activation";
 import { processMonitoringSnapshot } from "../lib/monitoring-pipeline";
@@ -6,14 +6,64 @@ import { releaseAccount } from "../lib/release";
 import { allocateAccount } from "../lib/allocation";
 import { RealMT5Adapter } from "../lib/monitoring/real-mt5-adapter";
 import { createFundedAccount } from "../lib/funded-account";
-import { generateMockSnapshot } from "../lib/monitoring/normalize";
 import type { MonitoringSnapshot } from "../lib/monitoring/types";
 import { encrypt } from "../lib/encryption";
 import bcrypt from "bcryptjs";
+import { readFileSync } from "fs";
+import { runCleanupSteps, assertCleanup, type CleanupResult } from "../lib/cleanup-helper";
+import {
+  resolveAndVerifyTestDatabase,
+  ProductionDatabaseGuardError,
+} from "./support/test-db-guard";
 
-const prisma = new PrismaClient();
 const TEST_RUN_ID = `p33-e2e-${Date.now().toString(36)}`;
 const TEST_EMAIL = `phase33-${TEST_RUN_ID}@test.fundedexperts.com`;
+const TEST_PRODUCT_NAME = `Phase 33 Challenge ${TEST_RUN_ID}`;
+const TEST_ACCOUNT_PREFIX = `P33-${TEST_RUN_ID}-`;
+
+// Resolve and safety-check the dedicated test database BEFORE any Prisma client
+// exists, so no connection to the shared/production branch is ever opened.
+let testDatabaseUrl: string;
+let databaseReport: ReturnType<typeof resolveAndVerifyTestDatabase>["report"];
+try {
+  const resolved = resolveAndVerifyTestDatabase(
+    {
+      PHASE33_DATABASE_URL: process.env.PHASE33_DATABASE_URL,
+      TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
+      DATABASE_URL: process.env.DATABASE_URL,
+      NODE_ENV: process.env.NODE_ENV,
+    },
+    { allowProductionDb: process.env.PHASE33_ALLOW_PRODUCTION_DB === "true",
+      allowedHosts: process.env.PHASE33_TEST_DB_HOST_ALLOWLIST }
+  );
+  testDatabaseUrl = resolved.resolved.url;
+  databaseReport = resolved.report;
+  for (const warning of databaseReport.warnings) {
+    console.warn(`[phase33] WARNING: ${warning}`);
+  }
+} catch (error) {
+  if (error instanceof ProductionDatabaseGuardError) {
+    console.error(`\nPHASE 33 E2E ABORTED — database safety guard rejected this run.\n\n${error.message}\n`);
+    process.exit(2);
+  }
+  throw error;
+}
+
+// The guard above has already verified that testDatabaseUrl is a dedicated test
+// database. Several modules create their own module-scoped `new PrismaClient()`
+// (lib/email/index.ts, middleware.ts and the API route handlers), and Prisma
+// resolves those clients from DATABASE_URL. The runner loads .env.local, which
+// sets DATABASE_URL to the shared/production branch, so without this redirect
+// those clients would connect to production and write rows there during a test
+// run. Repointing DATABASE_URL at the verified test URL keeps every client in
+// this process on the test database.
+//
+// This must run AFTER the guard: the guard deliberately rejects a resolved test
+// URL that is identical to DATABASE_URL, and it needs the production value in
+// order to perform that comparison.
+process.env.DATABASE_URL = testDatabaseUrl;
+
+const prisma = new PrismaClient({ datasourceUrl: testDatabaseUrl });
 
 const results: Array<{ name: string; phase: string; result: "PASS" | "FAIL"; detail: string }> = [];
 let traderId: string | null = null;
@@ -22,7 +72,10 @@ let evaluationId: string | null = null;
 let accountId: string | null = null;
 let productId: string | null = null;
 let rulesetVersionId: string | null = null;
+let rulesetId: string | null = null;
 let paymentRef: string | null = null;
+// Every MT5 account this run created, used to scope cleanup and allocation checks.
+const createdAccountNumbers: string[] = [];
 
 interface PhaseResult { name: string; phase: string; result: "PASS" | "FAIL"; detail: string; }
 
@@ -41,29 +94,131 @@ function check(name: string, phase: string, condition: boolean, detail: string =
   }
 }
 
-async function cleanup() {
-  console.log("PHASE Z: Database cleanup...");
-  await prisma.ruleEvaluation.deleteMany({ where: { evaluation: { traderId: traderId ?? undefined } } });
-  await prisma.ruleEvent?.deleteMany({}).catch(() => {});
-  await prisma.evaluation.deleteMany({ where: { traderId: traderId ?? undefined } });
-  await prisma.fundedAccount.deleteMany({ where: { traderId: traderId ?? undefined } });
-  await prisma.ledgerEntry.deleteMany({ where: { traderId: traderId ?? undefined } });
-  await prisma.accountAssignment.deleteMany({ where: { traderId: traderId ?? undefined } });
-  await prisma.monitoringJob.deleteMany({});
-  await prisma.mT5Account.deleteMany({ where: { accountNumber: { startsWith: "P33-" } } });
-  await prisma.orderItem.deleteMany({ where: { order: { traderId: traderId ?? undefined } } });
-  await prisma.order.deleteMany({ where: { traderId: traderId ?? undefined } });
-  await prisma.rule.deleteMany({});
-  await prisma.rulesetVersion.deleteMany({});
-  await prisma.product.deleteMany({ where: { name: { startsWith: "Phase 33" } } });
-  await prisma.ruleset.deleteMany({});
-  await prisma.emailDelivery.deleteMany({ where: { traderId: traderId ?? undefined } });
-  await prisma.auditLog.deleteMany({}).catch(() => {});
-  await prisma.couponUsage.deleteMany({});
-  await prisma.coupon.deleteMany({});
-  await prisma.notification.deleteMany({});
-  await prisma.trader.deleteMany({ where: { email: { contains: TEST_RUN_ID } } });
-  console.log("Cleanup complete.");
+/**
+ * Cleanup is scoped exclusively to records this run created. Every filter keys
+ * off TEST_RUN_ID (or an id captured during the run), so no table-wide delete
+ * can ever reach unrelated data.
+ *
+ * Order matters: children before parents, to satisfy foreign keys.
+ */
+async function cleanup(): Promise<CleanupResult> {
+  console.log("PHASE Z: Scoped database cleanup...");
+
+  const runTraderId = traderId;
+  const runEvaluationIds = await prisma.evaluation
+    .findMany({
+      where: runTraderId ? { traderId: runTraderId } : { rulesetVersionId: rulesetVersionId ?? "" },
+      select: { id: true },
+    })
+    .then((rows) => rows.map((r) => r.id));
+
+  const runAccountIds = await prisma.mT5Account
+    .findMany({
+      where: { accountNumber: { startsWith: TEST_ACCOUNT_PREFIX } },
+      select: { id: true },
+    })
+    .then((rows) => rows.map((r) => r.id));
+
+  // AuditLog rows CANNOT be deleted: migration
+  // 20260922140000_audit_log_immutability installs a BEFORE UPDATE OR DELETE
+  // trigger that raises an exception. Deleting them here would be impossible
+  // and would fail the run, so they are reported instead. This is a deliberate
+  // integrity control, not a cleanup gap.
+  const runEntityIds = [orderId, evaluationId, accountId, productId, ...runEvaluationIds]
+    .filter((id): id is string => id !== null);
+
+  const immutableAuditCount = await prisma.auditLog.count({
+    where: { entityId: { in: runEntityIds } },
+  });
+  if (immutableAuditCount > 0) {
+    console.log(
+      `[cleanup] ${immutableAuditCount} audit log row(s) retained — AuditLog is immutable by design.`
+    );
+  }
+
+  const steps = [
+    {
+      label: "ruleEvent.deleteMany (run accounts)",
+      fn: () => prisma.ruleEvent.deleteMany({ where: { accountId: { in: runAccountIds } } }),
+    },
+    {
+      label: "monitoringJob.deleteMany (run accounts)",
+      fn: () => prisma.monitoringJob.deleteMany({ where: { accountId: { in: runAccountIds } } }),
+    },
+    {
+      label: "ruleEvaluation.deleteMany (run evaluations)",
+      fn: () => prisma.ruleEvaluation.deleteMany({ where: { evaluationId: { in: runEvaluationIds } } }),
+    },
+    {
+      label: "notification.deleteMany (run trader)",
+      fn: () => prisma.notification.deleteMany({ where: { traderId: runTraderId ?? "" } }),
+    },
+    {
+      label: "emailDelivery.deleteMany (run trader)",
+      fn: () => prisma.emailDelivery.deleteMany({ where: { traderId: runTraderId ?? "" } }),
+    },
+    {
+      label: "fundedAccount.deleteMany (run trader)",
+      fn: () => prisma.fundedAccount.deleteMany({ where: { traderId: runTraderId ?? "" } }),
+    },
+    {
+      label: "ledgerEntry.deleteMany (run trader)",
+      fn: () => prisma.ledgerEntry.deleteMany({ where: { traderId: runTraderId ?? "" } }),
+    },
+    {
+      label: "accountAssignment.deleteMany (run trader)",
+      fn: () => prisma.accountAssignment.deleteMany({ where: { traderId: runTraderId ?? "" } }),
+    },
+    {
+      label: "orderItem.deleteMany (run orders)",
+      fn: () => prisma.orderItem.deleteMany({ where: { order: { orderNumber: { startsWith: `ORD-${TEST_RUN_ID}` } } } }),
+    },
+    {
+      label: "order.deleteMany (run orders)",
+      fn: () => prisma.order.deleteMany({ where: { orderNumber: { startsWith: `ORD-${TEST_RUN_ID}` } } }),
+    },
+    {
+      label: "evaluation.deleteMany (run evaluations)",
+      fn: () => prisma.evaluation.deleteMany({ where: { id: { in: runEvaluationIds } } }),
+    },
+    {
+      label: "mT5Account.deleteMany (run accounts)",
+      fn: () => prisma.mT5Account.deleteMany({ where: { accountNumber: { startsWith: TEST_ACCOUNT_PREFIX } } }),
+    },
+    {
+      label: "rule.deleteMany (run ruleset version)",
+      fn: () => prisma.rule.deleteMany({ where: rulesetVersionId ? { rulesetVersionId } : { id: "" } }),
+    },
+    {
+      label: "rulesetVersion.deleteMany (run version)",
+      fn: () => prisma.rulesetVersion.deleteMany({ where: { id: rulesetVersionId ?? "" } }),
+    },
+    {
+      label: "product.deleteMany (run product)",
+      fn: () => prisma.product.deleteMany({ where: { name: TEST_PRODUCT_NAME } }),
+    },
+    {
+      label: "ruleset.deleteMany (run ruleset)",
+      fn: () => prisma.ruleset.deleteMany({ where: { id: rulesetId ?? "" } }),
+    },
+    {
+      label: "couponUsage.deleteMany (run trader)",
+      fn: () => prisma.couponUsage.deleteMany({ where: { traderId: runTraderId ?? "" } }),
+    },
+    {
+      label: "coupon.deleteMany (run code)",
+      fn: () => prisma.coupon.deleteMany({ where: { code: { startsWith: `${TEST_RUN_ID}` } } }),
+    },
+    {
+      label: "trader.deleteMany (run traders)",
+      fn: () => prisma.trader.deleteMany({ where: { email: { contains: TEST_RUN_ID } } }),
+    },
+  ];
+
+  const result = await runCleanupSteps(prisma, steps);
+  assertCleanup(result, "Phase 33 E2E");
+  console.log(`Cleanup complete (${result.passed}/${result.total} operations).`);
+  return result;
 }
 
 async function main() {
@@ -75,10 +230,9 @@ async function main() {
   // PHASE A: ENVIRONMENT ALREADY VALIDATED
   // ========================================================================
   console.log("\n## PHASE A — Environment Validation");
-  check("Git commit verified", "A", true, "fa75931");
-  check("Database reachable", "A", true, "Neon PostgreSQL");
-  check("TypeScript valid", "A", true, "Compiled");
-  check("Build successful", "A", true, "Production build passed");
+  check("Dedicated test database", "A", true, `source=${databaseReport.source}, db=${databaseReport.databaseName || "(default)"}`);
+  check("Test database is not production", "A", databaseReport.databaseName !== "" || databaseReport.branchId !== "", `host=${databaseReport.host}`);
+  check("Run id is unique", "A", TEST_RUN_ID.length > 0, TEST_RUN_ID);
 
   // ========================================================================
   // PHASE B: TEST CUSTOMER
@@ -134,10 +288,12 @@ async function main() {
     });
 
     rulesetVersionId = version.id;
+    rulesetId = ruleset.id;
 
     const product = await prisma.product.create({
       data: {
-        name: `Phase 33 Challenge`,
+        // Product.name is @unique; scoping it to the run id keeps the suite re-runnable.
+        name: TEST_PRODUCT_NAME,
         price: 100,
         currency: "USD",
         isActive: true,
@@ -157,20 +313,30 @@ async function main() {
     check("Product active", "C", fetchedProduct?.isActive === true, "isActive=true");
     check("Account size 100000", "C", Number(fetchedProduct?.accountSize) === 100000, "100000");
     check("Price $100", "C", Number(fetchedProduct?.price) === 100, "$100");
-    check("Ruleset has version", "C", fetchedProduct?.ruleset.versions.length === 1, "1 version");
-    check("Ruleset version published", "C", fetchedProduct?.ruleset.versions[0].status === "PUBLISHED", "PUBLISHED");
-    check("Has PROFIT_TARGET rule", "C", fetchedProduct?.ruleset.versions[0].rules.some(r => r.ruleType === "PROFIT_TARGET"), "rule found");
-    check("Has DRAWDOWN_LIMIT rule", "C", fetchedProduct?.ruleset.versions[0].rules.some(r => r.ruleType === "DRAWDOWN_LIMIT"), "rule found");
-    check("Has MIN_TRADES rule", "C", fetchedProduct?.ruleset.versions[0].rules.some(r => r.ruleType === "MIN_TRADES"), "rule found");
+    // Product.ruleset is an optional relation in the schema; guard before dereferencing.
+    const productRuleset = fetchedProduct?.ruleset ?? null;
+    const rulesetVersions = productRuleset?.versions ?? [];
+    const publishedVersion = rulesetVersions[0] ?? null;
+    const rulesetRules = publishedVersion?.rules ?? [];
 
-    // Create MT5 test accounts for allocation testing
+    check("Ruleset linked to product", "C", productRuleset !== null, productRuleset ? `rulesetId=${productRuleset.id}` : "no ruleset");
+    check("Ruleset has version", "C", rulesetVersions.length === 1, `${rulesetVersions.length} version(s)`);
+    check("Ruleset version published", "C", publishedVersion?.status === "PUBLISHED", `status=${publishedVersion?.status ?? "none"}`);
+    check("Has PROFIT_TARGET rule", "C", rulesetRules.some(r => r.ruleType === "PROFIT_TARGET"), "rule found");
+    check("Has DRAWDOWN_LIMIT rule", "C", rulesetRules.some(r => r.ruleType === "DRAWDOWN_LIMIT"), "rule found");
+    check("Has MIN_TRADES rule", "C", rulesetRules.some(r => r.ruleType === "MIN_TRADES"), "rule found");
+
+    // Create MT5 test accounts for allocation testing.
+    // accountSize is deliberately below any real account (which start at 100000)
+    // so allocateAccount's "ORDER BY accountSize ASC LIMIT 1" deterministically
+    // selects a P33 account rather than a pre-existing one in the pool.
     await prisma.mT5Account.create({
       data: {
-        accountNumber: `P33-${TEST_RUN_ID}-MT1`,
+        accountNumber: `${TEST_ACCOUNT_PREFIX}MT1`,
         broker: "XM",
         server: "XMGlobal-MT5 10",
         login: "test-login-1",
-        accountSize: 100000,
+        accountSize: 1,
         currency: "USD",
         status: "AVAILABLE",
         purpose: "EVALUATION",
@@ -178,16 +344,17 @@ async function main() {
     });
     await prisma.mT5Account.create({
       data: {
-        accountNumber: `P33-${TEST_RUN_ID}-MT2`,
+        accountNumber: `${TEST_ACCOUNT_PREFIX}MT2`,
         broker: "XM",
         server: "XMGlobal-MT5 10",
         login: "test-login-2",
-        accountSize: 100000,
+        accountSize: 1,
         currency: "USD",
         status: "AVAILABLE",
         purpose: "EVALUATION",
       },
     });
+    createdAccountNumbers.push(`${TEST_ACCOUNT_PREFIX}MT1`, `${TEST_ACCOUNT_PREFIX}MT2`);
 
     console.log("  Two MT5 test accounts created (AVAILABLE status)");
   } catch (e) {
@@ -230,11 +397,12 @@ async function main() {
     check("Has order item", "D", fetched?.orderItems?.length === 1, "1 item");
     check("Server-calculated totals", "D", Number(fetched!.subtotal) === 100 && Number(fetched!.totalAmount) === 100, "server verified");
 
-    // Audit log
-    const auditExists = await prisma.auditLog.findFirst({
-      where: { entityId: order.id, entityType: "Order", action: "ORDER_CREATED" as any },
-    });
-    // The route creates this, but we created directly. Check if it exists or note it.
+    // Audit log: orders are created directly through Prisma in this phase, so no
+    // API route runs and no audit row is written. A previous version queried for
+    // AuditAction.ORDER_CREATED here, but that value exists in prisma/schema.prisma
+    // without a matching migration, so the query raised PostgresError 22P02 and
+    // aborted the whole phase. The result was never asserted, so the query was
+    // dead code; the check below is unchanged.
     check("Order audit (if via API)", "D", true, "Created directly via Prisma for controlled test");
   } catch (e) {
     check("Order creation", "D", false, e instanceof Error ? e.message : String(e));
@@ -267,9 +435,9 @@ async function main() {
     const referenceId = `pay-${orderId!}-ORD-${TEST_RUN_ID}`;
     const ledgerResult = await createLedgerEntryDirect(prisma, {
       referenceId,
-      entryType: "CUSTOMER_PAYMENT" as any,
+      entryType: LedgerEntryType.CUSTOMER_PAYMENT,
       amount: 100,
-      direction: "CREDIT" as any,
+      direction: LedgerDirection.CREDIT,
       currency: "USD",
       traderId: traderId!,
       orderId: orderId!,
@@ -453,6 +621,15 @@ async function main() {
           include: { account: true },
         });
         check("Evaluation has account linked", "J", !!evalWithAccount?.accountId, "accountId set on evaluation");
+
+        // Isolation guard: allocation must select an account this run created,
+        // never a pre-existing account from the shared pool.
+        check(
+          "Allocated account belongs to this run",
+          "J",
+          allocResult.account.accountNumber.startsWith(TEST_ACCOUNT_PREFIX),
+          `accountNumber=${allocResult.account.accountNumber}`
+        );
       }
     } else {
       check("Evaluation already has account", "J", true, "account already linked");
@@ -470,16 +647,17 @@ async function main() {
     // Create a third test account
     await prisma.mT5Account.create({
       data: {
-        accountNumber: `P33-${TEST_RUN_ID}-MT3`,
+        accountNumber: `${TEST_ACCOUNT_PREFIX}MT3`,
         broker: "XM",
         server: "XMGlobal-MT5 10",
         login: "test-login-3",
-        accountSize: 100000,
+        accountSize: 1,
         currency: "USD",
         status: "AVAILABLE",
         purpose: "EVALUATION",
       },
     });
+    createdAccountNumbers.push(`${TEST_ACCOUNT_PREFIX}MT3`);
 
     // Two concurrent allocations
     const [alloc1, alloc2] = await Promise.all([
@@ -541,9 +719,8 @@ async function main() {
 
       check("Link fails for PASSED evaluation", "L", !linkResult.success, "link fails as expected");
 
-      // The activation.ts now has rollback logic. Let's verify account cleanup.
-      const fs = require("fs");
-      const activationCode = fs.readFileSync("lib/activation.ts", "utf-8");
+      // The activation.ts now has rollback logic. Verify the source still contains it.
+      const activationCode = readFileSync("lib/activation.ts", "utf-8");
       const hasRollback = activationCode.includes("releaseAccount") && activationCode.includes("ADMINISTRATIVE_CORRECTION");
       check("Rollback code exists in activation.ts", "L", hasRollback, "releaseAccount imported and used");
     } catch (linkErr) {
@@ -563,15 +740,21 @@ async function main() {
     const adapter = new RealMT5Adapter({ pythonPath: "python", scriptTimeoutMs: 15000 });
 
     const testResult = await adapter.testConnection();
-    if (testResult.connected) {
+    const mt5Password = process.env.PHASE33_MT5_PASSWORD;
+    if (testResult.connected && mt5Password) {
       check("MT5 terminal reachable", "M", true, "Connected successfully");
 
       // The real XM account credentials are stored encrypted
       const encryptedCreds = encrypt(
-        JSON.stringify({ login: 346266128, password: process.env.PHASE33_MT5_PASSWORD || "test", server: "XMGlobal-MT5 10" }),
+        JSON.stringify({ login: 346266128, password: mt5Password, server: "XMGlobal-MT5 10" }),
       );
 
-      const snapshot = await adapter.fetchSnapshot({ credentials: encryptedCreds, accountId: "p33-xm-demo" });
+      const snapshot = await adapter.fetchSnapshot({
+        accountId: "p33-xm-demo",
+        accountNumber: "346266128",
+        provider: "MT5",
+        credentials: encryptedCreds,
+      });
 
       check("Snapshot fetched", "M", !!snapshot, "snapshot retrieved");
       check("Login matches (346266128)", "M", snapshot.accountInfo?.login === 346266128, `login=${snapshot.accountInfo?.login}`);
@@ -583,11 +766,16 @@ async function main() {
       check("Orders empty", "M", snapshot.orders.length === 0, `orders=${snapshot.orders.length}`);
       check("History empty", "M", snapshot.history.length === 0, `history=${snapshot.history.length}`);
       check("No password in snapshot", "M", true, "credentials not included in ProviderSnapshot");
+    } else if (!mt5Password) {
+      check("MT5 terminal reachable (READ-ONLY skipped)", "M", true, "Skipped: PHASE33_MT5_PASSWORD not set");
     } else {
       check("MT5 terminal reachable (READ-ONLY skipped)", "M", true, `Skipped: ${testResult.message}`);
     }
-  } catch (e: any) {
-    const msg = e?.message || e?.code || String(e);
+  } catch (e: unknown) {
+    // Adapter failures are structured objects (code/severity/category) rather
+    // than always being Errors, so read both shapes without using `any`.
+    const err = e as { message?: string; code?: string } | null;
+    const msg = err?.message ?? err?.code ?? String(e);
     if (msg.includes("not running") || msg.includes("timeout") || msg.includes("ENONENT") || msg.includes("TERMINAL") || msg.includes("not found")) {
       check("MT5 terminal reachable (READ-ONLY skipped)", "M", true, `Terminal not running in this environment — READ-ONLY validation skipped: ${msg}`);
     } else {
@@ -603,7 +791,7 @@ async function main() {
     // Create a monitoring snapshot with the allocated test account
     const testSnapshot: MonitoringSnapshot = {
       accountId: accountId!,
-      accountNumber: `P33-${TEST_RUN_ID}-MT1`,
+      accountNumber: `${TEST_ACCOUNT_PREFIX}MT1`,
       accountLoginMasked: "[P33-***]",
       server: "XMGlobal-MT5 10",
       broker: "XM",
@@ -658,48 +846,52 @@ async function main() {
   // ========================================================================
   console.log("\n## PHASE O — Rule Engine (unit-level verification)");
   const { evaluateAllRules, getOverallResult } = await import("../lib/rule-engine");
-  const { RuleType: RT } = require("@prisma/client");
 
-  // Fetch rules from DB
-  const dbRules = await prisma.rule.findMany({ where: { rulesetVersionId } });
-  check("Rules retrieved from DB", "O", dbRules.length === 3, `count=${dbRules.length}`);
+  // rulesetVersionId is only set once Phase C succeeds; an unset value means the
+  // rules were never created, so the rule-engine checks cannot run.
+  if (rulesetVersionId === null) {
+    check("Rules retrieved from DB", "O", false, "rulesetVersionId not set — Phase C did not complete");
+  } else {
+    // Fetch rules from DB
+    const dbRules = await prisma.rule.findMany({ where: { rulesetVersionId } });
+    check("Rules retrieved from DB", "O", dbRules.length === 3, `count=${dbRules.length}`);
 
-  // Profit target pass snapshot
-  const passSnapshot: MonitoringSnapshot = {
-    accountId: "test",
-    accountNumber: "T",
-    accountLoginMasked: "T",
-    server: "S", broker: "B",
-    balance: 100000, equity: 106000, freeMargin: 97000,
-    margin: 3000, marginLevel: 3400, currency: "USD", leverage: 100,
-    isDemo: true, positions: [], orders: [],
-    historySummary: { dealCount: 5, totalRealizedPnl: 6000, winCount: 3, lossCount: 2, periodStart: new Date(), periodEnd: new Date() },
-    terminalConnected: true, terminalVersion: "1", dataTimestamp: new Date(),
-    provider: "MT5", snapshotTimestamp: new Date(),
-  };
+    // Profit target pass snapshot
+    const passSnapshot: MonitoringSnapshot = {
+      accountId: "test",
+      accountNumber: "T",
+      accountLoginMasked: "T",
+      server: "S", broker: "B",
+      balance: 100000, equity: 106000, freeMargin: 97000,
+      margin: 3000, marginLevel: 3400, currency: "USD", leverage: 100,
+      isDemo: true, positions: [], orders: [],
+      historySummary: { dealCount: 5, totalRealizedPnl: 6000, winCount: 3, lossCount: 2, periodStart: new Date(), periodEnd: new Date() },
+      terminalConnected: true, terminalVersion: "1", dataTimestamp: new Date(),
+      provider: "MT5", snapshotTimestamp: new Date(),
+    };
 
-  const passOutcomes = evaluateAllRules(dbRules, passSnapshot, { startingBalance: 100000 });
-  const passOverall = getOverallResult(passOutcomes);
-  check("Profit target PASS snapshot → all PASS", "O", passOverall === "PASS", `overall=${passOverall}`);
+    const passOutcomes = evaluateAllRules(dbRules, passSnapshot, { startingBalance: 100000 });
+    const passOverall = getOverallResult(passOutcomes);
+    check("Profit target PASS snapshot → all PASS", "O", passOverall === "PASS", `overall=${passOverall}`);
 
-  // Breach snapshot
-  const breachSnapshot: MonitoringSnapshot = {
-    ...passSnapshot,
-    equity: 70000, historySummary: { ...passSnapshot.historySummary!, totalRealizedPnl: -30000 },
-  };
-  const breachOutcomes = evaluateAllRules(dbRules, breachSnapshot, { startingBalance: 100000 });
-  const breachOverall = getOverallResult(breachOutcomes);
-  check("Drawdown breach → FAIL", "O", breachOverall === "FAIL", `overall=${breachOverall}`);
+    // Breach snapshot
+    const breachSnapshot: MonitoringSnapshot = {
+      ...passSnapshot,
+      equity: 70000, historySummary: { ...passSnapshot.historySummary, totalRealizedPnl: -30000 },
+    };
+    const breachOutcomes = evaluateAllRules(dbRules, breachSnapshot, { startingBalance: 100000 });
+    const breachOverall = getOverallResult(breachOutcomes);
+    check("Drawdown breach → FAIL", "O", breachOverall === "FAIL", `overall=${breachOverall}`);
 
-  // Boundary test
-  const boundarySnapshot: MonitoringSnapshot = {
-    ...passSnapshot,
-    totalRealizedPnl: 5000,
-    historySummary: { ...passSnapshot.historySummary!, totalRealizedPnl: 5000 },
-  };
-  const boundaryOutcomes = evaluateAllRules(dbRules, boundarySnapshot, { startingBalance: 100000 });
-  const boundaryOverall = getOverallResult(boundaryOutcomes);
-  check("Boundary (exactly 5000 PnL) → PASS", "O", boundaryOverall === "PASS", `overall=${boundaryOverall}`);
+    // Boundary test — totalRealizedPnl lives on historySummary, not the snapshot root
+    const boundarySnapshot: MonitoringSnapshot = {
+      ...passSnapshot,
+      historySummary: { ...passSnapshot.historySummary, totalRealizedPnl: 5000 },
+    };
+    const boundaryOutcomes = evaluateAllRules(dbRules, boundarySnapshot, { startingBalance: 100000 });
+    const boundaryOverall = getOverallResult(boundaryOutcomes);
+    check("Boundary (exactly 5000 PnL) → PASS", "O", boundaryOverall === "PASS", `overall=${boundaryOverall}`);
+  }
 
   // ========================================================================
   // PHASE P: DETERMINISTIC PASS
@@ -708,7 +900,7 @@ async function main() {
   try {
     const passSnapshotReal: MonitoringSnapshot = {
       accountId: accountId!,
-      accountNumber: `P33-${TEST_RUN_ID}-MT1`,
+      accountNumber: `${TEST_ACCOUNT_PREFIX}MT1`,
       accountLoginMasked: "[P33-***]",
       server: "XMGlobal-MT5 10",
       broker: "XM",
@@ -769,7 +961,7 @@ async function main() {
 
       // Verify audit log
       const passAudit = await prisma.auditLog.findFirst({
-        where: { entityId: evaluationId!, entityType: "Evaluation", action: "SYSTEM_EVENT" as any },
+        where: { entityId: evaluationId!, entityType: "Evaluation", action: AuditAction.SYSTEM_EVENT },
       });
       check("Pass audit log created", "P", !!passAudit, "audit entry exists");
     }
@@ -795,7 +987,7 @@ async function main() {
 
     const breachSnapshotReal: MonitoringSnapshot = {
       accountId: accountId!,
-      accountNumber: `P33-${TEST_RUN_ID}-MT1`,
+      accountNumber: `${TEST_ACCOUNT_PREFIX}MT1`,
       accountLoginMasked: "[P33-***]",
       server: "XMGlobal-MT5 10",
       broker: "XM",
@@ -880,7 +1072,7 @@ async function main() {
   try {
     const dupSnapshot: MonitoringSnapshot = {
       accountId: accountId!,
-      accountNumber: `P33-${TEST_RUN_ID}-MT1`,
+      accountNumber: `${TEST_ACCOUNT_PREFIX}MT1`,
       accountLoginMasked: "[P33-***]",
       server: "XMGlobal-MT5 10",
       broker: "XM",
@@ -946,7 +1138,7 @@ async function main() {
   try {
     const dupBreachSnapshot: MonitoringSnapshot = {
       accountId: accountId!,
-      accountNumber: `P33-${TEST_RUN_ID}-MT1`,
+      accountNumber: `${TEST_ACCOUNT_PREFIX}MT1`,
       accountLoginMasked: "[P33-***]",
       server: "XMGlobal-MT5 10",
       broker: "XM",
@@ -1181,7 +1373,28 @@ async function main() {
   console.log("\nDone.");
 }
 
-async function createLedgerEntryDirect(prisma: PrismaClient, input: any) {
+/**
+ * Minimal, typed mirror of the ledger write used by this phase. It writes
+ * directly through Prisma rather than calling lib/ledger.ts so the test controls
+ * exactly what is persisted. Uses real enum values (no string casts) so a
+ * missing database enum value fails loudly instead of being papered over.
+ */
+interface DirectLedgerEntryInput {
+  referenceId: string;
+  entryType: LedgerEntryType;
+  amount: number;
+  direction: LedgerDirection;
+  currency?: string;
+  traderId?: string;
+  orderId?: string;
+  createdBy?: string;
+  metadata?: Prisma.InputJsonValue;
+}
+
+async function createLedgerEntryDirect(
+  prisma: PrismaClient,
+  input: DirectLedgerEntryInput
+): Promise<{ success: true; entry: LedgerEntry } | { success: false; error: string }> {
   try {
     const existing = await prisma.ledgerEntry.findUnique({
       where: { referenceId: input.referenceId },

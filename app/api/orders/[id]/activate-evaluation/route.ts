@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
@@ -6,8 +6,8 @@ import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { allocateAccount } from "@/lib/allocation";
 import { linkEvaluation } from "@/lib/evaluation-link";
 import { releaseAccount } from "@/lib/release";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 const logger = createLogger({
   environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
 });

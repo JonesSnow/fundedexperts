@@ -1,17 +1,13 @@
-import {
-  PrismaClient,
-  FundedAccountStatus,
-  AuditAction,
-} from "@prisma/client";
+import { FundedAccountStatus, AuditAction } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
+import { prisma } from "@/lib/db";
 import {
   createFundedAccount,
   approveFundedAccount,
   listFundedAccounts,
 } from "@/lib/funded-account";
 
-const prisma = new PrismaClient();
 
 async function getAuthenticatedUser(request: NextRequest) {
   const token = getSessionCookie(request);
@@ -116,9 +112,17 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
+      // Map the domain error category onto the documented HTTP status. NOT_FOUND
+      // previously returned 500, which told the caller the request was
+      // retryable and contradicted the documented 404 behaviour.
+      const statusByCategory: Record<string, number> = {
+        NOT_FOUND: 404,
+        INVALID_STATE: 409,
+      };
+
       return NextResponse.json(
         { success: false, error: result.error, errorCategory: result.errorCategory },
-        { status: 500 },
+        { status: statusByCategory[result.errorCategory] ?? 500 },
       );
     }
 

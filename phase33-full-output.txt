@@ -1,0 +1,258 @@
+﻿Phase 33 E2E runner
+  TEST_DATABASE_URL: set
+  PHASE33_TEST_DB_HOST_ALLOWLIST: set
+  PHASE33_DATABASE_URL: not set
+  MT5_ENCRYPTION_KEY: set (len=64)
+  PHASE33_MT5_PASSWORD: MISSING — Phase M will be skipped
+
+node : [phase33] WARNING: Database "neondb" on host "ep-damp-smoke-b4gj12v6-pooler.c-6.us-east-2.aws.neon.tech" was 
+trusted via PHASE33_TEST_DB_HOST_ALLOWLIST rather than a name marker.
+At line:5 char:1
++ node run-phase33.cjs 2>&1 | Out-File -FilePath "C:\FundedExperts\app\ ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([phase33] WARNI... a name marker.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+################################################################################
+# PHASE 33 E2E TEST — RUN ID: p33-e2e-murkczs3
+################################################################################
+
+## PHASE A — Environment Validation
+  [PASS] A: Dedicated test database
+  [PASS] A: Test database is not production
+  [PASS] A: Run id is unique
+
+## PHASE B — Test Customer Creation
+  [PASS] B: Trader created
+  [PASS] B: Password hashed (not plaintext)
+  [PASS] B: Email verified
+  [PASS] B: Status active
+  [PASS] B: Login password verification
+
+## PHASE C — Product Validation
+  [PASS] C: Product created
+  [PASS] C: Product active
+  [PASS] C: Account size 100000
+  [PASS] C: Price $100
+  [PASS] C: Ruleset linked to product
+  [PASS] C: Ruleset has version
+  [PASS] C: Ruleset version published
+  [PASS] C: Has PROFIT_TARGET rule
+  [PASS] C: Has DRAWDOWN_LIMIT rule
+  [PASS] C: Has MIN_TRADES rule
+  Two MT5 test accounts created (AVAILABLE status)
+
+## PHASE D — Order Creation
+  [PASS] D: Order created
+  [PASS] D: Correct trader ownership
+  [PASS] D: Correct amount (100)
+  [PASS] D: Correct currency (USD)
+  [PASS] D: Initial status CREATED
+  [PASS] D: Has order item
+  [PASS] D: Server-calculated totals
+  [FAIL] D: Order creation — 
+Invalid `prisma.auditLog.findFirst()` invocation in
+C:\FundedExperts\app\tests\phase33-e2e.ts:386:47
+
+  383 check("Server-calculated totals", "D", Number(fetched!.subtotal) === 100 && Number(fetched!.totalAmount) === 
+100, "server verified");
+  384 
+  385 // Audit log
+→ 386 const auditExists = await prisma.auditLog.findFirst(
+Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "22P02", message: 
+"invalid input value for enum \"AuditAction\": \"ORDER_CREATED\"", severity: "ERROR", detail: None, column: None, 
+hint: None }), transient: false })
+
+## PHASE E — Payment Success
+  [PASS] E: Payment processed
+  [PASS] E: Order transitioned to PAID
+  [PASS] E: Ledger entry created
+  [PASS] E: Exactly one ledger entry
+  [PASS] E: Audit log for payment (direct creation)
+  [PASS] E: Payment email (direct creation)
+
+## PHASE F — Payment Duplication Test
+  [PASS] F: Duplicate payment idempotency
+  [PASS] F: Order already PAID (no double pay)
+  [PASS] F: No duplicate ledger entry
+  [PASS] F: No duplicate payment email
+
+## PHASE G — Concurrent Payment Test
+  [PASS] G: Concurrent payment - exactly one transition
+  [PASS] G: Order status is PAID
+
+## PHASE H — Evaluation Activation
+{"timestamp":"2026-10-02T22:58:17.471Z","level":"ERROR","category":"ALLOCATION","message":"Account allocated email failed","correlationId":"corr_907ae6bc-b2ff-436c-86c5-d35d67ab3168","actor":{"type":"trader","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"},"error":{"code":"EMAIL_FAILED","message":"Failed to send account allocated email"}}
+{"timestamp":"2026-10-02T22:58:18.571Z","level":"ERROR","category":"ACTIVATION","message":"Evaluation notification email failed","correlationId":"corr_bbf3560d-4aa0-48d1-89ed-1f873349b5aa","actor":{"type":"trader","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"},"error":{"code":"EMAIL_FAILED","message":"Failed to send evaluation emails"}}
+{"timestamp":"2026-10-02T22:58:19.226Z","level":"INFO","category":"ACTIVATION","message":"Ledger entry already exists for payment, skipping creation","correlationId":"corr_bbf3560d-4aa0-48d1-89ed-1f873349b5aa","actor":{"type":"trader","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"LedgerEntry","id":"bac599ff-c1d1-4aed-b043-e1d43a639754"},"metadata":{"referenceId":"pay-dac36041-4da9-4421-ada5-30d5c101793f-ORD-p33-e2e-murkczs3"}}
+{"timestamp":"2026-10-02T22:58:19.226Z","level":"INFO","category":"ACTIVATION","message":"Evaluation activated successfully","correlationId":"corr_bbf3560d-4aa0-48d1-89ed-1f873349b5aa","actor":{"type":"trader","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"},"metadata":{"accountId":"ecd7ce5b-aac5-4384-8271-a034c60e11a0","wasAlreadyActivated":false}}
+  [PASS] H: Activation succeeded
+  [PASS] H: Evaluation created (IN_PROGRESS)
+  [PASS] H: Evaluation trader correct
+  [PASS] H: Evaluation startedAt set
+  [PASS] H: Exactly one evaluation
+
+## PHASE I — Activation Idempotency
+{"timestamp":"2026-10-02T22:58:20.974Z","level":"INFO","category":"ACTIVATION","message":"Evaluation already activated","correlationId":"corr_2325180c-8d6f-48cd-a85f-05cf420a4ac4","actor":{"type":"trader","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"}}
+  [PASS] I: Second activation succeeds
+  [PASS] I: Was already activated
+  [PASS] I: Same evaluation ID
+  [PASS] I: No duplicate evaluation after reactivation
+
+## PHASE J — Account Allocation
+  [PASS] J: Evaluation already has account
+
+## PHASE K — Allocation Concurrency
+  [PASS] K: At most one concurrent allocation succeeds
+  [PASS] K: No duplicate account assignment
+
+## PHASE L — Rollback Protection (Phase 32 Fix 5)
+  [PASS] L: Test account available for rollback test
+  [PASS] L: Link fails for PASSED evaluation
+  [PASS] L: Rollback code exists in activation.ts
+
+## PHASE M — Real MT5 READ-ONLY Validation
+  [PASS] M: MT5 terminal reachable (READ-ONLY skipped)
+
+## PHASE N — Monitoring Pipeline
+{"timestamp":"2026-10-02T22:58:28.627Z","level":"INFO","category":"MONITORING_PIPELINE","message":"Rules evaluated","correlationId":"corr_e5d64952-bd17-4f67-a7d9-33759865b24e","actor":{"type":"system","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"},"metadata":{"accountId":"ecd7ce5b-aac5-4384-8271-a034c60e11a0","rulesCount":3,"overallResult":"WARNING","hasRequiredFailure":false}}
+{"timestamp":"2026-10-02T22:58:30.792Z","level":"INFO","category":"MONITORING_PIPELINE","message":"Monitoring state updated","correlationId":"corr_e5d64952-bd17-4f67-a7d9-33759865b24e","entity":{"type":"MT5Account","id":"ecd7ce5b-aac5-4384-8271-a034c60e11a0"},"metadata":{"status":"DEGRADED","result":"WARNING"}}
+  [PASS] N: Monitoring snapshot processed
+  [PASS] N: Has evaluationId
+  [PASS] N: PROFIT_TARGET not met yet → WARNING
+  [PASS] N: Evaluation stays IN_PROGRESS
+  [PASS] N: Account monitoring status DEGRADED
+
+## PHASE O — Rule Engine (unit-level verification)
+  [PASS] O: Rules retrieved from DB
+  [PASS] O: Profit target PASS snapshot → all PASS
+  [PASS] O: Drawdown breach → FAIL
+  [PASS] O: Boundary (exactly 5000 PnL) → PASS
+
+## PHASE P — Deterministic Pass
+{"timestamp":"2026-10-02T22:58:32.521Z","level":"INFO","category":"MONITORING_PIPELINE","message":"Rules evaluated","correlationId":"corr_142cd017-7713-4c58-8508-8fbf23754ef3","actor":{"type":"system","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"},"metadata":{"accountId":"ecd7ce5b-aac5-4384-8271-a034c60e11a0","rulesCount":3,"overallResult":"PASS","hasRequiredFailure":false}}
+{"timestamp":"2026-10-02T22:58:34.035Z","level":"INFO","category":"MONITORING_PIPELINE","message":"Monitoring state updated","correlationId":"corr_142cd017-7713-4c58-8508-8fbf23754ef3","entity":{"type":"MT5Account","id":"ecd7ce5b-aac5-4384-8271-a034c60e11a0"},"metadata":{"status":"HEALTHY","result":"SUCCEEDED"}}
+{"timestamp":"2026-10-02T22:58:39.440Z","level":"ERROR","category":"RELEASE","message":"Evaluation notification email failed","correlationId":"corr_1fccb159-c12f-47c4-af3d-1fa027b3e706","actor":{"type":"trader","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation"},"error":{"code":"EMAIL_FAILED","message":"Failed to send evaluation notification email"}}
+{"timestamp":"2026-10-02T22:58:39.440Z","level":"INFO","category":"MONITORING_PIPELINE","message":"Evaluation passed via releaseAccount","correlationId":"corr_142cd017-7713-4c58-8508-8fbf23754ef3","entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"},"metadata":{"accountNumber":"P33-p33-e2e-murkczs3-MT1"}}
+{"timestamp":"2026-10-02T22:58:41.386Z","level":"INFO","category":"FUNDED_ACCOUNT","message":"Funded account created","correlationId":"corr_cac1df60-18ea-425e-bd58-5fe53acd491f","actor":{"type":"trader","id":"system"},"entity":{"type":"FundedAccount","id":"142f2dd8-be94-4b07-92b3-a9dbed11c37e"},"metadata":{"evaluationId":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7","status":"ELIGIBLE"}}
+  [PASS] P: Monitoring pass processed
+  [PASS] P: Overall PASS
+  [PASS] P: Evaluation passed
+  [PASS] P: Evaluation status PASSED
+  [PASS] P: DB: Evaluation PASSED
+  [PASS] P: Funded account created after pass
+  [FAIL] P: Pass email queued — email delivery exists
+  [PASS] P: Pass audit log created
+
+## PHASE Q — Deterministic Breach
+{"timestamp":"2026-10-02T22:58:44.190Z","level":"INFO","category":"MONITORING_PIPELINE","message":"Rules evaluated","correlationId":"corr_46272259-e899-4aa1-9bf1-ce870065ba20","actor":{"type":"system","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"20affcb5-0be4-4f4a-b303-5249124a2fea"},"metadata":{"accountId":"ecd7ce5b-aac5-4384-8271-a034c60e11a0","rulesCount":3,"overallResult":"FAIL","hasRequiredFailure":true}}
+{"timestamp":"2026-10-02T22:58:46.790Z","level":"INFO","category":"MONITORING_PIPELINE","message":"Monitoring state updated","correlationId":"corr_46272259-e899-4aa1-9bf1-ce870065ba20","entity":{"type":"MT5Account","id":"ecd7ce5b-aac5-4384-8271-a034c60e11a0"},"metadata":{"status":"UNHEALTHY","result":"FAILED"}}
+{"timestamp":"2026-10-02T22:58:47.436Z","level":"ERROR","category":"MONITORING_PIPELINE","message":"Failed to release account after evaluation failure","correlationId":"corr_46272259-e899-4aa1-9bf1-ce870065ba20","entity":{"type":"Evaluation","id":"20affcb5-0be4-4f4a-b303-5249124a2fea"},"error":{"code":"RELEASE_FAILED","message":"No active assignment found for this account"}}
+{"timestamp":"2026-10-02T22:58:48.315Z","level":"ERROR","category":"MONITORING_PIPELINE","message":"Rule breach email failed","correlationId":"corr_46272259-e899-4aa1-9bf1-ce870065ba20","entity":{"type":"Evaluation","id":"20affcb5-0be4-4f4a-b303-5249124a2fea"},"error":{"code":"EMAIL_FAILED","message":"Failed to send rule breach email"}}
+  [PASS] Q: Breach monitoring processed
+  [PASS] Q: Overall FAIL on breach
+  [PASS] Q: Evaluation failed
+  [PASS] Q: DB: Evaluation FAILED
+  [FAIL] Q: Breach email queued — email delivery exists
+  [PASS] Q: Release audited
+  [PASS] Q: Account released after breach
+  [PASS] Q: RuleEvent created for breach
+
+## PHASE R — Duplicate Pass Test
+{"timestamp":"2026-10-02T22:58:51.123Z","level":"INFO","category":"MONITORING_PIPELINE","message":"No in-progress evaluation for account, skipping rule evaluation","correlationId":"corr_cf1ef6c5-f9f1-4d94-b314-ddfc8afce0fe","entity":{"type":"MT5Account","id":"ecd7ce5b-aac5-4384-8271-a034c60e11a0"}}
+  [PASS] R: Duplicate pass processed
+  [PASS] R: Evaluation still PASSED (terminal)
+  [PASS] R: No duplicate funded account
+  [PASS] R: No duplicate RuleEvent
+
+## PHASE S — Duplicate Breach Test
+{"timestamp":"2026-10-02T22:58:52.417Z","level":"INFO","category":"MONITORING_PIPELINE","message":"No in-progress evaluation for account, skipping rule evaluation","correlationId":"corr_f5ba78fa-8366-43eb-98f1-280cbfc795df","entity":{"type":"MT5Account","id":"ecd7ce5b-aac5-4384-8271-a034c60e11a0"}}
+  [PASS] S: Duplicate breach processed
+  [PASS] S: No duplicate breach event (evaluation PASSED)
+
+## PHASE T — Release Test
+  [PASS] T: Evaluation has PASSED status
+  [PASS] T: Account released (AVAILABLE)
+  [PASS] T: Assignment RETURNED or no active assignment
+
+## PHASE U — Funded Account
+  [PASS] U: Funded account exists
+  [PASS] U: Correct trader
+  [PASS] U: Correct evaluation linked
+  [PASS] U: Correct status
+  [PASS] U: No duplicate funded account
+
+## PHASE V/W — Email Validation
+  [PASS] V: Payment email exists (direct creation)
+  [FAIL] V: Pass email exists — found
+  [PASS] V: No duplicate payment email
+  [PASS] V: No password/token leakage in email
+
+## PHASE X — Authorization Test
+  [PASS] X: Other user cannot access evaluation
+  [PASS] X: Non-admin cannot access admin endpoints
+
+## PHASE Y — API Replay Test
+{"timestamp":"2026-10-02T22:58:58.137Z","level":"INFO","category":"ACTIVATION","message":"Evaluation already activated","correlationId":"corr_a2711221-86f7-41e6-9911-4c08052e465d","actor":{"type":"trader","id":"f8e0df3d-afcd-4453-9ab9-2f96feb0bf87"},"entity":{"type":"Evaluation","id":"939cce4c-5d3a-4f16-bcf5-155d7bbb4ef7"}}
+  [PASS] Y: Replay activation safe
+  [PASS] Y: Order idempotency key enforced
+
+## PHASE Z — Database Consistency Check
+  [PASS] Z: All evaluations have trader
+  [PASS] Z: No duplicate ledger entries
+  [PASS] Z: No accounts with impossible status
+  [PASS] Z: No orphan active assignments
+  [PASS] Z: Order PAID status consistent
+
+================================================================================
+E2E TEST SUMMARY
+================================================================================
+
+Total: 106, Passed: 102, Failed: 4
+  Phase A: 3/3 passed [PASS]
+  Phase B: 5/5 passed [PASS]
+  Phase C: 10/10 passed [PASS]
+  Phase D: 7/8 passed [FAIL]
+  Phase E: 6/6 passed [PASS]
+  Phase F: 4/4 passed [PASS]
+  Phase G: 2/2 passed [PASS]
+  Phase H: 5/5 passed [PASS]
+  Phase I: 4/4 passed [PASS]
+  Phase J: 1/1 passed [PASS]
+  Phase K: 2/2 passed [PASS]
+  Phase L: 3/3 passed [PASS]
+  Phase M: 1/1 passed [PASS]
+  Phase N: 5/5 passed [PASS]
+  Phase O: 4/4 passed [PASS]
+  Phase P: 7/8 passed [FAIL]
+  Phase Q: 7/8 passed [FAIL]
+  Phase R: 4/4 passed [PASS]
+  Phase S: 2/2 passed [PASS]
+  Phase T: 3/3 passed [PASS]
+  Phase U: 5/5 passed [PASS]
+  Phase V: 3/4 passed [FAIL]
+  Phase X: 2/2 passed [PASS]
+  Phase Y: 2/2 passed [PASS]
+  Phase Z: 5/5 passed [PASS]
+
+Failures:
+  [D] Order creation: FAILED: 
+Invalid `prisma.auditLog.findFirst()` invocation in
+C:\FundedExperts\app\tests\phase33-e2e.ts:386:47
+
+  383 check("Server-calculated totals", "D", Number(fetched!.subtotal) === 100 && Number(fetched!.totalAmount) === 100, "server verified");
+  384 
+  385 // Audit log
+→ 386 const auditExists = await prisma.auditLog.findFirst(
+Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "22P02", message: "invalid input value for enum \"AuditAction\": \"ORDER_CREATED\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })
+  [P] Pass email queued: FAILED: email delivery exists
+  [Q] Breach email queued: FAILED: email delivery exists
+  [V] Pass email exists: FAILED: found
+PHASE Z: Scoped database cleanup...
+[cleanup] 5 audit log row(s) retained — AuditLog is immutable by design.
+[cleanup] All 19 operations succeeded
+Cleanup complete (19/19 operations).
+
+Done.

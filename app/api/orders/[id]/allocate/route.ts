@@ -1,11 +1,11 @@
-import { PrismaClient, Prisma, OrderStatus, MT5AccountPurpose } from "@prisma/client";
+import { Prisma, OrderStatus, MT5AccountPurpose } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { allocateAccount, AllocateAccountResult } from "@/lib/allocation";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 const logger = createLogger({
   environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
 });

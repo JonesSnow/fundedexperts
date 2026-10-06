@@ -169,6 +169,25 @@ export async function createFundedAccount(
     };
   }
 
+  if (evaluation.status !== "PASSED") {
+    logger.error("FUNDED_ACCOUNT", "Evaluation has not passed", {
+      correlationId,
+      actor: makeActor(performedBy),
+      entity: makeEntity("Evaluation", evaluationId),
+      error: {
+        code: "EVALUATION_NOT_PASSED",
+        message: `Evaluation ${evaluationId} is ${evaluation.status}`,
+      },
+    });
+    return {
+      success: false,
+      error: `Evaluation is ${evaluation.status}: only a PASSED evaluation can become a funded account`,
+      errorCategory: "INVALID_STATE",
+      recoverable: false,
+      correlationId,
+    };
+  }
+
   const existing = await prisma.fundedAccount.findFirst({
     where: { evaluationId },
   });
@@ -189,28 +208,36 @@ export async function createFundedAccount(
   }
 
   try {
-    const account = await prisma.fundedAccount.create({
-      data: {
-        traderId: evaluation.traderId,
-        evaluationId: evaluation.id,
-        rulesetVersionId: evaluation.rulesetVersionId ?? undefined,
-        status: "ELIGIBLE",
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_CREATED" as AuditAction,
-        entityType: "FundedAccount",
-        entityId: account.id,
-        performedBy,
-        details: {
-          evaluationId: evaluation.id,
-          rulesetVersionId: evaluation.rulesetVersionId,
+    // The funded account row and its audit entry are written in one transaction.
+    // Previously the audit insert was a separate statement, so a failure there
+    // returned an error for a row that had already been committed, leaving the
+    // audit trail permanently missing that the account was created.
+    const account = await prisma.$transaction(async (tx) => {
+      const created = await tx.fundedAccount.create({
+        data: {
           traderId: evaluation.traderId,
-          status: account.status,
+          evaluationId: evaluation.id,
+          rulesetVersionId: evaluation.rulesetVersionId ?? undefined,
+          status: "ELIGIBLE",
         },
-      },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_CREATED" as AuditAction,
+          entityType: "FundedAccount",
+          entityId: created.id,
+          performedBy,
+          details: {
+            evaluationId: evaluation.id,
+            rulesetVersionId: evaluation.rulesetVersionId,
+            traderId: evaluation.traderId,
+            status: created.status,
+          },
+        },
+      });
+
+      return created;
     });
 
     logger.info("FUNDED_ACCOUNT", "Funded account created", {
@@ -276,26 +303,32 @@ export async function approveFundedAccount(
   }
 
   try {
-    const updated = await prisma.fundedAccount.update({
-      where: { id },
-      data: {
-        status: "APPROVED",
-        updatedAt: new Date(),
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_UPDATED" as AuditAction,
-        entityType: "FundedAccount",
-        entityId: account.id,
-        performedBy,
-        details: {
-          statusChange: { from: account.status, to: "APPROVED" },
-          evaluationId: account.evaluationId,
-          rulesetVersionId: account.rulesetVersionId,
+    // Status change and its audit entry commit together, so a failed audit
+    // write can no longer leave an APPROVED account with no audit record.
+    const updated = await prisma.$transaction(async (tx) => {
+      const changed = await tx.fundedAccount.update({
+        where: { id },
+        data: {
+          status: "APPROVED",
+          updatedAt: new Date(),
         },
-      },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_UPDATED" as AuditAction,
+          entityType: "FundedAccount",
+          entityId: account.id,
+          performedBy,
+          details: {
+            statusChange: { from: account.status, to: "APPROVED" },
+            evaluationId: account.evaluationId,
+            rulesetVersionId: account.rulesetVersionId,
+          },
+        },
+      });
+
+      return changed;
     });
 
     logger.info("FUNDED_ACCOUNT", "Funded account approved", {
@@ -379,30 +412,37 @@ export async function linkAccount(
   }
 
   try {
-    const updated = await prisma.fundedAccount.update({
-      where: { id: fundedAccountId },
-      data: {
-        accountId: accountId,
-        status: "ACTIVE",
-        allocatedAt: fundedAccount.allocatedAt ?? new Date(),
-        activatedAt: fundedAccount.activatedAt ?? new Date(),
-        updatedAt: new Date(),
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_ASSIGNED" as AuditAction,
-        entityType: "FundedAccount",
-        entityId: fundedAccountId,
-        performedBy,
-        details: {
-          accountId: account.id,
-          accountNumber: account.accountNumber,
-          fromStatus: fundedAccount.status,
-          toStatus: "ACTIVE",
+    // Link mutation and its audit entry commit together. The activation email
+    // is intentionally sent AFTER the transaction commits, so an email failure
+    // cannot roll back the link.
+    const updated = await prisma.$transaction(async (tx) => {
+      const changed = await tx.fundedAccount.update({
+        where: { id: fundedAccountId },
+        data: {
+          accountId: accountId,
+          status: "ACTIVE",
+          allocatedAt: fundedAccount.allocatedAt ?? new Date(),
+          activatedAt: fundedAccount.activatedAt ?? new Date(),
+          updatedAt: new Date(),
         },
-      },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_ASSIGNED" as AuditAction,
+          entityType: "FundedAccount",
+          entityId: fundedAccountId,
+          performedBy,
+          details: {
+            accountId: account.id,
+            accountNumber: account.accountNumber,
+            fromStatus: fundedAccount.status,
+            toStatus: "ACTIVE",
+          },
+        },
+      });
+
+      return changed;
     });
 
     logger.info("FUNDED_ACCOUNT", "MT5 account linked to funded account", {
@@ -500,11 +540,6 @@ export async function transitionFundedAccountStatus(
       updateData.allocatedAt = account.allocatedAt ?? now;
     }
 
-    const updated = await prisma.fundedAccount.update({
-      where: { id },
-      data: updateData,
-    });
-
     const auditDetails: Record<string, unknown> = {
       statusChange: { from: account.status, to: status },
     };
@@ -514,14 +549,25 @@ export async function transitionFundedAccountStatus(
     auditDetails.evaluationId = account.evaluationId;
     auditDetails.rulesetVersionId = account.rulesetVersionId;
 
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_UPDATED" as AuditAction,
-        entityType: "FundedAccount",
-        entityId: account.id,
-        performedBy,
-        details: auditDetails as unknown as Prisma.JsonObject,
-      },
+    // Status change and its audit entry commit together. Notification emails
+    // are sent after the transaction commits so they cannot affect the write.
+    const updated = await prisma.$transaction(async (tx) => {
+      const changed = await tx.fundedAccount.update({
+        where: { id },
+        data: updateData,
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_UPDATED" as AuditAction,
+          entityType: "FundedAccount",
+          entityId: account.id,
+          performedBy,
+          details: auditDetails as unknown as Prisma.JsonObject,
+        },
+      });
+
+      return changed;
     });
 
     logger.info("FUNDED_ACCOUNT", "Funded account status transitioned", {
@@ -578,12 +624,22 @@ export async function transitionFundedAccountStatus(
   }
 }
 
+/**
+ * Fetch a single funded account.
+ *
+ * `traderId` is an OWNERSHIP SCOPE, not a lookup key: it must come from the
+ * server-verified session, never from client input. When supplied, the query is
+ * constrained to that trader, so another trader's account is reported as
+ * NOT_FOUND rather than returned. Omit it only for ADMIN callers, which are
+ * already authorized to read across traders by the route layer.
+ */
 export async function getFundedAccount(
   prisma: PrismaClient,
   id: string,
+  traderId?: string,
 ): Promise<GetFundedAccountResult> {
-  const account = await prisma.fundedAccount.findUnique({
-    where: { id },
+  const account = await prisma.fundedAccount.findFirst({
+    where: traderId ? { id, traderId } : { id },
   });
 
   if (!account) {

@@ -1,8 +1,8 @@
-import { PrismaClient, Prisma, EvaluationStatus, RuleResult, RuleType } from "@prisma/client";
+import { Prisma, EvaluationStatus, RuleResult, RuleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 
 async function getAuthenticatedUser(request: NextRequest) {
   const token = getSessionCookie(request);

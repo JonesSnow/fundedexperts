@@ -1,11 +1,11 @@
-import { PrismaClient, OrderStatus } from "@prisma/client";
+import { OrderStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { activateEvaluation } from "@/lib/activation";
 import { createMockPaymentProvider } from "@/lib/mock-payment-provider";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
 });

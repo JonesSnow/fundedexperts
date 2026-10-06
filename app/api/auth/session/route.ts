@@ -1,8 +1,7 @@
-import { PrismaClient } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 
 export async function GET(request: NextRequest) {
   const token = getSessionCookie(request);
@@ -24,7 +23,6 @@ export async function GET(request: NextRequest) {
       firstName: true,
       lastName: true,
       status: true,
-      emailVerified: true,
     },
   });
 

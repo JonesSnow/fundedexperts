@@ -1,9 +1,9 @@
-import { PrismaClient, MT5Account } from "@prisma/client";
+import { MT5Account } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { encryptIfEnabled } from "@/lib/encryption";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 
 async function getAuthenticatedUser(request: NextRequest) {
   const token = getSessionCookie(request);

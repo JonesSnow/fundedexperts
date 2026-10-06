@@ -1,9 +1,8 @@
-import { PrismaClient } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { getFundedAccount } from "@/lib/funded-account";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 
 async function getAuthenticatedUser(request: NextRequest) {
   const token = getSessionCookie(request);
@@ -35,12 +34,15 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const where: Record<string, unknown> = { id };
-    if (trader.role === "TRADER") {
-      where.traderId = trader.id;
-    }
-
-    const result = await getFundedAccount(prisma, id);
+    // Ownership scope is derived from the server-verified session only. A TRADER
+    // is restricted to their own funded accounts; ADMIN may read across traders.
+    // Another trader's account resolves to NOT_FOUND, which the handler below
+    // already reports as a 404.
+    const result = await getFundedAccount(
+      prisma,
+      id,
+      trader.role === "TRADER" ? trader.id : undefined,
+    );
 
     if (!result.success) {
       return NextResponse.json(

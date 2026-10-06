@@ -1,4 +1,4 @@
-import { PrismaClient, EmailDeliveryStatus, EmailProviderType } from "@prisma/client";
+import { EmailDeliveryStatus, EmailProviderType } from "@prisma/client";
 import { EmailMessage, EmailSendResult, EmailEventType, EmailSendOptions, EmailProvider } from "./types";
 import { GmailSmtpProvider } from "./provider";
 import { ConsoleProvider } from "./console-provider";
@@ -6,8 +6,8 @@ import { sanitizeSensitiveValue } from "../logger";
 import { getEmailConfig, validateEmailConfig, EmailConfig } from "./config";
 import { createLogger } from "@/lib/logger";
 import type { EmailDelivery } from "@prisma/client";
+import { prisma } from "@/lib/db";
 
-const prisma = new PrismaClient();
 const logger = createLogger({
   environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
 });
