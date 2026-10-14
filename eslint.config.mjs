@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Managed checkouts are separate worktrees, not part of this app's source tree.
+    ".kilo/worktrees/**",
   ]),
   {
     files: ["scripts/run-tests.js"],

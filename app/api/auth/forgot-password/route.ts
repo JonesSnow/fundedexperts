@@ -1,66 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "crypto";
-import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
+import { checkCooldown, checkRateLimit } from "@/lib/auth/rate-limit";
+import { generateOtp, hashOtp, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS } from "@/lib/auth/otp";
+import { validateEmail } from "@/lib/auth/validation";
 import { sendPasswordResetEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
 
+const GENERIC_RESPONSE = {
+  success: true,
+  message: "If an account exists for that address, a password reset code will be sent.",
+};
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const email = body.email as string | undefined;
-
-    if (!email || typeof email !== "string") {
-      return NextResponse.json(
-        { success: false, error: "Email is required" },
-        { status: 400 },
-      );
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const validation = validateEmail(email);
+    if (!validation.valid) {
+      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
     const rateLimit = checkRateLimit(`forgot-password:${email}`);
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { success: false, error: "Too many attempts. Try again later." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(rateLimit.retryAfter) },
-        }
-      );
+    const cooldown = checkCooldown(`forgot-password-request:${email}`, OTP_RESEND_COOLDOWN_MS);
+    if (!rateLimit.allowed || !cooldown.allowed) {
+      const retryAfter = Math.max(rateLimit.retryAfter ?? 0, cooldown.retryAfter ?? 0);
+      return NextResponse.json(GENERIC_RESPONSE, {
+        status: 200,
+        headers: retryAfter > 0 ? { "Retry-After": String(retryAfter) } : undefined,
+      });
     }
 
     const trader = await prisma.trader.findUnique({
       where: { email },
+      select: { id: true, email: true, firstName: true },
     });
 
-    resetRateLimit(`forgot-password:${email}`);
-
     if (trader) {
-      const token = randomBytes(32).toString("hex");
-      const expires = new Date(Date.now() + 15 * 60 * 1000);
-
+      const code = generateOtp();
+      const expiresAt = new Date(Date.now() + OTP_TTL_MS);
       await prisma.trader.update({
         where: { id: trader.id },
         data: {
-          passwordResetToken: token,
-          passwordResetExpires: expires,
+          passwordResetToken: hashOtp("password-reset", email, code),
+          passwordResetExpires: expiresAt,
         },
       });
 
       await sendPasswordResetEmail(
         { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
-        token,
-        expires,
-      );
+        code,
+        expiresAt,
+      ).catch(() => undefined);
     }
 
-    return NextResponse.json(
-      { success: true, message: "If an account exists, a reset email has been sent" },
-      { status: 200 },
-    );
+    return NextResponse.json(GENERIC_RESPONSE, { status: 200 });
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Failed to process request" },
-      { status: 500 },
-    );
+    return NextResponse.json({ success: false, error: "Unable to process this request right now." }, { status: 503 });
   }
 }

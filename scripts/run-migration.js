@@ -1,28 +1,30 @@
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+(async () => {
+  const { default: path } = await import('node:path');
+  process.chdir(path.resolve(__dirname, '..'));
 
-const envPath = path.join(__dirname, '..', '.env.local');
-if (fs.existsSync(envPath)) {
-  const content = fs.readFileSync(envPath, 'utf-8');
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    let value = trimmed.slice(eqIdx + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    process.env[key] = value;
+  const { register } = await import('tsx/esm/api');
+  register();
+  const { TEST_DATABASE_URL } = await import('../tests/support/test-env.ts');
+  const { default: childProcess } = await import('node:child_process');
+
+  const migrationEnv = {
+    ...process.env,
+    TEST_DATABASE_URL,
+    DATABASE_URL: TEST_DATABASE_URL,
+    DIRECT_URL: TEST_DATABASE_URL,
+  };
+  delete migrationEnv.PHASE33_ALLOW_PRODUCTION_DB;
+
+  try {
+    childProcess.execSync('npx prisma migrate dev --name phase20-business-readiness', {
+      stdio: 'inherit',
+      env: migrationEnv,
+      shell: true,
+    });
+  } catch {
+    process.exitCode = 1;
   }
-}
-
-try {
-  execSync('npx prisma migrate dev --name phase20-business-readiness', {
-    stdio: 'inherit',
-    env: process.env,
-    shell: true,
-  });
-} catch {
-  process.exit(1);
-}
+})().catch(() => {
+  console.error('Migration stopped: dedicated test database validation failed.');
+  process.exitCode = 1;
+});

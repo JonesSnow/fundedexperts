@@ -1,4 +1,3 @@
-import { Ruleset } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -19,9 +18,9 @@ async function getAuthenticatedUser(request: NextRequest) {
   return trader;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const rulesets = await prisma.ruleset.findMany({
-    where: { isActive: true },
+    where: { isActive: true, versions: { some: { status: "PUBLISHED" } } },
     select: {
       id: true,
       name: true,
@@ -35,7 +34,7 @@ export async function GET(request: NextRequest) {
         where: {
           status: "PUBLISHED",
         },
-        orderBy: { version: "desc" },
+        orderBy: { createdAt: "desc" },
       },
     },
   });
@@ -77,19 +76,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ruleset = await prisma.ruleset.create({
-      data: {
-        name: body.name,
-        description: body.description,
-        isActive: body.isActive ?? true,
-      },
+    const ruleset = await prisma.$transaction(async (tx) => {
+      const created = await tx.ruleset.create({ data: { name: body.name, description: body.description, isActive: true } });
+      await tx.auditLog.create({ data: { action: "RULESET_CREATED", entityType: "Ruleset", entityId: created.id, performedBy: trader.id, details: { name: created.name } } });
+      return created;
     });
 
     return NextResponse.json(
       { success: true, ruleset },
       { status: 201 }
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { success: false, error: "Failed to create ruleset" },
       { status: 500 }

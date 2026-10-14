@@ -1,3 +1,4 @@
+import "./support/test-env";
 import { Prisma, PrismaClient, MT5Account, AccountAssignment, Evaluation } from "@prisma/client";
 import { allocateAccount } from "../lib/allocation";
 import { releaseAccount } from "../lib/release";

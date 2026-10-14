@@ -1,4 +1,4 @@
-import { Order, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -61,6 +61,7 @@ export async function GET(
             currency: true,
             quantity: true,
             status: true,
+            productSnapshot: true,
             product: { select: { id: true, name: true, accountSize: true } },
           },
         },

@@ -1,41 +1,67 @@
-const fs = require('fs');
-const path = require('path');
+(async () => {
+  const { default: path } = await import('node:path');
+  const { default: fs } = await import('node:fs');
+  const projectRoot = path.resolve(__dirname, '..');
+  process.chdir(projectRoot);
 
-const envPath = path.join(__dirname, '..', '.env.local');
-if (fs.existsSync(envPath)) {
-  const content = fs.readFileSync(envPath, 'utf-8');
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    let value = trimmed.slice(eqIdx + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    process.env[key] = value;
-  }
-}
+  const { register } = await import('tsx/esm/api');
+  register();
+  const { TEST_DATABASE_URL } = await import('../tests/support/test-env.ts');
+  const { default: childProcess } = await import('node:child_process');
+  const { createRequire } = await import('node:module');
 
-const required = ['DATABASE_URL', 'JWT_SECRET', 'MT5_ENCRYPTION_KEY'];
-for (const varName of required) {
-  if (!process.env[varName]) {
-    console.error(`ERROR: Required environment variable ${varName} is not set and .env.local could not be loaded.`);
+  const target = process.argv[2];
+  const args = process.argv.slice(3);
+  if (!target) {
+    console.error('Usage: node scripts/run-tests.js npx tsx tests/<file>.test.ts');
+    console.error('A dedicated TEST_DATABASE_URL or PHASE33_DATABASE_URL is required.');
     process.exit(1);
   }
-}
 
-const target = process.argv[2];
-const args = process.argv.slice(3);
-const { execSync } = require('child_process');
+  const testsRoot = path.resolve(projectRoot, 'tests');
+  const requestedFile = args[1];
+  const testFile = requestedFile ? path.resolve(projectRoot, requestedFile) : '';
+  const relativeTestFile = testFile ? path.relative(testsRoot, testFile) : '';
+  const isWithinTests = relativeTestFile !== '' &&
+    relativeTestFile !== '..' &&
+    !relativeTestFile.startsWith('..' + path.sep) &&
+    !path.isAbsolute(relativeTestFile);
+  const isSupportedTestFile = isWithinTests &&
+    (/\.test\.ts$/i.test(relativeTestFile) ||
+      ['phase33-e2e.ts', path.join('monitoring', 'persistence.ts')].includes(relativeTestFile));
+  let realTestFile = '';
+  let realTestRelativePath = '';
+  try {
+    realTestFile = fs.realpathSync(testFile);
+    realTestRelativePath = path.relative(fs.realpathSync(testsRoot), realTestFile);
+  } catch {
+    // The validation below reports a missing or unresolvable test file.
+  }
+  const realPathStaysUnderTests = realTestRelativePath !== '..' &&
+    !realTestRelativePath.startsWith('..' + path.sep) &&
+    !path.isAbsolute(realTestRelativePath);
 
-if (!target) {
-  console.error('Usage: node run-tests.js <command> [args...]');
-  console.error('Example: node run-tests.js npx tsx tests/auth.test.ts');
-  process.exit(1);
-}
+  if (target !== 'npx' || args.length !== 2 || args[0] !== 'tsx' || !isSupportedTestFile ||
+      !realPathStaysUnderTests || !fs.existsSync(testFile) || !fs.statSync(testFile).isFile()) {
+    console.error('Only a single tsx test file under tests/ can be run through this guarded runner.');
+    process.exit(1);
+  }
 
-try {
-  execSync(`${target} ${args.join(' ')}`, { stdio: 'inherit', env: process.env, shell: true });
-} catch {
-  process.exit(1);
-}
+  const childEnv = { ...process.env, TEST_DATABASE_URL };
+  delete childEnv.DATABASE_URL;
+  delete childEnv.DIRECT_URL;
+  delete childEnv.PHASE33_ALLOW_PRODUCTION_DB;
+
+  try {
+    const projectRequire = createRequire(path.join(projectRoot, 'package.json'));
+    const tsxCli = projectRequire.resolve('tsx/cli');
+    childProcess.execFileSync(process.execPath, [tsxCli, realTestFile], {
+      stdio: 'inherit',
+      env: childEnv,
+    });
+  } catch {
+    process.exitCode = 1;
+  }
+})().catch(() => {
+  process.exitCode = 1;
+});

@@ -1,26 +1,8 @@
-import { Ruleset } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
-
-async function getAuthenticatedUser(request: NextRequest) {
-  const token = getSessionCookie(request);
-  if (!token) return null;
-  const session = await getSession(token);
-  if (!session) return null;
-  const trader = await prisma.trader.findUnique({
-    where: { id: session.sub },
-    select: { id: true, role: true, status: true },
-  });
-  if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
-    return null;
-  }
-  return trader;
-}
-
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -28,6 +10,7 @@ export async function GET(
     where: {
       id,
       isActive: true,
+      versions: { some: { status: "PUBLISHED" } },
     },
     select: {
       id: true,

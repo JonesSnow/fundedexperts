@@ -1,4 +1,4 @@
-import { RulesetVersion } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -53,29 +53,39 @@ export async function PUT(
       );
     }
 
-    if (rulesetVersion.status === "PUBLISHED") {
+    if (rulesetVersion.status !== "DRAFT") {
       return NextResponse.json(
-        { success: false, error: "Published versions cannot be modified" },
+        { success: false, error: "Only draft versions can be modified" },
         { status: 409 }
       );
     }
 
-    const body = await request.json();
-    const updated = await prisma.rulesetVersion.update({
-      where: { id: rulesetVersion.id },
-      data: {
-        effectiveDate: body.effectiveDate
-          ? new Date(body.effectiveDate)
-          : undefined,
-        updatedAt: new Date(),
-      },
-    });
+    const body: unknown = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ success: false, error: "Version draft object is required" }, { status: 400 });
+    const effectiveDateValue = (body as Record<string, unknown>).effectiveDate;
+    if (effectiveDateValue !== undefined && effectiveDateValue !== null && (typeof effectiveDateValue !== "string" || Number.isNaN(Date.parse(effectiveDateValue)))) {
+      return NextResponse.json({ success: false, error: "Effective date must be a valid date string or null" }, { status: 400 });
+    }
+    const updated = await prisma.$transaction(async (tx) => {
+      const change = await tx.rulesetVersion.updateMany({
+        where: { id: rulesetVersion.id, status: "DRAFT" },
+        data: { effectiveDate: effectiveDateValue === undefined ? undefined : effectiveDateValue === null ? null : new Date(effectiveDateValue) },
+      });
+      if (change.count !== 1) throw new Error("RULESET_VERSION_IMMUTABLE");
+      const versionRecord = await tx.rulesetVersion.findUnique({ where: { id: rulesetVersion.id } });
+      if (!versionRecord) throw new Error("RULESET_VERSION_MISSING");
+      await tx.auditLog.create({
+        data: { action: "RULESET_UPDATED", entityType: "RulesetVersion", entityId: versionRecord.id, performedBy: trader.id, details: { rulesetId: id, version: versionRecord.version, effectiveDateChanged: effectiveDateValue !== undefined } },
+      });
+      return versionRecord;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     return NextResponse.json(
       { success: true, rulesetVersion: updated },
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof Error && error.message === "RULESET_VERSION_IMMUTABLE") return NextResponse.json({ success: false, error: "Only draft versions can be modified" }, { status: 409 });
     return NextResponse.json(
       { success: false, error: "Failed to update version" },
       { status: 500 }

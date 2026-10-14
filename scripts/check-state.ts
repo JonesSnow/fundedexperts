@@ -1,22 +1,7 @@
-const fs = require('fs');
+import "../tests/support/test-env";
 const { PrismaClient } = require('@prisma/client');
 
 async function main() {
-  const envPath = '.env.local';
-  if (fs.existsSync(envPath)) {
-    const content = fs.readFileSync(envPath, 'utf-8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIdx = trimmed.indexOf('=');
-      if (eqIdx === -1) continue;
-      const key = trimmed.slice(0, eqIdx).trim();
-      let value = trimmed.slice(eqIdx + 1).trim();
-      if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-      process.env[key] = value;
-    }
-  }
-
   const prisma = new PrismaClient();
   try {
     await prisma.$connect();

@@ -5,6 +5,8 @@ import {
   assertSafeTestDatabase,
   resolveAndVerifyTestDatabase,
   ProductionDatabaseGuardError,
+  withVerifiedTestDatabase,
+  mergeTestEnvironmentFileValues,
 } from "./support/test-db-guard";
 
 const PRODUCTION_URL = "postgresql://user:pw@ep-prod-xyz-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require";
@@ -48,7 +50,7 @@ describe("Phase 33 database isolation guard", () => {
       const resolved = { url: PRODUCTION_URL, source: "TEST_DATABASE_URL" as const };
       assert.throws(
         () => assertSafeTestDatabase(resolved, { DATABASE_URL: PRODUCTION_URL }),
-        /identical to DATABASE_URL/
+        /same host and database name/
       );
     });
 
@@ -105,13 +107,13 @@ describe("Phase 33 database isolation guard", () => {
       assert.strictEqual(report.warnings.length, 1);
     });
 
-    it("11c. Allowlist supports suffix entries and whitespace", () => {
+    it("11c. Rejects suffix allowlist entries even when the target is a subdomain", () => {
       const unmarked = "postgresql://user:pw@ep-damp-smoke-b4gj12v6-pooler.c-6.aws.neon.tech/neondb";
       const resolved = { url: unmarked, source: "TEST_DATABASE_URL" as const };
-      const report = assertSafeTestDatabase(resolved, {}, {
-        allowedHosts: " other.host , aws.neon.tech ",
-      });
-      assert.strictEqual(report.trustedVia, "allowlist");
+      assert.throws(
+        () => assertSafeTestDatabase(resolved, {}, { allowedHosts: "aws.neon.tech" }),
+        ProductionDatabaseGuardError
+      );
     });
 
     it("11d. The allowlist does NOT defeat the DATABASE_URL equality check", () => {
@@ -135,6 +137,54 @@ describe("Phase 33 database isolation guard", () => {
       );
     });
 
+    it("11f. A database name is not an allowlist hostname", () => {
+      const unmarked = "postgresql://user:pw@ep-shared-pooler.us-east-2.aws.neon.tech/neondb";
+      const resolved = { url: unmarked, source: "TEST_DATABASE_URL" as const };
+      assert.throws(
+        () => assertSafeTestDatabase(resolved, {}, { allowedHosts: "neondb" }),
+        ProductionDatabaseGuardError
+      );
+    });
+
+    it("11g. Marker substrings in host and database names are not sufficient", () => {
+      const misleading = "postgresql://user:pw@ep-contest-pooler.us-east-2.aws.neon.tech/latest";
+      const resolved = { url: misleading, source: "TEST_DATABASE_URL" as const };
+      assert.throws(() => assertSafeTestDatabase(resolved, {}), ProductionDatabaseGuardError);
+    });
+
+    it("11h. Rejects the same database despite different credentials, query, encoding, and scheme", () => {
+      const resolved = {
+        url: "postgres://other:other@EP-test-abc-pooler.us-east-2.aws.neon.tech:5432/fundedexperts%5Ftest?sslmode=prefer",
+        source: "TEST_DATABASE_URL" as const,
+      };
+      const production = "postgresql://user:pw@ep-test-abc-pooler.us-east-2.aws.neon.tech/fundedexperts_test?sslmode=require";
+      assert.throws(
+        () => assertSafeTestDatabase(resolved, { DATABASE_URL: production }),
+        /same host and database name/
+      );
+    });
+
+    it("11i. Rejects a target equal to DIRECT_URL when DATABASE_URL is absent", () => {
+      const resolved = { url: TEST_URL, source: "TEST_DATABASE_URL" as const };
+      assert.throws(
+        () => assertSafeTestDatabase(resolved, { DIRECT_URL: TEST_URL }),
+        /same host and database name as DIRECT_URL/
+      );
+    });
+
+    it("11j. Rejects a target matching a filtered .env.local production reference", () => {
+      const resolved = { url: TEST_URL, source: "TEST_DATABASE_URL" as const };
+      assert.throws(
+        () => assertSafeTestDatabase(resolved, {}, { productionDatabaseUrls: [TEST_URL] }),
+        /same host and database name as production configuration reference/
+      );
+    });
+
+    it("11k. Rejects non-PostgreSQL URLs", () => {
+      const resolved = { url: "https://test.example/db", source: "TEST_DATABASE_URL" as const };
+      assert.throws(() => assertSafeTestDatabase(resolved, {}), ProductionDatabaseGuardError);
+    });
+
     it("12. The override still cannot defeat the DATABASE_URL equality check", () => {
       const resolved = { url: PRODUCTION_URL, source: "TEST_DATABASE_URL" as const };
       assert.throws(
@@ -150,6 +200,93 @@ describe("Phase 33 database isolation guard", () => {
       );
       assert.strictEqual(resolved.source, "TEST_DATABASE_URL");
       assert.strictEqual(report.host, "ep-test-abc-pooler.us-east-2.aws.neon.tech");
+    });
+  });
+});
+
+describe("test database gate runs before database work", () => {
+  function assertRejectedBeforeDatabaseWork(env: Parameters<typeof withVerifiedTestDatabase>[0]) {
+    let databaseOperations = 0;
+    assert.throws(
+      () => withVerifiedTestDatabase(env, () => {
+        databaseOperations += 1;
+        return { clientCreated: true };
+      }),
+      ProductionDatabaseGuardError
+    );
+    assert.strictEqual(databaseOperations, 0);
+  }
+
+  it("rejects missing dedicated test URLs before a mocked client can be created", () => {
+    assertRejectedBeforeDatabaseWork({ DATABASE_URL: PRODUCTION_URL });
+  });
+
+  it("rejects a production-marked URL even when it differs from DATABASE_URL", () => {
+    assertRejectedBeforeDatabaseWork({
+      TEST_DATABASE_URL: PRODUCTION_URL,
+      DATABASE_URL: "postgresql://user:pw@ep-other-prod-pooler.us-east-2.aws.neon.tech/neondb",
+    });
+  });
+
+  it("rejects an equal or normalized-equal URL before database work", () => {
+    assertRejectedBeforeDatabaseWork({
+      TEST_DATABASE_URL: "postgresql://user:pw@ep-test-abc-pooler.us-east-2.aws.neon.tech/fundedexperts_test/",
+      DATABASE_URL: "postgresql://user:pw@ep-test-abc-pooler.us-east-2.aws.neon.tech/fundedexperts_test",
+    });
+  });
+
+  it("rejects an unmarked and non-allowlisted host before database work", () => {
+    assertRejectedBeforeDatabaseWork({
+      TEST_DATABASE_URL: "postgresql://user:pw@ep-shared-pooler.us-east-2.aws.neon.tech/neondb",
+    });
+  });
+
+  it("rejects production runtime mode before database work", () => {
+    assertRejectedBeforeDatabaseWork({
+      TEST_DATABASE_URL: TEST_URL,
+      NODE_ENV: "production",
+    });
+  });
+
+  it("invokes database work only after a dedicated test URL passes", () => {
+    let databaseOperations = 0;
+    const result = withVerifiedTestDatabase(
+      { TEST_DATABASE_URL: TEST_URL, DATABASE_URL: PRODUCTION_URL },
+      ({ resolved }) => {
+        databaseOperations += 1;
+        return { url: resolved.url };
+      }
+    );
+    assert.strictEqual(databaseOperations, 1);
+    assert.strictEqual(result.url, TEST_URL);
+  });
+});
+
+
+
+describe("test environment file separation", () => {
+  it("uses only .env.test.local for database URLs and allowlists", () => {
+    const merged = mergeTestEnvironmentFileValues(
+      {
+        TEST_DATABASE_URL: TEST_URL,
+        DATABASE_URL: "postgresql://user:pw@ep-test-old.neon.tech/fundedexperts_test",
+        DIRECT_URL: "postgresql://user:pw@ep-test-old.neon.tech/fundedexperts_test",
+      },
+      {
+        DATABASE_URL: PRODUCTION_URL,
+        DIRECT_URL: PRODUCTION_URL,
+        TEST_DATABASE_URL: PRODUCTION_URL,
+        PHASE33_DATABASE_URL: PRODUCTION_URL,
+        PHASE33_TEST_DB_HOST_ALLOWLIST: "prod.example",
+        PHASE33_ALLOW_PRODUCTION_DB: "true",
+        NODE_ENV: "production",
+        JWT_SECRET: "test-only-placeholder",
+      }
+    );
+
+    assert.deepStrictEqual(merged, {
+      TEST_DATABASE_URL: TEST_URL,
+      JWT_SECRET: "test-only-placeholder",
     });
   });
 });

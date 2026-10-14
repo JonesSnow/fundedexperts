@@ -66,15 +66,13 @@ export function renderEmailTemplate(
           Hi ${safe("firstName") || safe("email")},
         </p>
         <p style="color:#374151;font-size:16px;line-height:24px;margin:0 0 24px 0;">
-          Thanks for joining Funded Experts. Please verify your email address by clicking the button below.
+          Enter this one-time code in Funded Experts to verify your email address.
         </p>
-        <p style="text-align:center;margin:0 0 24px 0;">
-          <a href="${safeUrl("verificationUrl")}" style="display:inline-block;background-color:#2563eb;color:#ffffff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:16px;">
-            Verify Email
-          </a>
+        <p style="text-align:center;margin:0 0 24px 0;font-size:32px;letter-spacing:8px;font-weight:700;color:#1e40af;">
+          ${safe("code")}
         </p>
         <p style="color:#6b7280;font-size:14px;line-height:20px;margin:0 0 16px 0;">
-          This link will expire on ${safe("expiresAt")}.
+          This code expires on ${safe("expiresAt")}.
         </p>
         <p style="color:#6b7280;font-size:14px;line-height:20px;margin:0 0 16px 0;">
           If you did not create an account, you can safely ignore this email.
@@ -82,14 +80,14 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
   </table>
 </body>
 </html>`,
-        text: `Verify Your Email Address\n\nHi ${safe("firstName") || safe("email")},\n\nThanks for joining Funded Experts. Please verify your email address by clicking the link below:\n\n${safeUrl("verificationUrl")}\n\nThis link will expire on ${safe("expiresAt")}.\n\nIf you did not create an account, you can safely ignore this email.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
+        text: `Verify Your Email Address\n\nHi ${safe("firstName") || safe("email")},\n\nThanks for joining Funded Experts. Please verify your email address with this one-time code:\n\n${safe("code")}\n\nThis code expires on ${safe("expiresAt")}.\n\nIf you did not create an account, you can safely ignore this email.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
       };
     },
     "password-reset": () => {
@@ -110,30 +108,28 @@ export function renderEmailTemplate(
           Hi ${safe("firstName") || safe("email")},
         </p>
         <p style="color:#374151;font-size:16px;line-height:24px;margin:0 0 24px 0;">
-          You requested a password reset. Click the button below to set a new password.
+          Enter this one-time code in Funded Experts to verify your password reset request.
         </p>
-        <p style="text-align:center;margin:0 0 24px 0;">
-          <a href="${safeUrl("resetUrl")}" style="display:inline-block;background-color:#2563eb;color:#ffffff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:16px;">
-            Reset Password
-          </a>
+        <p style="text-align:center;margin:0 0 24px 0;font-size:32px;letter-spacing:8px;font-weight:700;color:#1e40af;">
+          ${safe("code")}
         </p>
         <p style="color:#6b7280;font-size:14px;line-height:20px;margin:0 0 16px 0;">
-          This link will expire on ${safe("expiresAt")}.
+          This code expires on ${safe("expiresAt")}.
         </p>
         <p style="color:#6b7280;font-size:14px;line-height:20px;margin:0 0 16px 0;">
-          If you did not request this reset, please contact support immediately.
+          If you did not request this reset, please review the available security resources.
         </p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
   </table>
 </body>
 </html>`,
-        text: `Password Reset\n\nHi ${safe("firstName") || safe("email")},\n\nYou requested a password reset. Click the link below to set a new password:\n\n${safeUrl("resetUrl")}\n\nThis link will expire on ${safe("expiresAt")}.\n\nIf you did not request this reset, please contact support immediately.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
+        text: `Password Reset\n\nHi ${safe("firstName") || safe("email")},\n\nYou requested a password reset. Enter this one-time code in Funded Experts to verify your password reset request:\n\n${safe("code")}\n\nThis code expires on ${safe("expiresAt")}.\n\nIf you did not request this reset, please review the available security resources.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
       };
     },
     "welcome": () => {
@@ -165,26 +161,24 @@ export function renderEmailTemplate(
                  Go to Dashboard
                </a>
              </p>`
-          : `<p style="text-align:center;margin:0 0 24px 0;">
-               <a href="${safeUrl("verificationUrl")}" style="display:inline-block;background-color:#2563eb;color:#ffffff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:16px;">
-                 Verify Your Email
-               </a>
+          : `<p style="color:#6b7280;font-size:14px;line-height:20px;margin:0 0 16px 0;">
+               Complete email verification in the app with the one-time code sent to your inbox.
              </p>`
         }
         <p style="color:#374151;font-size:16px;line-height:24px;margin:0 0 16px 0;">
-          Explore our challenge programs and start your journey toward funded trading.
+          Explore configured simulated evaluation products and review their published rules.
         </p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
   </table>
 </body>
 </html>`,
-        text: `Welcome to Funded Experts!\n\nHi ${safe("firstName") || safe("email")},\n\nYour account has been created${verified ? " and your email is verified" : " — please verify your email to get started"}.\n\n${verified ? safeUrl("dashboardUrl") : safeUrl("verificationUrl")}\n\nExplore our challenge programs and start your journey toward funded trading.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
+        text: `Welcome to Funded Experts!\n\nHi ${safe("firstName") || safe("email")},\n\nYour account has been created${verified ? " and your email is verified" : " — please verify your email to get started"}.\n\n${verified ? safeUrl("dashboardUrl") : "Use the one-time code sent to your inbox in the Funded Experts app."}\n\nExplore configured simulated evaluation products and review their published rules.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
       };
     },
     "password-changed": () => {
@@ -210,7 +204,7 @@ export function renderEmailTemplate(
           Your password was successfully changed${safe("changedByAdmin") === "true" ? " by an administrator" : ""}.
         </p>
         ${safe("changedByAdmin") === "true" ? `<p style="color:#ef4444;font-size:14px;line-height:20px;margin:0 0 16px 0;">
-          <strong>Security alert:</strong> If you did not request this change, please contact support immediately.
+          <strong>Security alert:</strong> If you did not request this change, please review the available security resources.
         </p>` : ""}
         <p style="color:#374151;font-size:16px;line-height:24px;margin:0 0 24px 0;">
           No further action is required.
@@ -218,14 +212,14 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
   </table>
 </body>
 </html>`,
-        text: `Your Password Was Changed\n\nHi ${safe("firstName") || safe("email")},\n\nYour password was successfully changed${safe("changedByAdmin") === "true" ? " by an administrator" : ""}${safe("changedByAdmin") === "true" ? "\n\nSecurity alert: If you did not request this change, please contact support immediately." : ""}\n\nNo further action is required.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
+        text: `Your Password Was Changed\n\nHi ${safe("firstName") || safe("email")},\n\nYour password was successfully changed${safe("changedByAdmin") === "true" ? " by an administrator" : ""}${safe("changedByAdmin") === "true" ? "\n\nSecurity alert: If you did not request this change, please review the available security resources." : ""}\n\nNo further action is required.\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
       };
     },
     "order-created": () => {
@@ -280,7 +274,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -327,7 +321,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -374,7 +368,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -431,7 +425,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -488,7 +482,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -545,7 +539,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -598,7 +592,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -656,7 +650,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -700,7 +694,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -760,7 +754,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -820,7 +814,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -878,7 +872,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -936,7 +930,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
@@ -985,7 +979,7 @@ export function renderEmailTemplate(
         </table>
         ${safe("reason") ? `<p style="color:#6b7280;font-size:14px;line-height:20px;margin:0 0 16px 0;">Reason: ${safe("reason")}</p>` : ""}
         <p style="color:#374151;font-size:16px;line-height:24px;margin:0 0 24px 0;">
-          Please review the details in your dashboard and contact support if you have questions.
+          Please review the details in your dashboard and review the available account resources if you have questions.
         </p>
         <p style="text-align:center;margin:0 0 24px 0;">
           <a href="${safeUrl("dashboardUrl")}" style="display:inline-block;background-color:#2563eb;color:#ffffff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:16px;">
@@ -995,14 +989,14 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>
   </table>
 </body>
 </html>`,
-        text: `Payout Request Update\n\nHi ${safe("firstName") || safe("email")},\n\nYour payout request has been reviewed and requires additional action.\n\nRequest ID: ${safe("requestId")}\nAmount: ${amount}\nStatus: ${safe("status")}\n${safe("reason") ? `Reason: ${safe("reason")}\n` : ""}\nPlease review the details in your dashboard and contact support if you have questions:\n${safeUrl("dashboardUrl")}\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
+        text: `Payout Request Update\n\nHi ${safe("firstName") || safe("email")},\n\nYour payout request has been reviewed and requires additional action.\n\nRequest ID: ${safe("requestId")}\nAmount: ${amount}\nStatus: ${safe("status")}\n${safe("reason") ? `Reason: ${safe("reason")}\n` : ""}\nPlease review the details in your dashboard and review the available account resources if you have questions:\n${safeUrl("dashboardUrl")}\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
       };
     },
     "system-alert": () => {
@@ -1035,7 +1029,7 @@ export function renderEmailTemplate(
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
         <p style="color:#9ca3af;font-size:12px;line-height:18px;margin:0;">
           Funded Experts<br>
-          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">Contact Support</a>
+          <a href="${safeUrl("appUrl")}/support" style="color:#9ca3af;text-decoration:underline;">View Help Resources</a>
         </p>
       </td>
     </tr>

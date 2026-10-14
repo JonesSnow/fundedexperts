@@ -1,149 +1,135 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { extractTokenFromHash } from "@/lib/email/urls";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import AuthShell from "@/components/auth-shell";
+import { Button } from "@/components/ui/button";
+
+type Step = "code" | "password" | "success";
 
 export default function ResetPasswordPage() {
-  const router = useRouter();
+  const [step, setStep] = useState<Step>("code");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [proof, setProof] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const tok = extractTokenFromHash(window.location.hash);
-    if (!tok) {
-      router.replace("/forgot-password");
-      return;
-    }
+    const frame = window.requestAnimationFrame(() => {
+      setEmail(window.sessionStorage.getItem("funded-experts:password-reset-email") ?? "");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    setToken(tok);
-  }, [router]);
-
-  function validatePassword(pw: string): string | null {
-    if (pw.length < 8) return "Password must be at least 8 characters";
-    if (!/[a-zA-Z]/.test(pw)) return "Password must contain at least one letter";
-    if (!/\d/.test(pw)) return "Password must contain at least one number";
-    return null;
-  }
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError(null);
-
-    if (!token) {
-      setError("Reset token is missing.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-
-    const validationError = validatePassword(password);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    setIsSubmitting(true);
-
+  async function verifyCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
     try {
-      const res = await fetch("/api/auth/reset-password", {
+      const response = await fetch("/api/auth/reset-password/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, newPassword: password }),
+        body: JSON.stringify({ email, code }),
       });
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        setError(data.error ?? "Failed to reset password.");
-      } else {
-        setIsSuccess(true);
-        setTimeout(() => router.push("/login"), 2000);
+      const data = await response.json();
+      if (!response.ok || !data.success || typeof data.proof !== "string") {
+        setError(data.error ?? "That code could not be verified. Request a new one and try again.");
+        return;
       }
+      setProof(data.proof);
+      setCode("");
+      setStep("password");
     } catch {
-      setError("An unexpected error occurred. Please try again.");
+      setError("We could not reach the reset service. Check your connection and try again.");
     } finally {
-      setIsSubmitting(false);
+      setBusy(false);
     }
   }
 
-  if (!token) {
-    return null;
+  async function updatePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    if (password !== confirmPassword) {
+      setError("The passwords do not match.");
+      return;
+    }
+    if (password.length < 8 || !/[a-z]/i.test(password) || !/\d/.test(password)) {
+      setError("Use at least 8 characters, including a letter and a number.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, proof, newPassword: password }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        setError(data.error ?? "The reset session expired. Request a new code and try again.");
+        return;
+      }
+      setProof("");
+      setPassword("");
+      setConfirmPassword("");
+      window.sessionStorage.removeItem("funded-experts:password-reset-email");
+      setStep("success");
+    } catch {
+      setError("We could not reach the reset service. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (step === "success") {
+    return (
+      <AuthShell
+        title="Password updated"
+        description="Your new password is ready to use."
+      >
+        <p className="rounded-xl border border-success/30 bg-success-light p-4 text-sm text-foreground" role="status">Sign in with your new password. Other existing sessions may remain active.</p>
+        <Link href="/login" className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Return to sign in</Link>
+      </AuthShell>
+    );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md bg-white rounded-lg shadow-md p-8">
-        <h1 className="text-2xl font-bold text-center text-gray-900 mb-2">Reset Password</h1>
-        <p className="text-center text-gray-600 mb-6">Enter your new password below</p>
-
-        {isSuccess ? (
-          <div className="text-center py-8">
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <p className="text-green-800 font-medium mb-2">Password reset successfully!</p>
-            <p className="text-sm text-gray-500">Redirecting to login...</p>
+    <AuthShell
+      title={step === "code" ? "Verify reset code" : "Choose a new password"}
+      description={step === "code" ? "Enter the 6-digit code from your email. It expires after 10 minutes." : "Use at least 8 characters, including a letter and a number."}
+    >
+      {error && <div className="mb-5 rounded-xl border border-danger/30 bg-danger-light p-4 text-sm text-danger" role="alert">{error}</div>}
+      {step === "code" ? (
+        <form onSubmit={verifyCode} className="space-y-5">
+          <div>
+            <label htmlFor="reset-email" className="mb-2 block text-sm font-medium text-foreground">Email address</label>
+            <input id="reset-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={255} autoComplete="email" className="w-full rounded-xl border border-input-border bg-input px-4 py-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-800">{error}</p>
-              </div>
-            )}
-
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
-                New Password
-              </label>
-              <input
-                type="password"
-                id="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={8}
-                autoComplete="new-password"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-1">
-                Confirm New Password
-              </label>
-              <input
-                type="password"
-                id="confirmPassword"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                minLength={8}
-                autoComplete="new-password"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isSubmitting ? "Resetting..." : "Reset Password"}
-            </button>
-          </form>
-        )}
-      </div>
-    </div>
+          <div>
+            <label htmlFor="reset-code" className="mb-2 block text-sm font-medium text-foreground">Six-digit code</label>
+            <input id="reset-code" type="text" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} required minLength={6} maxLength={6} inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" className="w-full rounded-xl border border-input-border bg-input px-4 py-3 text-center font-mono text-2xl tracking-[0.45em] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          </div>
+          <Button type="submit" fullWidth size="lg" loading={busy} disabled={busy || code.length !== 6}>{busy ? "Checking…" : "Verify code"}</Button>
+        </form>
+      ) : (
+        <form onSubmit={updatePassword} className="space-y-5">
+          <p className="rounded-xl border border-info/30 bg-info-light p-4 text-sm text-info" role="status">Code verified for {email}. Choose your new password to finish.</p>
+          <div>
+            <label htmlFor="new-password" className="mb-2 block text-sm font-medium text-foreground">New password</label>
+            <input id="new-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} autoComplete="new-password" className="w-full rounded-xl border border-input-border bg-input px-4 py-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          </div>
+          <div>
+            <label htmlFor="confirm-password" className="mb-2 block text-sm font-medium text-foreground">Confirm new password</label>
+            <input id="confirm-password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required minLength={8} autoComplete="new-password" className="w-full rounded-xl border border-input-border bg-input px-4 py-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          </div>
+          <Button type="submit" fullWidth size="lg" loading={busy} disabled={busy}>{busy ? "Updating…" : "Update password"}</Button>
+        </form>
+      )}
+      <p className="mt-6 text-sm text-muted-foreground text-center">Need a new code? <Link href="/forgot-password" className="font-semibold text-foreground underline underline-offset-4">Request another</Link></p>
+      <p className="mt-3 text-sm text-muted-foreground text-center">Remembered your password? <Link href="/login" className="font-semibold text-foreground underline underline-offset-4">Sign in</Link></p>
+    </AuthShell>
   );
 }

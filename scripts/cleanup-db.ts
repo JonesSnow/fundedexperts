@@ -1,3 +1,4 @@
+import "../tests/support/test-env";
 import { PrismaClient } from "@prisma/client";
 
 async function main() {

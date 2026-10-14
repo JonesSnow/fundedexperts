@@ -21,7 +21,6 @@ export function buildWelcomeMessage(
     ...vars,
     appUrl: buildAppUrl(""),
     dashboardUrl: buildAppUrl("/dashboard"),
-    verificationUrl: buildAppUrl("/verify-email"),
   });
 
   return {

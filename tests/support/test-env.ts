@@ -1,17 +1,15 @@
 /**
  * Test environment bootstrap.
  *
- * MUST be the first import in any test file that loads application modules,
- * because `lib/auth/session.ts` reads JWT_SECRET and `lib/db.ts` resolves
- * DATABASE_URL at module-evaluation time.
- *
- * Loads .env.test.local (never .env.local, which points at production), then
- * repoints DATABASE_URL at the verified test database so module-scope Prisma
- * clients in application code cannot reach production.
+ * Import this before application modules or Prisma clients in every
+ * database-capable test and database utility. It validates a dedicated test
+ * URL before setting DATABASE_URL, then redirects Prisma to that verified URL.
+ * .env.local may supply non-database secrets; its database URLs are kept only
+ * as comparison references and never become the test connection target.
  */
 import { readFileSync } from "fs";
-import { join } from "path";
-import { resolveAndVerifyTestDatabase } from "./test-db-guard";
+import { join, resolve } from "path";
+import { mergeTestEnvironmentFileValues, withVerifiedTestDatabase } from "./test-db-guard";
 
 function loadEnvFile(filePath: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -37,35 +35,32 @@ function loadEnvFile(filePath: string): Record<string, string> {
   return out;
 }
 
-const root = process.cwd();
-
-// .env.test.local holds the dedicated test database and its allowlist marker.
-const fileEnv = loadEnvFile(join(root, ".env.test.local"));
-
-// .env.local is read only for non-database secrets (JWT_SECRET is needed to mint
-// real session cookies). DATABASE_URL is deliberately excluded so the production
-// connection string is never placed into the environment at all.
-const localEnv = loadEnvFile(join(root, ".env.local"));
-for (const key of Object.keys(localEnv)) {
-  if (key === "DATABASE_URL" || key === "DIRECT_URL") continue;
-  fileEnv[key] = localEnv[key];
-}
+const root = resolve(__dirname, "../..");
+// .env.test.local is the only file allowed to supply a test database URL.
+const testFileEnv = loadEnvFile(join(root, ".env.test.local"));
+const localFileEnv = loadEnvFile(join(root, ".env.local"));
+const fileEnv = mergeTestEnvironmentFileValues(testFileEnv, localFileEnv);
 
 for (const [key, value] of Object.entries(fileEnv)) {
   if (process.env[key] === undefined) process.env[key] = value;
 }
 
-// NODE_ENV is typed read-only on ProcessEnv; assign through a mutable view.
 const mutableEnv = process.env as unknown as Record<string, string | undefined>;
+const verification = withVerifiedTestDatabase(
+  process.env as NodeJS.ProcessEnv,
+  ({ resolved, report }) => ({ resolved, report }),
+  {
+    allowedHosts: process.env.PHASE33_TEST_DB_HOST_ALLOWLIST,
+    productionDatabaseUrls: [localFileEnv.DATABASE_URL, localFileEnv.DIRECT_URL]
+      .filter((value): value is string => Boolean(value?.trim())),
+  }
+);
+
+// No Prisma client or query is created before the guard above succeeds.
+mutableEnv.DATABASE_URL = verification.resolved.url;
+mutableEnv.DIRECT_URL = verification.resolved.url;
 mutableEnv.NODE_ENV = "test";
 mutableEnv.EMAIL_MODE = "console";
 
-// Reuse the production-isolation guard rather than trusting the file we just read.
-const { resolved } = resolveAndVerifyTestDatabase(
-  process.env as NodeJS.ProcessEnv,
-  { allowedHosts: process.env.PHASE33_TEST_DB_HOST_ALLOWLIST }
-);
-
-mutableEnv.DATABASE_URL = resolved.url;
-
-export const TEST_DATABASE_URL = resolved.url;
+export const TEST_DATABASE_URL = verification.resolved.url;
+export const TEST_DATABASE_SAFETY_REPORT = verification.report;

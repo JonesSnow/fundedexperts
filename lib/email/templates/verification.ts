@@ -1,11 +1,11 @@
 import { EmailMessage } from "../types";
 import { renderEmailTemplate } from "../renderer";
-import { buildAppUrl, buildTokenUrl } from "../urls";
+import { buildAppUrl } from "../urls";
 
 export interface VerificationEmailVars {
   email: string;
   firstName?: string;
-  token: string;
+  code: string;
   expiresAt: string;
 }
 
@@ -14,10 +14,8 @@ export function buildVerificationMessage(
   vars: VerificationEmailVars,
   idempotencyKey?: string
 ): EmailMessage {
-  const verificationUrl = buildTokenUrl("/verify-email", vars.token);
   const rendered = renderEmailTemplate("verification", {
     ...vars,
-    verificationUrl,
     appUrl: buildAppUrl(""),
     dashboardUrl: buildAppUrl("/dashboard"),
   });

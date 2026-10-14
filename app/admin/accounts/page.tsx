@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 interface Account {
   id: string;
@@ -22,16 +21,15 @@ interface Account {
 }
 
 export default function AdminAccountsPage() {
-  const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [authError, setAuthError] = useState(false);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterPurpose, setFilterPurpose] = useState("");
   const [filterBroker, setFilterBroker] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
-  const [authError, setAuthError] = useState(false);
 
   const fetchAccounts = useCallback(async (s = "", st = "", p = "", br = "") => {
     try {
@@ -43,9 +41,11 @@ export default function AdminAccountsPage() {
       const res = await fetch(`/api/accounts?${params.toString()}`);
       const data = await res.json();
       if (res.ok) {
+        setAuthError(false);
         setAccounts(data.accounts ?? []);
         setError("");
       } else {
+        setAuthError(res.status === 401 || res.status === 403);
         setError(data.error || "Failed to load accounts");
       }
     } catch {
@@ -85,34 +85,36 @@ export default function AdminAccountsPage() {
 
   if (authError) {
     return (
-      <div className="p-8 max-w-6xl mx-auto">
-        <h1 className="text-3xl font-bold mb-4">Access Denied</h1>
-        <p className="text-red-600">You must be an administrator to access this page.</p>
-        <Link href="/admin" className="mt-4 inline-block px-4 py-2 bg-gray-300 rounded">Back to Admin</Link>
+      <div className="w-full min-w-0 p-4 sm:p-8 max-w-6xl mx-auto">
+        <h1 className="text-2xl sm:text-3xl font-bold mb-4">Access Denied</h1>
+        <p className="text-danger">You must be an administrator to access this page.</p>
+        <Link href="/admin" className="mt-4 inline-block px-4 py-2 bg-muted rounded">Back to Admin</Link>
       </div>
     );
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <h1 className="text-3xl font-bold mb-2">Account Inventory</h1>
-      <p className="text-gray-600 mb-6">Manage MT5 demo accounts.</p>
+    <div className="w-full min-w-0 p-4 sm:p-8 max-w-6xl mx-auto">
+      <h1 className="text-2xl sm:text-3xl font-bold mb-2">Account Inventory</h1>
+      <p className="text-muted-foreground mb-6">Manage MT5 demo accounts.</p>
       {error && (
-        <div className="mb-4 p-3 text-sm text-red-700 bg-red-100 rounded">{error}</div>
+        <div className="mb-4 p-3 text-sm text-danger bg-danger-light rounded">{error}</div>
       )}
 
-      <div className="flex gap-3 mb-6 flex-wrap items-center">
+      <div className="w-full min-w-0 flex flex-wrap items-center gap-3 mb-6">
         <input
           type="text"
           placeholder="Search account number"
+          aria-label="Search account number"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="px-3 py-2 border rounded w-48 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full min-w-0 px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-48"
         />
         <select
+          aria-label="Filter accounts by status"
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full min-w-0 max-w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
         >
           <option value="">All Statuses</option>
           <option value="AVAILABLE">AVAILABLE</option>
@@ -121,9 +123,10 @@ export default function AdminAccountsPage() {
           <option value="MAINTENANCE">MAINTENANCE</option>
         </select>
         <select
+          aria-label="Filter accounts by purpose"
           value={filterPurpose}
           onChange={(e) => setFilterPurpose(e.target.value)}
-          className="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full min-w-0 max-w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
         >
           <option value="">All Purposes</option>
           <option value="EVALUATION">EVALUATION</option>
@@ -133,19 +136,22 @@ export default function AdminAccountsPage() {
         <input
           type="text"
           placeholder="Filter broker"
+          aria-label="Filter by broker"
           value={filterBroker}
           onChange={(e) => setFilterBroker(e.target.value)}
-          className="px-3 py-2 border rounded w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full min-w-0 px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-40"
         />
         <button
+          type="button"
           onClick={handleSearch}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary"
         >
           Search
         </button>
         <button
+          type="button"
           onClick={() => setShowAddForm(!showAddForm)}
-          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          className="px-4 py-2 bg-success text-primary-foreground rounded hover:bg-success-hover"
         >
           {showAddForm ? "Cancel" : "Add Account"}
         </button>
@@ -156,12 +162,12 @@ export default function AdminAccountsPage() {
       )}
 
       {loading ? (
-        <p className="text-gray-500">Loading accounts...</p>
+        <p className="text-muted-foreground" role="status" aria-live="polite">Loading accounts...</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full bg-white border">
+        <div className="w-full min-w-0 max-w-full overflow-x-auto" role="region" aria-label="Account inventory table" tabIndex={0}>
+          <table className="min-w-full bg-card border">
             <thead>
-              <tr className="bg-gray-100">
+              <tr className="bg-muted">
                 <th className="px-4 py-2 text-left border">Account #</th>
                 <th className="px-4 py-2 text-left border">Broker</th>
                 <th className="px-4 py-2 text-left border">Server</th>
@@ -176,11 +182,11 @@ export default function AdminAccountsPage() {
             <tbody>
               {accounts.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-4 text-center text-gray-500">No accounts found</td>
+                  <td colSpan={9} className="px-4 py-4 text-center text-muted-foreground">No accounts found</td>
                 </tr>
               )}
               {accounts.map((acc) => (
-                <tr key={acc.id} className="hover:bg-gray-50">
+                <tr key={acc.id} className="hover:bg-background">
                   <td className="px-4 py-2 border font-mono">{acc.accountNumber}</td>
                   <td className="px-4 py-2 border">{acc.broker ?? "—"}</td>
                   <td className="px-4 py-2 border">{acc.server ?? "—"}</td>
@@ -192,20 +198,20 @@ export default function AdminAccountsPage() {
                   <td className="px-4 py-2 border">
                     <HealthBadge status={acc.healthStatus} />
                   </td>
-                  <td className="px-4 py-2 border text-sm text-gray-500">
+                  <td className="px-4 py-2 border text-sm text-muted-foreground">
                     {new Date(acc.createdAt).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-2 border">
                     <div className="flex gap-2">
                       <Link
                         href={`/admin/accounts/${acc.id}`}
-                        className="px-2 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                        className="rounded bg-info-light px-2 py-1 text-sm text-info hover:bg-info/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         View
                       </Link>
                       <button
                         onClick={() => handleDelete(acc.id)}
-                        className="px-2 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
+                        className="rounded bg-danger-light px-2 py-1 text-sm text-danger hover:bg-danger/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         Delete
                       </button>
@@ -223,13 +229,13 @@ export default function AdminAccountsPage() {
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    AVAILABLE: "bg-green-100 text-green-700",
-    IN_USE: "bg-blue-100 text-blue-700",
-    INACTIVE: "bg-gray-100 text-gray-700",
-    MAINTENANCE: "bg-yellow-100 text-yellow-700",
+    AVAILABLE: "bg-success-light text-success",
+    IN_USE: "bg-info-light text-info",
+    INACTIVE: "bg-muted text-muted-foreground",
+    MAINTENANCE: "bg-warning-light text-warning",
   };
   return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-700"}`}>
+    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[status] ?? "bg-muted text-muted-foreground"}`}>
       {status}
     </span>
   );
@@ -237,12 +243,12 @@ function StatusBadge({ status }: { status: string }) {
 
 function HealthBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    CONNECTED: "bg-green-100 text-green-700",
-    DISCONNECTED: "bg-gray-100 text-gray-700",
-    ERROR: "bg-red-100 text-red-700",
+    CONNECTED: "bg-success-light text-success",
+    DISCONNECTED: "bg-muted text-muted-foreground",
+    ERROR: "bg-danger-light text-danger",
   };
   return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-700"}`}>
+    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[status] ?? "bg-muted text-muted-foreground"}`}>
       {status}
     </span>
   );
@@ -296,12 +302,12 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <div className="mb-6 p-4 border rounded bg-gray-50">
+    <div className="mb-6 p-4 border rounded bg-background">
       <h2 className="text-xl font-semibold mb-4">Add Account</h2>
       {submitError && (
-        <div className="mb-4 p-3 text-sm text-red-700 bg-red-100 rounded">{submitError}</div>
+        <div className="mb-4 p-3 text-sm text-danger bg-danger-light rounded">{submitError}</div>
       )}
-      <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className="block text-sm font-medium mb-1">Account Number *</label>
           <input
@@ -309,9 +315,9 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
             value={form.accountNumber}
             onChange={(e) => setForm({ ...form, accountNumber: e.target.value })}
             required
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          {errors.accountNumber && <p className="text-xs text-red-600 mt-1">{errors.accountNumber}</p>}
+          {errors.accountNumber && <p className="text-xs text-danger mt-1">{errors.accountNumber}</p>}
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Broker</label>
@@ -319,7 +325,7 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
             type="text"
             value={form.broker}
             onChange={(e) => setForm({ ...form, broker: e.target.value })}
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div>
@@ -328,7 +334,7 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
             type="text"
             value={form.server}
             onChange={(e) => setForm({ ...form, server: e.target.value })}
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div>
@@ -337,7 +343,7 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
             type="text"
             value={form.login}
             onChange={(e) => setForm({ ...form, login: e.target.value })}
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div>
@@ -348,7 +354,7 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
             value={form.accountSize}
             onChange={(e) => setForm({ ...form, accountSize: e.target.value })}
             placeholder="0.00"
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div>
@@ -357,7 +363,7 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
             type="text"
             value={form.currency}
             onChange={(e) => setForm({ ...form, currency: e.target.value })}
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div>
@@ -365,7 +371,7 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
           <select
             value={form.purpose}
             onChange={(e) => setForm({ ...form, purpose: e.target.value })}
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">None</option>
             <option value="EVALUATION">EVALUATION</option>
@@ -379,13 +385,13 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
             value={form.notes}
             onChange={(e) => setForm({ ...form, notes: e.target.value })}
             rows={2}
-            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <button
           type="submit"
           disabled={submitting}
-          className="col-span-2 px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 w-fit"
+          className="col-span-2 px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary disabled:opacity-50 w-fit"
         >
           {submitting ? "Creating..." : "Create Account"}
         </button>

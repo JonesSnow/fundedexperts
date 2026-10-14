@@ -100,83 +100,35 @@ export async function POST(
     }
 
     const rules = evaluation.rulesetVersion?.rules ?? [];
+    const requiredRuleIds = rules.filter((rule) => rule.disposition === "REQUIRED" && rule.isRequired).map((rule) => rule.id).sort();
     const ruleEvaluations = await prisma.ruleEvaluation.findMany({
       where: { evaluationId: evaluation.id },
+      select: { ruleId: true },
     });
-
-    if (ruleEvaluations.length === 0 && rules.length > 0) {
-      await prisma.$transaction(async (tx) => {
-        for (const rule of rules) {
-          await tx.ruleEvaluation.create({
-            data: {
-              evaluationId: evaluation.id,
-              ruleId: rule.id,
-              result: "PASS",
-              actualValue: Prisma.JsonNull,
-              expectedValue: Prisma.JsonNull,
-              details: "Initial state - awaiting monitoring",
-              evaluatedAt: new Date(),
-            },
-          });
-        }
-      });
+    const initializedRuleIds = ruleEvaluations.map((ruleEvaluation) => ruleEvaluation.ruleId).sort();
+    if (requiredRuleIds.length === 0 || requiredRuleIds.length !== initializedRuleIds.length || requiredRuleIds.some((ruleId, index) => ruleId !== initializedRuleIds[index])) {
+      return NextResponse.json(
+        { success: false, error: "Evaluation rule initialization is incomplete; administrator review is required", reviewRequired: true },
+        { status: 409 },
+      );
     }
 
-    const startedEvaluation = await prisma.evaluation.update({
-      where: { id },
-      data: {
-        startedAt: new Date(),
-        status: "IN_PROGRESS",
-        updatedAt: new Date(),
-      },
-      include: {
-        rulesetVersion: {
-          select: { id: true, version: true, ruleset: { select: { name: true } } },
-        },
-        account: {
-          select: {
-            id: true,
-            accountNumber: true,
-            broker: true,
-            server: true,
-            status: true,
-            healthStatus: true,
-          },
-        },
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "EVALUATION_STARTED",
-        entityType: "Evaluation",
-        entityId: evaluation.id,
-        performedBy: trader.id,
-        details: {
-          accountId: evaluation.accountId,
-          accountNumber: evaluation.account?.accountNumber,
-          rulesetVersionId: evaluation.rulesetVersionId,
-          rulesCount: rules.length,
-        },
-      },
-    });
-
-    logger.info("EVALUATION", "Evaluation started", {
+    logger.info("EVALUATION", "Evaluation activation confirmed", {
       correlationId,
       actor: { type: "trader", id: trader.id },
       entity: { type: "Evaluation", id: evaluation.id },
-      metadata: { accountNumber: evaluation.account?.accountNumber },
+      metadata: { accountNumber: evaluation.account?.accountNumber, rulesetVersionId: evaluation.rulesetVersionId },
     });
 
     return NextResponse.json(
       {
         success: true,
         evaluation: {
-          id: startedEvaluation.id,
-          status: startedEvaluation.status,
-          startedAt: startedEvaluation.startedAt,
-          rulesetVersionId: startedEvaluation.rulesetVersionId,
-          account: startedEvaluation.account,
+          id: evaluation.id,
+          status: evaluation.status,
+          startedAt: evaluation.startedAt,
+          rulesetVersionId: evaluation.rulesetVersionId,
+          account: evaluation.account,
         },
       },
       { status: 200 }

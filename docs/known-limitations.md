@@ -161,3 +161,16 @@ This document lists known limitations that are NOT defects but are acknowledged 
 - **Impact:** Each API route creates a new PrismaClient instance. This can exhaust database connections under load.
 - **Affects:** All Prisma-based operations
 - **Resolution:** Implement global PrismaClient singleton pattern.
+
+
+---
+
+## Current implementation reconciliation — 2026-10-13
+
+Several limitation entries above are historical and no longer describe route/page existence. The current repository contains email-verification and password-recovery pages/routes, plus `lib/monitoring/` source. Their existence does not prove reliable end-to-end email delivery, a deployed monitoring worker, or live broker data. Review the current API and deployment configuration before treating these as operational.
+
+The public product experience now reads active catalog and published rule data through existing APIs. The APIs still omit category, account-size denomination, full staged structure, rule calculation semantics, and several product terms. No database-backed catalog or rule values were checked for this update. Payment settlement, account allocation, evaluation correctness, payout terms, legal policies, operational monitoring, and safe test-database designation remain launch blockers documented in `docs/master-project-audit.md`.
+
+## Product-foundation status — 2026-10-13
+
+The Block 2 schema/API/UI foundation is present, but no live products or prices were confirmed. Product and ruleset publication fail closed by default because no evaluator rule type is certified. Direct Funded cannot publish because fulfillment is absent. The current evaluator still has confirmed issues: minimum trades fails before a stage is complete, daily loss uses realized PnL as an absolute loss amount (including positive profit), trading-session configuration returns PASS without checking compliance, and trading-hours uses snapshot time with incomplete timezone handling. The new migration was not applied; existing products will become DRAFT after it is applied and must be explicitly reviewed. See [docs/block-2-product-foundation.md](block-2-product-foundation.md) for the traceability matrix and exact validation results.

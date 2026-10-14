@@ -1,6 +1,6 @@
 # Architecture Document
 
-**Status:** Phase 1 — Foundation  
+**Status:** Phase 1 — Foundation
 **Last Updated:** 2026-09-28
 
 ## 1. Architecture Decisions
@@ -106,8 +106,8 @@ Immutable system events — evaluation decisions, rule changes, admin actions.
 
 ### 4.1 XM MT5 Connectivity
 
-> **Status:** RESOLVED — Terminal logged in, credentials available  
-> **Owner:** Architecture lead / Backend team  
+> **Status:** RESOLVED — Terminal logged in, credentials available
+> **Owner:** Architecture lead / Backend team
 > **Last Updated:** 2026-09-28
 > **Per POC:** docs/mt5-poc-results.md
 
@@ -149,12 +149,12 @@ Immutable system events — evaluation decisions, rule changes, admin actions.
 
 ### 4.2 Real-Time Monitoring Frequency
 
-> **Status:** OPEN  
+> **Status:** OPEN
 > **Description:** The monitoring service interval (e.g., every 30s vs 60s) and method (polling vs WebSocket) have not been finalized. This depends on MT5 API capabilities and broker restrictions.
 
 ### 4.3 Database Deployment Strategy
 
-> **Status:** OPEN  
+> **Status:** OPEN
 > **Description:** PostgreSQL will be used for development and likely production, but the deployment method (managed service, Docker, self-hosted) has not been decided. Prisma Migrate will handle schema evolution regardless.
 
 ## 5. Folder Conventions
@@ -176,3 +176,7 @@ public/           Static assets (images, icons, fonts)
 - No production MT5 monitoring (simulation only)
 - No multi-tenant architecture
 - No microservices
+
+## Product configuration dependency map — 2026-10-13
+
+The Block 2 product flow uses `Product` as the commercial identity, `ProductStage` as the ordered evaluation-stage mapping, and immutable `RulesetVersion` records as each stage's rule source. Public product/rules APIs filter to active/published configurations and the order API snapshots the product and versioned stage terms on `OrderItem`; evaluation activation consumes that snapshot. Admin APIs provide draft, validation, publication, pause, and retirement operations. Runtime data was not queried, and the migration is unapplied. The legacy generic `Product.rulesetId` relation remains for compatibility and is not the canonical stage-version reference. Publication remains blocked until evaluator semantics and product terms are approved. Detailed traceability is in [docs/block-2-product-foundation.md](block-2-product-foundation.md).

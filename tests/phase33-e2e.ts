@@ -1,3 +1,5 @@
+import { TEST_DATABASE_URL, TEST_DATABASE_SAFETY_REPORT } from "./support/test-env";
+import { readFileSync } from "fs";
 import { PrismaClient, RuleType, AuditAction, LedgerEntryType, LedgerDirection, Prisma, type LedgerEntry } from "@prisma/client";
 import { createMockPaymentProvider } from "../lib/mock-payment-provider";
 import { activateEvaluation } from "../lib/activation";
@@ -9,61 +11,20 @@ import { createFundedAccount } from "../lib/funded-account";
 import type { MonitoringSnapshot } from "../lib/monitoring/types";
 import { encrypt } from "../lib/encryption";
 import bcrypt from "bcryptjs";
-import { readFileSync } from "fs";
 import { runCleanupSteps, assertCleanup, type CleanupResult } from "../lib/cleanup-helper";
-import {
-  resolveAndVerifyTestDatabase,
-  ProductionDatabaseGuardError,
-} from "./support/test-db-guard";
 
 const TEST_RUN_ID = `p33-e2e-${Date.now().toString(36)}`;
 const TEST_EMAIL = `phase33-${TEST_RUN_ID}@test.fundedexperts.com`;
 const TEST_PRODUCT_NAME = `Phase 33 Challenge ${TEST_RUN_ID}`;
 const TEST_ACCOUNT_PREFIX = `P33-${TEST_RUN_ID}-`;
 
-// Resolve and safety-check the dedicated test database BEFORE any Prisma client
-// exists, so no connection to the shared/production branch is ever opened.
-let testDatabaseUrl: string;
-let databaseReport: ReturnType<typeof resolveAndVerifyTestDatabase>["report"];
-try {
-  const resolved = resolveAndVerifyTestDatabase(
-    {
-      PHASE33_DATABASE_URL: process.env.PHASE33_DATABASE_URL,
-      TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
-      DATABASE_URL: process.env.DATABASE_URL,
-      NODE_ENV: process.env.NODE_ENV,
-    },
-    { allowProductionDb: process.env.PHASE33_ALLOW_PRODUCTION_DB === "true",
-      allowedHosts: process.env.PHASE33_TEST_DB_HOST_ALLOWLIST }
-  );
-  testDatabaseUrl = resolved.resolved.url;
-  databaseReport = resolved.report;
-  for (const warning of databaseReport.warnings) {
-    console.warn(`[phase33] WARNING: ${warning}`);
-  }
-} catch (error) {
-  if (error instanceof ProductionDatabaseGuardError) {
-    console.error(`\nPHASE 33 E2E ABORTED — database safety guard rejected this run.\n\n${error.message}\n`);
-    process.exit(2);
-  }
-  throw error;
+// test-env validates the dedicated URL and repoints both Prisma URL variables
+// before this module's application imports and clients can initialize.
+for (const warning of TEST_DATABASE_SAFETY_REPORT.warnings) {
+  console.warn('[phase33] WARNING: ' + warning);
 }
 
-// The guard above has already verified that testDatabaseUrl is a dedicated test
-// database. Several modules create their own module-scoped `new PrismaClient()`
-// (lib/email/index.ts, middleware.ts and the API route handlers), and Prisma
-// resolves those clients from DATABASE_URL. The runner loads .env.local, which
-// sets DATABASE_URL to the shared/production branch, so without this redirect
-// those clients would connect to production and write rows there during a test
-// run. Repointing DATABASE_URL at the verified test URL keeps every client in
-// this process on the test database.
-//
-// This must run AFTER the guard: the guard deliberately rejects a resolved test
-// URL that is identical to DATABASE_URL, and it needs the production value in
-// order to perform that comparison.
-process.env.DATABASE_URL = testDatabaseUrl;
-
-const prisma = new PrismaClient({ datasourceUrl: testDatabaseUrl });
+const prisma = new PrismaClient({ datasourceUrl: TEST_DATABASE_URL });
 
 const results: Array<{ name: string; phase: string; result: "PASS" | "FAIL"; detail: string }> = [];
 let traderId: string | null = null;
@@ -230,8 +191,8 @@ async function main() {
   // PHASE A: ENVIRONMENT ALREADY VALIDATED
   // ========================================================================
   console.log("\n## PHASE A — Environment Validation");
-  check("Dedicated test database", "A", true, `source=${databaseReport.source}, db=${databaseReport.databaseName || "(default)"}`);
-  check("Test database is not production", "A", databaseReport.databaseName !== "" || databaseReport.branchId !== "", `host=${databaseReport.host}`);
+  check("Dedicated test database", "A", true, `source=${TEST_DATABASE_SAFETY_REPORT.source}, db=${TEST_DATABASE_SAFETY_REPORT.databaseName || "(default)"}`);
+  check("Test database is not production", "A", TEST_DATABASE_SAFETY_REPORT.databaseName !== "" || TEST_DATABASE_SAFETY_REPORT.branchId !== "", `host=${TEST_DATABASE_SAFETY_REPORT.host}`);
   check("Run id is unique", "A", TEST_RUN_ID.length > 0, TEST_RUN_ID);
 
   // ========================================================================
@@ -951,8 +912,8 @@ async function main() {
 
       // Verify pass email
       const passEmail = await prisma.emailDelivery.findFirst({
-        where: { 
-          relatedEntityId: evaluationId!, 
+        where: {
+          relatedEntityId: evaluationId!,
           relatedEntityType: "Evaluation",
           template: "EVALUATION_PASSED",
         },
@@ -1033,7 +994,7 @@ async function main() {
 
       // Verify breach email sent after release
       const breachEmail = await prisma.emailDelivery.findFirst({
-        where: { 
+        where: {
           template: "RULE_BREACH_CONFIRMED",
           relatedEntityType: "MT5Account",
         },

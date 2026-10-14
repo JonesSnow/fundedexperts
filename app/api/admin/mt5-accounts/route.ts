@@ -1,9 +1,10 @@
-import { MT5AccountPurpose, AccountStatus, Role } from "@prisma/client";
+import { MT5AccountPurpose, AccountStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
+import { prepareMt5Credentials } from "@/lib/mt5-credential-storage";
 
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
       currency?: string;
       purpose?: MT5AccountPurpose;
       notes?: string;
-      credentials?: string;
+      credentials?: string | null;
     };
 
     if (!accountNumber || typeof accountNumber !== "string") {
@@ -124,6 +125,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Account size must be a positive number" },
         { status: 400 }
+      );
+    }
+
+    const preparedCredentials = prepareMt5Credentials(credentials);
+    if (!preparedCredentials.ok) {
+      const invalidValue = preparedCredentials.reason === "invalid";
+      return NextResponse.json(
+        { success: false, error: invalidValue ? "Credentials must be a string" : "Credential encryption is unavailable" },
+        { status: invalidValue ? 400 : 503 },
       );
     }
 
@@ -148,7 +158,7 @@ export async function POST(request: NextRequest) {
         purpose: purpose ?? "EVALUATION",
         status: "AVAILABLE",
         notes: notes ?? null,
-        credentials: credentials ?? null,
+        credentials: preparedCredentials.value ?? null,
       },
     });
 

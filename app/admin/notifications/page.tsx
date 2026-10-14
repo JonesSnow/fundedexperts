@@ -219,10 +219,10 @@ export default function AdminNotificationsPage() {
     <div className="p-8 max-w-6xl mx-auto">
       <Header />
       <h1 className="text-3xl font-bold mb-2">Notifications</h1>
-      <p className="text-gray-600 mb-6">Manage trader notifications — search, view, send, and manage.</p>
+      <p className="text-muted-foreground mb-6">Manage trader notifications — search, view, send, and manage.</p>
 
       {/* Search */}
-      <div className="mb-6 p-4 rounded-lg border border-gray-200 bg-white shadow-sm">
+      <div className="mb-6 p-4 rounded-lg border border-border bg-card shadow-sm">
         <h2 className="text-lg font-semibold mb-3">Search Trader</h2>
         <div className="flex gap-2 flex-wrap">
           <input
@@ -230,28 +230,28 @@ export default function AdminNotificationsPage() {
             placeholder="Trader email or ID"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            className="px-3 py-2 border rounded w-72 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-2 border rounded w-72 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <button
             onClick={() => searchTraderByEmailOrId(searchInput)}
             disabled={searchLoading || !searchInput.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary disabled:opacity-50"
           >
             {searchLoading ? "Searching…" : "Search"}
           </button>
         </div>
         {searchError && (
-          <div className="mt-2 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mt-2 rounded border border-danger/30 bg-danger-light p-3 text-sm text-danger">
             {searchError}
           </div>
         )}
         {searchTrader && (
-          <div className="mt-3 p-3 rounded border border-green-200 bg-green-50">
+          <div className="mt-3 rounded border border-success/30 bg-success-light p-3 text-success">
             <p className="text-sm font-medium">
               {searchTrader.firstName || ""} {searchTrader.lastName || ""} —{" "}
               <span className="font-mono">{searchTrader.email}</span>
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               {searchTrader.status} · {searchTrader.role}
             </p>
           </div>
@@ -260,15 +260,15 @@ export default function AdminNotificationsPage() {
 
       {/* Compose */}
       {searchTrader && (
-        <div className="mb-6 p-4 rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="mb-6 p-4 rounded-lg border border-border bg-card shadow-sm">
           <h2 className="text-lg font-semibold mb-3">Send Notification</h2>
           {composeError && (
-            <div className="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="mb-3 rounded border border-danger/30 bg-danger-light p-3 text-sm text-danger">
               {composeError}
             </div>
           )}
           {composeSuccess && (
-            <div className="mb-3 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+            <div className="mb-3 rounded border border-success/30 bg-success-light p-3 text-sm text-success">
               {composeSuccess}
             </div>
           )}
@@ -280,12 +280,12 @@ export default function AdminNotificationsPage() {
                 value={composeTitle}
                 onChange={(e) => setComposeTitle(e.target.value)}
                 required
-                className="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <select
                 value={composeType}
                 onChange={(e) => setComposeType(e.target.value)}
-                className="px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="SYSTEM">SYSTEM</option>
                 <option value="ORDER">ORDER</option>
@@ -303,12 +303,12 @@ export default function AdminNotificationsPage() {
               onChange={(e) => setComposeMessage(e.target.value)}
               required
               rows={3}
-              className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <button
               type="submit"
               disabled={composeLoading || !composeTitle.trim() || !composeMessage.trim()}
-              className="mt-3 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+              className="mt-3 px-4 py-2 bg-success text-primary-foreground rounded hover:bg-success-hover disabled:opacity-50"
             >
               {composeLoading ? "Sending…" : "Send Notification"}
             </button>
@@ -322,7 +322,7 @@ export default function AdminNotificationsPage() {
           <h2 className="text-2xl font-bold">
             Notifications
             {searchTrader && unreadCount > 0 && (
-              <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+              <span className="ml-2 rounded-full bg-danger-light px-2 py-0.5 text-xs font-medium text-danger">
                 {unreadCount} unread
               </span>
             )}
@@ -330,43 +330,43 @@ export default function AdminNotificationsPage() {
         </div>
 
         {notificationsError && (
-          <div className="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mb-4 rounded border border-danger/30 bg-danger-light p-3 text-sm text-danger">
             {notificationsError}
           </div>
         )}
 
         {!searchTrader ? (
-          <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
-            <p className="text-gray-600">Search for a trader to view their notifications.</p>
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-muted-foreground">Search for a trader to view their notifications.</p>
           </div>
         ) : notificationsLoading ? (
-          <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
-            <p className="text-gray-500">Loading notifications…</p>
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-muted-foreground">Loading notifications…</p>
           </div>
         ) : notifications.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
-            <p className="text-gray-600">No notifications for this trader.</p>
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <p className="text-muted-foreground">No notifications for this trader.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-border">
+              <thead className="bg-background">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Title</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Trader</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Read</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Date</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Actions</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Title</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Trader</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Read</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
+              <tbody className="divide-y divide-border bg-card">
                 {notifications.map((notif) => (
-                  <tr key={notif.id} className="hover:bg-gray-50">
+                  <tr key={notif.id} className="hover:bg-background">
                     <td className="px-4 py-3">
                       <div className="font-medium text-sm">{notif.title}</div>
-                      <div className="text-xs text-gray-500 max-w-xs truncate">{notif.message}</div>
+                      <div className="text-xs text-muted-foreground max-w-xs truncate">{notif.message}</div>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
                       {notif.trader
                         ? `${notif.trader.firstName || ""} ${notif.trader.lastName || ""} — ${notif.trader.email}`
                         : notif.traderId}
@@ -375,14 +375,14 @@ export default function AdminNotificationsPage() {
                       <span
                         className={`rounded px-2 py-0.5 text-xs font-medium ${
                           notif.read
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-100 text-red-700"
+                            ? "bg-success-light text-success"
+                            : "bg-danger-light text-danger"
                         }`}
                       >
                         {notif.read ? "Read" : "Unread"}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
                       {new Date(notif.createdAt).toLocaleString()}
                     </td>
                     <td className="px-4 py-3">
@@ -391,7 +391,7 @@ export default function AdminNotificationsPage() {
                           <button
                             onClick={() => handleMarkRead(notif.id)}
                             disabled={loadingIds.has(notif.id)}
-                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50"
+                            className="rounded bg-info-light px-2 py-1 text-xs text-info hover:bg-info/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                           >
                             {loadingIds.has(notif.id) ? "…" : "Mark Read"}
                           </button>
@@ -400,7 +400,7 @@ export default function AdminNotificationsPage() {
                           <button
                             onClick={() => handleMarkUnread(notif.id)}
                             disabled={loadingIds.has(notif.id)}
-                            className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50"
+                            className="px-2 py-1 text-xs bg-muted text-muted-foreground rounded hover:bg-muted disabled:opacity-50"
                           >
                             {loadingIds.has(notif.id) ? "…" : "Mark Unread"}
                           </button>
@@ -408,7 +408,7 @@ export default function AdminNotificationsPage() {
                         <button
                           onClick={() => handleDelete(notif.id)}
                           disabled={loadingIds.has(notif.id)}
-                          className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+                          className="rounded bg-danger-light px-2 py-1 text-xs text-danger hover:bg-danger/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                         >
                           {loadingIds.has(notif.id) ? "…" : "Delete"}
                         </button>

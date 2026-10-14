@@ -1,3 +1,4 @@
+import "../tests/support/test-env";
 import "dotenv/config";
 import { PrismaClient, MonitoringJob, JobStatus } from "@prisma/client";
 

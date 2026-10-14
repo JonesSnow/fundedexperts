@@ -1,7 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { prisma } from "@/lib/db";
+import { hasDuplicateProductCode, validateProductDraftInput, validateProductForPublication } from "@/lib/product-domain";
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -19,7 +21,7 @@ async function getAuthenticatedUser(request: NextRequest) {
   return trader;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const rateLimit = checkRateLimit("products:list");
   if (!rateLimit.allowed) {
     return NextResponse.json(
@@ -29,22 +31,84 @@ export async function GET(request: NextRequest) {
   }
 
   const products = await prisma.product.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      status: "ACTIVE",
+      code: { not: null },
+      category: { not: null },
+      evaluationStructure: { not: null },
+      denominationCurrency: { not: null },
+      accountSize: { not: null },
+      price: { not: null },
+    },
     select: {
       id: true,
+      code: true,
       name: true,
       description: true,
+      category: true,
+      evaluationStructure: true,
+      status: true,
       accountSize: true,
+      denominationCurrency: true,
       price: true,
       currency: true,
       displayOrder: true,
       isActive: true,
       ruleset: { select: { name: true } },
+      stages: {
+        orderBy: { stageOrder: "asc" },
+        select: {
+          id: true,
+          stageKey: true,
+          displayName: true,
+          stageOrder: true,
+          rulesetVersion: {
+            select: {
+              id: true,
+              version: true,
+              status: true,
+              ruleset: { select: { id: true, name: true } },
+              rules: {
+                select: {
+                  id: true,
+                  name: true,
+                  ruleType: true,
+                  value: true,
+                  isRequired: true,
+                  disposition: true,
+                  calculation: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      operatingRulesetVersion: {
+        select: {
+          id: true,
+          version: true,
+          status: true,
+          ruleset: { select: { id: true, name: true } },
+          rules: {
+            select: {
+              id: true,
+              name: true,
+              ruleType: true,
+              value: true,
+              isRequired: true,
+              disposition: true,
+              calculation: true,
+            },
+          },
+        },
+      },
     },
     orderBy: { displayOrder: "asc" },
   });
+  const verifiedProducts = products.filter((product) => validateProductForPublication(product).length === 0);
 
-  return NextResponse.json({ success: true, products }, { status: 200 });
+  return NextResponse.json({ success: true, products: verifiedProducts }, { status: 200 });
 }
 
 export async function POST(request: NextRequest) {
@@ -63,38 +127,57 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
-    const validation = validateProductInput(body);
-    if (!validation.valid) {
+    const body: unknown = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: "A product draft object is required" }, { status: 400 });
+    }
+    const validation = validateProductDraftInput(body as Record<string, unknown>);
+    if (!validation.valid || !validation.data) {
       return NextResponse.json(
         { success: false, errors: validation.errors },
         { status: 400 }
       );
     }
 
-    const existing = await prisma.product.findUnique({
-      where: { name: body.name },
-    });
-    if (existing) {
+    const data = validation.data;
+    const duplicateName = await prisma.product.findUnique({ where: { name: data.name }, select: { id: true } });
+    const duplicateCode = data.code
+      ? await prisma.product.findUnique({ where: { code: data.code }, select: { code: true } })
+      : null;
+    if (duplicateName || hasDuplicateProductCode(data.code ?? null, duplicateCode ? [duplicateCode.code] : [])) {
       return NextResponse.json(
-        { success: false, error: "Product name already exists" },
+        { success: false, error: "Product name or code already exists" },
         { status: 409 }
       );
     }
 
-    const product = await prisma.product.create({
-      data: {
-        name: body.name,
-        description: body.description,
-        pricingPlan: body.pricingPlan,
-        settings: body.settings,
-        isActive: body.isActive ?? true,
-        accountSize: body.accountSize,
-        price: body.price,
-        currency: body.currency ?? "USD",
-        rulesetId: body.rulesetId,
-        displayOrder: body.displayOrder ?? 0,
-      },
+    const product = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          name: data.name,
+          code: data.code ?? null,
+          description: data.description ?? null,
+          category: data.category,
+          evaluationStructure: data.evaluationStructure,
+          status: "DRAFT",
+          isActive: false,
+          accountSize: data.accountSize ? new Prisma.Decimal(data.accountSize) : null,
+          price: data.price ? new Prisma.Decimal(data.price) : null,
+          currency: data.currency ?? "USD",
+          denominationCurrency: data.denominationCurrency ?? null,
+          displayOrder: data.displayOrder ?? 0,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          action: "PRODUCT_CREATED",
+          entityType: "Product",
+          entityId: created.id,
+          performedBy: trader.id,
+          details: { code: created.code, status: "DRAFT" },
+        },
+      });
+      return created;
     });
 
     return NextResponse.json(
@@ -102,36 +185,12 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json({ success: false, error: "Product name or code already exists" }, { status: 409 });
+    }
     return NextResponse.json(
       { success: false, error: "Failed to create product" },
       { status: 500 }
     );
   }
-}
-
-function validateProductInput(body: Record<string, unknown>): {
-  valid: boolean;
-  errors: Record<string, string>;
-} {
-  const errors: Record<string, string> = {};
-  if (!body.name || typeof body.name !== "string" || body.name.length > 100) {
-    errors.name = "Name is required and must be 100 characters or less";
-  }
-  if (body.accountSize !== undefined) {
-    if (typeof body.accountSize !== "number" || body.accountSize <= 0) {
-      errors.accountSize = "Account size must be a positive number";
-    }
-  }
-  if (body.price !== undefined) {
-    if (typeof body.price !== "number" || body.price < 0) {
-      errors.price = "Price must be a non-negative number";
-    }
-  }
-  if (body.currency !== undefined && typeof body.currency !== "string") {
-    errors.currency = "Currency must be a string";
-  }
-  if (body.displayOrder !== undefined && typeof body.displayOrder !== "number") {
-    errors.displayOrder = "Display order must be a number";
-  }
-  return { valid: Object.keys(errors).length === 0, errors };
 }

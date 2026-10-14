@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../tests/support/test-env";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();

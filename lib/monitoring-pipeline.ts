@@ -7,6 +7,7 @@ import { createFundedAccount } from "./funded-account";
 import { sendRuleBreachEmail } from "./email/templates";
 import type { TraderRef } from "./email/templates";
 import { computeLeaseExpiry } from "./monitoring/repository";
+import { buildRuleEventIdempotencyKey } from "./evaluation-calculations";
 
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
@@ -44,28 +45,6 @@ export interface ProcessSnapshotFailure {
 
 export type ProcessSnapshotResult = ProcessSnapshotSuccess | ProcessSnapshotFailure;
 
-function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-function computeTotalPnl(snapshot: MonitoringSnapshot): number {
-  const realizedPnl = snapshot.historySummary?.totalRealizedPnl ?? 0;
-  const unrealizedPnl = (snapshot.positions ?? []).reduce((sum, p) => sum + (p.profit ?? 0), 0);
-  return round2(realizedPnl + unrealizedPnl);
-}
-
-function computeCurrentDrawdown(snapshot: MonitoringSnapshot, startingBalance?: number | null): number {
-  const balance = snapshot.balance ?? 0;
-  const equity = snapshot.equity ?? 0;
-
-  let peakEquity = Math.max(balance, equity);
-  if (startingBalance !== undefined && startingBalance !== null) {
-    peakEquity = Math.max(peakEquity, startingBalance);
-  }
-
-  return round2(Math.max(0, peakEquity - equity));
-}
-
 function getRuleSeverity(ruleType: RuleType): "HIGH" | "MEDIUM" | "LOW" {
   const highSeverityRules: RuleType[] = ["PROFIT_TARGET", "DRAWDOWN_LIMIT", "MAX_DAILY_LOSS", "MAX_OPEN_TRADES"];
   if (highSeverityRules.includes(ruleType)) return "HIGH";
@@ -74,7 +53,7 @@ function getRuleSeverity(ruleType: RuleType): "HIGH" | "MEDIUM" | "LOW" {
 
 function isRequiredRule(rules: Rule[], ruleId: string): boolean {
   const rule = rules.find((r) => r.id === ruleId);
-  return rule?.isRequired ?? true;
+  return rule?.disposition === "REQUIRED" && rule.isRequired;
 }
 
 function getEventType(ruleType: RuleType): string {
@@ -133,7 +112,7 @@ export async function processMonitoringSnapshot(
       success: true,
       evaluationId: undefined,
       outcomes: [],
-      overallResult: "PASS",
+      overallResult: "WARNING",
       ruleEventsCreated: 0,
     };
   }
@@ -141,24 +120,32 @@ export async function processMonitoringSnapshot(
   const evaluation = account.evaluations[0];
   const rules = evaluation.rulesetVersion?.rules ?? [];
 
-  if (rules.length === 0) {
+  if (rules.length === 0 || !rules.some((rule) => rule.disposition === "REQUIRED" && rule.isRequired)) {
     logger.info("MONITORING_PIPELINE", "No rules to evaluate", {
       correlationId,
       entity: { type: "Evaluation", id: evaluation.id },
     });
     return {
-      success: true,
-      evaluationId: evaluation.id,
-      outcomes: [],
-      overallResult: "PASS",
-      ruleEventsCreated: 0,
+      success: false,
+      error: "No enforceable required rules are configured for this evaluation",
+      errorCategory: "RULESET_EMPTY_OR_UNRESOLVED",
+    };
+  }
+
+  if (rules.some((rule) => rule.disposition === "UNRESOLVED" && rule.isRequired)) {
+    return {
+      success: false,
+      error: "Required ruleset definitions are unresolved; evaluation remains unavailable",
+      errorCategory: "RULESET_UNRESOLVED",
     };
   }
 
   const outcomes = evaluateAllRules(rules, snapshot, {
-    startingBalance: evaluation.startingBalance ? Number(evaluation.startingBalance) : undefined,
+    startingBalance: evaluation.startingBalance !== null ? Number(evaluation.startingBalance) : undefined,
+    asOf: snapshot.snapshotTimestamp,
   });
   const overallResult = getOverallResult(outcomes);
+  const pnlOutcome = outcomes.find((outcome) => outcome.ruleType === "PROFIT_TARGET" && typeof outcome.actualValue === "number");
 
   const hasRequiredFailure = outcomes.some(
     (o) => o.result === "FAIL" && isRequiredRule(rules, o.ruleId),
@@ -177,7 +164,10 @@ export async function processMonitoringSnapshot(
   });
 
   const ruleEventsCreated = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`monitoring-evaluation:${evaluation.id}`}))`;
+    let eventsCreated = 0;
     for (const outcome of outcomes) {
+      const persistedState = outcome.state ?? (outcome.result === "PASS" ? "PASS" : outcome.result === "FAIL" ? "FAIL" : "UNAVAILABLE");
       await tx.ruleEvaluation.upsert({
         where: {
           evaluationId_ruleId: {
@@ -187,29 +177,30 @@ export async function processMonitoringSnapshot(
         },
         update: {
           result: outcome.result as RuleResult,
+          state: persistedState,
           actualValue: outcome.actualValue === null ? Prisma.JsonNull : (outcome.actualValue as Prisma.InputJsonValue),
           expectedValue: outcome.expectedValue === null ? Prisma.JsonNull : (outcome.expectedValue as Prisma.InputJsonValue),
           details: outcome.details,
           evaluatedAt: new Date(),
+          sourceDataTimestamp: snapshot.dataTimestamp,
         },
         create: {
           evaluationId: evaluation.id,
           ruleId: outcome.ruleId,
           result: outcome.result as RuleResult,
+          state: persistedState,
           actualValue: outcome.actualValue === null ? Prisma.JsonNull : (outcome.actualValue as Prisma.InputJsonValue),
           expectedValue: outcome.expectedValue === null ? Prisma.JsonNull : (outcome.expectedValue as Prisma.InputJsonValue),
           details: outcome.details,
           evaluatedAt: new Date(),
+          sourceDataTimestamp: snapshot.dataTimestamp,
         },
       });
 
       if (outcome.result === "FAIL") {
-        const existingEvent = await tx.ruleEvent.findFirst({
-          where: {
-            accountId: evaluation.accountId!,
-            eventType: getEventType(outcome.ruleType),
-            acknowledged: false,
-          },
+        const idempotencyKey = buildRuleEventIdempotencyKey(evaluation.id, outcome.ruleId);
+        const existingEvent = await tx.ruleEvent.findUnique({
+          where: { idempotencyKey },
         });
 
         if (!existingEvent) {
@@ -219,8 +210,10 @@ export async function processMonitoringSnapshot(
               eventType: getEventType(outcome.ruleType),
               severity: getRuleSeverity(outcome.ruleType),
               message: outcome.details,
+              idempotencyKey,
             },
           });
+          eventsCreated += 1;
 
           await tx.auditLog.create({
             data: {
@@ -232,6 +225,11 @@ export async function processMonitoringSnapshot(
                 eventType: getEventType(outcome.ruleType),
                 ruleType: outcome.ruleType,
                 ruleId: outcome.ruleId,
+                ruleEvaluationState: persistedState,
+                calculationMethod: outcome.calculationMethod ?? null,
+                rulesetVersionId: evaluation.rulesetVersionId,
+                snapshotTimestamp: snapshot.snapshotTimestamp.toISOString(),
+                sourceDataTimestamp: snapshot.dataTimestamp?.toISOString() ?? null,
                 severity: getRuleSeverity(outcome.ruleType),
                 message: outcome.details,
                 actualValue: outcome.actualValue as Prisma.InputJsonValue,
@@ -243,22 +241,15 @@ export async function processMonitoringSnapshot(
       }
     }
 
-    const totalPnl = computeTotalPnl(snapshot);
-    const startingBalanceNum = evaluation.startingBalance ? Number(evaluation.startingBalance) : undefined;
-    const currentDrawdown = computeCurrentDrawdown(snapshot, startingBalanceNum);
-    const maxDrawdown = evaluation.maxDrawdown
-      ? round2(Math.max(Number(evaluation.maxDrawdown), currentDrawdown))
-      : currentDrawdown;
+    const updates: { totalPnl?: number; maxDrawdown?: number } = {};
+    const drawdownOutcome = outcomes.find((outcome) => outcome.ruleType === "DRAWDOWN_LIMIT" && typeof outcome.actualValue === "number");
+    if (pnlOutcome && typeof pnlOutcome.actualValue === "number") updates.totalPnl = pnlOutcome.actualValue;
+    if (drawdownOutcome && typeof drawdownOutcome.actualValue === "number") {
+      updates.maxDrawdown = Math.max(Number(evaluation.maxDrawdown ?? 0), drawdownOutcome.actualValue);
+    }
+    if (Object.keys(updates).length > 0) await tx.evaluation.update({ where: { id: evaluation.id }, data: updates });
 
-    await tx.evaluation.update({
-      where: { id: evaluation.id },
-      data: {
-        totalPnl: totalPnl,
-        maxDrawdown: maxDrawdown,
-      },
-    });
-
-    return outcomes.filter((o) => o.result === "FAIL").length;
+    return eventsCreated;
   });
 
   await txUpdateMonitoringState(prisma, account, snapshot, overallResult, correlationId);
@@ -418,7 +409,7 @@ export async function processMonitoringSnapshot(
               event: "EVALUATION_PASSED",
               accountId: evaluation.accountId,
               accountNumber: account.accountNumber,
-              totalPnl: computeTotalPnl(snapshot),
+              totalPnl: pnlOutcome?.actualValue ?? null,
               ruleResults: outcomes.map((o) => ({
                 ruleType: o.ruleType,
                 result: o.result,

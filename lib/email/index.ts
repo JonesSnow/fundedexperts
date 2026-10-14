@@ -3,7 +3,7 @@ import { EmailMessage, EmailSendResult, EmailEventType, EmailSendOptions, EmailP
 import { GmailSmtpProvider } from "./provider";
 import { ConsoleProvider } from "./console-provider";
 import { sanitizeSensitiveValue } from "../logger";
-import { getEmailConfig, validateEmailConfig, EmailConfig } from "./config";
+import { getEmailConfig, getEmailConfigDiagnostics, validateEmailConfig, EmailConfig } from "./config";
 import { createLogger } from "@/lib/logger";
 import type { EmailDelivery } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -83,6 +83,17 @@ export async function sendEmail(
     };
   }
 
+  if (config.provider === "console" || options?.providerOverride === "console") {
+    logger.info("EMAIL", "Console mode is a preview only; no message was delivered", {
+      metadata: {
+        template: message.templateId,
+        provider: "CONSOLE",
+        recipientDomain: extractDomain(message.to),
+      },
+    });
+    return { success: false, error: "email_console_mode_no_delivery" };
+  }
+
   if (message.idempotencyKey) {
     const existing = await prisma.emailDelivery.findUnique({
       where: { idempotencyKey: message.idempotencyKey },
@@ -92,7 +103,6 @@ export async function sendEmail(
       logger.info("EMAIL", "Email already sent — skipping", {
         metadata: {
           template: message.templateId,
-          idempotencyKey: message.idempotencyKey,
           previousStatus: existing.status,
         },
       });
@@ -135,9 +145,8 @@ export async function sendEmail(
       },
     });
 
-    const result = await provider.send(message).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { success: false as const, error: msg };
+    const result = await provider.send(message).catch(() => {
+      return { success: false as const, error: "email_provider_failed" };
     });
 
     if (result.success) {
@@ -158,7 +167,6 @@ export async function sendEmail(
           recipientDomain: extractDomain(message.to),
           providerMessageId: result.providerMessageId,
           relatedEntityType: message.relatedEntityType,
-          relatedEntityId: message.relatedEntityId,
           attempt,
         },
       });
@@ -217,6 +225,10 @@ function extractDomain(email: string): string {
 }
 
 export class EmailService {
+  static async diagnostics() {
+    return getEmailConfigDiagnostics();
+  }
+
   static async validateConfig(): Promise<{ valid: boolean; errors: string[] }> {
     return validateEmailConfig();
   }

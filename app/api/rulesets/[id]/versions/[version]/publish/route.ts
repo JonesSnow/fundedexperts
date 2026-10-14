@@ -1,7 +1,8 @@
-import { RulesetVersion } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { validateRulesetForPublication } from "@/lib/product-domain";
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -39,43 +40,43 @@ export async function POST(
   }
 
   try {
-    const rulesetVersion = await prisma.rulesetVersion.findFirst({
-      where: {
-        rulesetId: id,
-        version,
-      },
-    });
+    const result = await prisma.$transaction(async (tx) => {
+      const rulesetVersion = await tx.rulesetVersion.findFirst({
+        where: { rulesetId: id, version },
+        include: { rules: true },
+      });
+      if (!rulesetVersion) return { kind: "missing" as const };
+      if (rulesetVersion.status !== "DRAFT") return { kind: "immutable" as const };
 
-    if (!rulesetVersion) {
-      return NextResponse.json(
-        { success: false, error: "Ruleset version not found" },
-        { status: 404 }
-      );
-    }
+      const errors = validateRulesetForPublication(rulesetVersion.rules);
+      if (errors.length > 0) return { kind: "invalid" as const, errors };
 
-    if (rulesetVersion.status !== "DRAFT") {
-      return NextResponse.json(
-        { success: false, error: "Only draft versions can be published" },
-        { status: 409 }
-      );
-    }
+      const updated = await tx.rulesetVersion.updateMany({
+        where: { id: rulesetVersion.id, status: "DRAFT" },
+        data: { status: "PUBLISHED" },
+      });
+      if (updated.count !== 1) return { kind: "immutable" as const };
+      const published = await tx.rulesetVersion.findUnique({ where: { id: rulesetVersion.id } });
+      await tx.auditLog.create({
+        data: {
+          action: "RULESET_VERSION_PUBLISHED",
+          entityType: "RulesetVersion",
+          entityId: rulesetVersion.id,
+          performedBy: trader.id,
+          details: { rulesetId: id, version, ruleCount: rulesetVersion.rules.length },
+        },
+      });
+      return { kind: "published" as const, rulesetVersion: published };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-    const published = await prisma.rulesetVersion.update({
-      where: { id: rulesetVersion.id },
-      data: {
-        status: "PUBLISHED",
-        updatedAt: new Date(),
-      },
-    });
-
-    return NextResponse.json(
-      { success: true, rulesetVersion: published },
-      { status: 200 }
-    );
+    if (result.kind === "missing") return NextResponse.json({ success: false, error: "Ruleset version not found" }, { status: 404 });
+    if (result.kind === "immutable") return NextResponse.json({ success: false, error: "Only draft versions can be published" }, { status: 409 });
+    if (result.kind === "invalid") return NextResponse.json({ success: false, error: "Ruleset version cannot be published", errors: result.errors }, { status: 409 });
+    return NextResponse.json({ success: true, rulesetVersion: result.rulesetVersion }, { status: 200 });
   } catch (error) {
-    return NextResponse.json(
-      { success: false, error: "Failed to publish version" },
-      { status: 500 }
-    );
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      return NextResponse.json({ success: false, error: "Rules changed during publication; reload and validate again" }, { status: 409 });
+    }
+    return NextResponse.json({ success: false, error: "Failed to publish version" }, { status: 500 });
   }
 }

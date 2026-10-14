@@ -141,44 +141,58 @@ function makeEntity(type: string, id?: string): { type: string; id?: string } {
   return { type, id };
 }
 
+export async function createFundedAccountInTransaction(
+  tx: Prisma.TransactionClient,
+  input: { evaluationId: string; traderId: string; rulesetVersionId: string | null; performedBy: string },
+): Promise<{ account: FundedAccount; wasAlreadyCreated: boolean }> {
+  const existing = await tx.fundedAccount.findUnique({ where: { evaluationId: input.evaluationId } });
+  if (existing) return { account: existing, wasAlreadyCreated: true };
+
+  const account = await tx.fundedAccount.create({
+    data: {
+      traderId: input.traderId,
+      evaluationId: input.evaluationId,
+      rulesetVersionId: input.rulesetVersionId ?? undefined,
+      status: "ELIGIBLE",
+    },
+  });
+  await tx.auditLog.create({
+    data: {
+      action: "ACCOUNT_CREATED" as AuditAction,
+      entityType: "FundedAccount",
+      entityId: account.id,
+      performedBy: input.performedBy,
+      details: {
+        evaluationId: input.evaluationId,
+        rulesetVersionId: input.rulesetVersionId,
+        traderId: input.traderId,
+        status: account.status,
+      },
+    },
+  });
+  return { account, wasAlreadyCreated: false };
+}
+
 export async function createFundedAccount(
   prisma: PrismaClient,
   input: CreateFundedAccountInput,
 ): Promise<CreateFundedAccountResult> {
   const correlationId = generateCorrelationId();
-  const { evaluationId, performedBy } = input;
-
   const evaluation = await prisma.evaluation.findUnique({
-    where: { id: evaluationId },
-    include: { rulesetVersion: true },
+    where: { id: input.evaluationId },
+    select: { id: true, traderId: true, rulesetVersionId: true, status: true },
   });
 
   if (!evaluation) {
     logger.error("FUNDED_ACCOUNT", "Evaluation not found", {
       correlationId,
-      actor: makeActor(performedBy),
-      entity: makeEntity("Evaluation", evaluationId),
-      error: { code: "EVALUATION_NOT_FOUND", message: `Evaluation ${evaluationId} not found` },
+      actor: makeActor(input.performedBy),
+      entity: makeEntity("Evaluation", input.evaluationId),
+      error: { code: "EVALUATION_NOT_FOUND", message: `Evaluation ${input.evaluationId} not found` },
     });
-    return {
-      success: false,
-      error: "Evaluation not found",
-      errorCategory: "NOT_FOUND",
-      recoverable: false,
-      correlationId,
-    };
+    return { success: false, error: "Evaluation not found", errorCategory: "NOT_FOUND", recoverable: false, correlationId };
   }
-
   if (evaluation.status !== "PASSED") {
-    logger.error("FUNDED_ACCOUNT", "Evaluation has not passed", {
-      correlationId,
-      actor: makeActor(performedBy),
-      entity: makeEntity("Evaluation", evaluationId),
-      error: {
-        code: "EVALUATION_NOT_PASSED",
-        message: `Evaluation ${evaluationId} is ${evaluation.status}`,
-      },
-    });
     return {
       success: false,
       error: `Evaluation is ${evaluation.status}: only a PASSED evaluation can become a funded account`,
@@ -188,89 +202,52 @@ export async function createFundedAccount(
     };
   }
 
-  const existing = await prisma.fundedAccount.findFirst({
-    where: { evaluationId },
-  });
-
-  if (existing) {
-    logger.info("FUNDED_ACCOUNT", "Funded account already exists for evaluation", {
-      correlationId,
-      actor: makeActor(performedBy),
-      entity: makeEntity("FundedAccount", existing.id),
-      metadata: { evaluationId, status: existing.status },
-    });
-    return {
-      success: true,
-      account: existing,
-      wasAlreadyCreated: true,
-      correlationId,
-    };
-  }
-
   try {
-    // The funded account row and its audit entry are written in one transaction.
-    // Previously the audit insert was a separate statement, so a failure there
-    // returned an error for a row that had already been committed, leaving the
-    // audit trail permanently missing that the account was created.
-    const account = await prisma.$transaction(async (tx) => {
-      const created = await tx.fundedAccount.create({
-        data: {
-          traderId: evaluation.traderId,
-          evaluationId: evaluation.id,
-          rulesetVersionId: evaluation.rulesetVersionId ?? undefined,
-          status: "ELIGIBLE",
-        },
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`funded-evaluation:${evaluation.id}`}))`;
+      const current = await tx.evaluation.findUnique({ where: { id: evaluation.id }, select: { id: true, status: true } });
+      if (!current) return { failure: "NOT_FOUND" as const };
+      if (current.status !== "PASSED") return { failure: "INVALID_STATE" as const, status: current.status };
+      return createFundedAccountInTransaction(tx, {
+        evaluationId: evaluation.id,
+        traderId: evaluation.traderId,
+        rulesetVersionId: evaluation.rulesetVersionId,
+        performedBy: input.performedBy,
       });
-
-      await tx.auditLog.create({
-        data: {
-          action: "ACCOUNT_CREATED" as AuditAction,
-          entityType: "FundedAccount",
-          entityId: created.id,
-          performedBy,
-          details: {
-            evaluationId: evaluation.id,
-            rulesetVersionId: evaluation.rulesetVersionId,
-            traderId: evaluation.traderId,
-            status: created.status,
-          },
-        },
-      });
-
-      return created;
     });
 
-    logger.info("FUNDED_ACCOUNT", "Funded account created", {
-      correlationId,
-      actor: makeActor(performedBy),
-      entity: makeEntity("FundedAccount", account.id),
-      metadata: { evaluationId: evaluation.id, status: account.status },
-    });
+    if ("failure" in result) {
+      return {
+        success: false,
+        error: result.failure === "NOT_FOUND" ? "Evaluation not found" : `Evaluation is ${result.status}: only a PASSED evaluation can become a funded account`,
+        errorCategory: result.failure,
+        recoverable: false,
+        correlationId,
+      };
+    }
 
-    return {
-      success: true,
-      account,
-      wasAlreadyCreated: false,
+    logger.info("FUNDED_ACCOUNT", result.wasAlreadyCreated ? "Funded account already exists for evaluation" : "Funded account created", {
       correlationId,
-    };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
+      actor: makeActor(input.performedBy),
+      entity: makeEntity("FundedAccount", result.account.id),
+      metadata: { evaluationId: evaluation.id, status: result.account.status, wasAlreadyCreated: result.wasAlreadyCreated },
+    });
+    return { success: true, account: result.account, wasAlreadyCreated: result.wasAlreadyCreated, correlationId };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const existing = await prisma.fundedAccount.findUnique({ where: { evaluationId: evaluation.id } });
+      if (existing) return { success: true, account: existing, wasAlreadyCreated: true, correlationId };
+    }
+    const msg = error instanceof Error ? error.message : "Unknown error";
     logger.error("FUNDED_ACCOUNT", "Failed to create funded account", {
       correlationId,
-      actor: makeActor(performedBy),
+      actor: makeActor(input.performedBy),
       entity: makeEntity("FundedAccount"),
       error: { code: "CREATE_FAILED", message: msg },
     });
-    return {
-      success: false,
-      error: "Failed to create funded account",
-      errorCategory: "CREATE_FAILED",
-      recoverable: true,
-      correlationId,
-    };
+    return { success: false, error: "Failed to create funded account", errorCategory: "CREATE_FAILED", recoverable: true, correlationId };
   }
 }
-
 export async function approveFundedAccount(
   prisma: PrismaClient,
   input: ApproveFundedAccountInput,

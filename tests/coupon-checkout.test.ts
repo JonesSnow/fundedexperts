@@ -1,3 +1,4 @@
+import "./support/test-env";
 import { describe, it, beforeEach, after } from "node:test";
 import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";

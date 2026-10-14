@@ -99,6 +99,17 @@ export function normalizeSnapshot(
     dataTimestamp: raw.timestamp ?? null,
     provider,
     snapshotTimestamp: new Date(),
+    activityEvents: raw.activityEvents ?? null,
+    historicalPeakEquity: raw.historicalPeakEquity ?? null,
+    tradeHistoryComplete: raw.tradeHistoryComplete === true,
+    activityEventsComplete: raw.activityEventsComplete === true,
+    equityHistoryComplete: raw.equityHistoryComplete === true,
+    dailyPnl: raw.dailyPnl ?? null,
+    dataQuality: {
+      positionsAvailable: Array.isArray(raw.positions),
+      ordersAvailable: Array.isArray(raw.orders),
+      historyAvailable: Array.isArray(raw.history),
+    },
   };
 
   const isPartial = errors.length > 0 && errors.some((e) => e.severity === "HIGH" || e.severity === "CRITICAL");

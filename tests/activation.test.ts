@@ -1,3 +1,4 @@
+import "./support/test-env";
 import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";

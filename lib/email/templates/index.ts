@@ -35,18 +35,18 @@ export interface TraderRef {
 
 export async function sendVerificationEmail(
   trader: TraderRef,
-  token: string,
+  code: string,
   expiresAt: Date,
 ): Promise<EmailSendResult> {
-  const idempotencyKey = generateIdempotencyKey("verification", trader.id, token);
+  const idempotencyKey = generateIdempotencyKey("verification", trader.id, expiresAt.toISOString());
   const expires = expiresAt.toLocaleDateString("en-US", {
-    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short",
   });
 
   const message: EmailMessage = verificationTemplate.buildVerificationMessage(trader.email, {
     email: trader.email,
     firstName: trader.firstName,
-    token,
+    code,
     expiresAt: expires,
   }, idempotencyKey);
 
@@ -67,18 +67,18 @@ export async function sendVerificationEmail(
 
 export async function sendPasswordResetEmail(
   trader: TraderRef,
-  token: string,
+  code: string,
   expiresAt: Date,
 ): Promise<EmailSendResult> {
-  const idempotencyKey = generateIdempotencyKey("password-reset", trader.id, token);
+  const idempotencyKey = generateIdempotencyKey("password-reset", trader.id, expiresAt.toISOString());
   const expires = expiresAt.toLocaleDateString("en-US", {
-    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short",
   });
 
   const message: EmailMessage = passwordResetTemplate.buildPasswordResetMessage(trader.email, {
     email: trader.email,
     firstName: trader.firstName,
-    token,
+    code,
     expiresAt: expires,
   }, idempotencyKey);
 

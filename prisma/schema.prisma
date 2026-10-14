@@ -53,22 +53,33 @@ model Notification {
 }
 
 model Product {
-  id           String      @id @default(uuid())
-  name         String      @unique
-  description  String?
-  pricingPlan  String?
-  settings     Json?
-  isActive     Boolean     @default(true)
-  accountSize  Decimal?    @db.Decimal(18, 2)
-  price        Decimal?    @db.Decimal(18, 2)
-  currency     String      @default("USD")
-  rulesetId    String?
-  displayOrder Int         @default(0)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  orderItems   OrderItem[]
-  ruleset      Ruleset?    @relation(fields: [rulesetId], references: [id])
-  auditLogs    AuditLog[]  @relation("AuditLogToProduct")
+  id                        String               @id @default(uuid())
+  code                      String?              @unique
+  name                      String               @unique
+  description               String?
+  pricingPlan               String?
+  settings                  Json?
+  isActive                  Boolean              @default(true)
+  status                    ProductStatus        @default(DRAFT)
+  category                  ProductCategory?
+  evaluationStructure       EvaluationStructure?
+  accountSize               Decimal?             @db.Decimal(18, 2)
+  price                     Decimal?             @db.Decimal(18, 2)
+  currency                  String               @default("USD")
+  denominationCurrency      String?
+  rulesetId                 String?
+  operatingRulesetVersionId String?
+  displayOrder              Int                  @default(0)
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  orderItems                OrderItem[]
+  evaluations               Evaluation[]
+  ruleset                   Ruleset?             @relation(fields: [rulesetId], references: [id])
+  operatingRulesetVersion   RulesetVersion?      @relation("ProductOperatingRulesetVersion", fields: [operatingRulesetVersionId], references: [id], onDelete: Restrict)
+  stages                    ProductStage[]
+  auditLogs                 AuditLog[]           @relation("AuditLogToProduct")
+
+  @@index([status, isActive, displayOrder])
 }
 
 model Ruleset {
@@ -84,19 +95,21 @@ model Ruleset {
 }
 
 model RulesetVersion {
-  id             String               @id @default(uuid())
-  version        String
-  rulesetId      String
-  status         RulesetVersionStatus @default(DRAFT)
-  effectiveDate  DateTime?
-  isActive       Boolean              @default(true)
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  evaluations    Evaluation[]
-  fundedAccounts FundedAccount[]
-  orders         Order[]
-  rules          Rule[]
-  ruleset        Ruleset              @relation(fields: [rulesetId], references: [id])
+  id                String               @id @default(uuid())
+  version           String
+  rulesetId         String
+  status            RulesetVersionStatus @default(DRAFT)
+  effectiveDate     DateTime?
+  isActive          Boolean              @default(true)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  evaluations       Evaluation[]
+  fundedAccounts    FundedAccount[]
+  orders            Order[]
+  rules             Rule[]
+  productStages     ProductStage[]
+  operatingProducts Product[]            @relation("ProductOperatingRulesetVersion")
+  ruleset           Ruleset              @relation(fields: [rulesetId], references: [id])
 
   @@unique([rulesetId, version])
 }
@@ -108,11 +121,31 @@ model Rule {
   name             String
   value            Json?
   isRequired       Boolean          @default(true)
+  disposition      RuleDisposition  @default(UNRESOLVED)
+  calculation      Json?
   effectiveDate    DateTime?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   rulesetVersion   RulesetVersion   @relation(fields: [rulesetVersionId], references: [id])
   ruleEvaluations  RuleEvaluation[]
+}
+
+model ProductStage {
+  id               String         @id @default(uuid())
+  productId        String
+  stageKey         String
+  displayName      String
+  stageOrder       Int
+  rulesetVersionId String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  product          Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  rulesetVersion   RulesetVersion @relation(fields: [rulesetVersionId], references: [id], onDelete: Restrict)
+  evaluations      Evaluation[]
+
+  @@unique([productId, stageKey])
+  @@unique([productId, stageOrder])
+  @@index([rulesetVersionId])
 }
 
 model MT5Account {
@@ -168,8 +201,10 @@ model MonitoringJob {
 model Evaluation {
   id               String           @id @default(uuid())
   traderId         String
+  orderId          String?          @unique
   rulesetVersionId String
   accountId        String?
+  productStageId   String?
   status           EvaluationStatus @default(IN_PROGRESS)
   startedAt        DateTime         @default(now())
   completedAt      DateTime?
@@ -182,9 +217,13 @@ model Evaluation {
   account          MT5Account?      @relation(fields: [accountId], references: [id])
   rulesetVersion   RulesetVersion   @relation(fields: [rulesetVersionId], references: [id])
   trader           Trader           @relation(fields: [traderId], references: [id])
+  order            Order?           @relation(fields: [orderId], references: [id], onDelete: Restrict)
   fundedAccounts   FundedAccount[]
   ruleEvaluations  RuleEvaluation[]
+  productStage     ProductStage?    @relation(fields: [productStageId], references: [id], onDelete: Restrict)
   auditLogs        AuditLog[]       @relation("AuditLogToEvaluation")
+  product          Product?         @relation(fields: [productId], references: [id])
+  productId        String?
 }
 
 model FundedAccount {
@@ -199,7 +238,7 @@ model FundedAccount {
   totalPnl         Decimal?            @db.Decimal(18, 2)
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
-  evaluationId     String?
+  evaluationId     String?            @unique
   account          MT5Account?         @relation(fields: [accountId], references: [id])
   evaluation       Evaluation?         @relation(fields: [evaluationId], references: [id])
   rulesetVersion   RulesetVersion?     @relation(fields: [rulesetVersionId], references: [id])
@@ -228,10 +267,12 @@ model RuleEvaluation {
   evaluationId  String
   ruleId        String
   result        RuleResult
+  state         RuleOutcomeState @default(UNAVAILABLE)
   actualValue   Json?
   expectedValue Json?
   details       String?
   evaluatedAt   DateTime   @default(now())
+  sourceDataTimestamp DateTime?
   evaluation    Evaluation @relation(fields: [evaluationId], references: [id])
   rule          Rule       @relation(fields: [ruleId], references: [id])
 
@@ -246,6 +287,7 @@ model RuleEvent {
   message      String
   occurredAt   DateTime   @default(now())
   acknowledged Boolean    @default(false)
+  idempotencyKey String?  @unique
   account      MT5Account @relation(fields: [accountId], references: [id])
 }
 
@@ -267,22 +309,24 @@ model Order {
   rulesetVersion   RulesetVersion? @relation(fields: [rulesetVersionId], references: [id])
   trader           Trader          @relation(fields: [traderId], references: [id])
   orderItems       OrderItem[]
+  evaluation       Evaluation?
 
   @@index([traderId, status])
 }
 
 model OrderItem {
-  id        String          @id @default(uuid())
-  orderId   String
-  productId String
-  unitPrice Decimal         @db.Decimal(18, 2)
-  currency  String          @default("USD")
-  quantity  Int             @default(1)
-  status    OrderItemStatus @default(PENDING)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  order     Order           @relation(fields: [orderId], references: [id])
-  product   Product         @relation(fields: [productId], references: [id])
+  id              String          @id @default(uuid())
+  orderId         String
+  productId       String
+  unitPrice       Decimal         @db.Decimal(18, 2)
+  currency        String          @default("USD")
+  quantity        Int             @default(1)
+  status          OrderItemStatus @default(PENDING)
+  productSnapshot Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  order           Order           @relation(fields: [orderId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
 
   @@unique([orderId, productId])
 }
@@ -451,10 +495,39 @@ enum RuleType {
   DRAWDOWN_LIMIT
   TRADING_HOURS
   MIN_TRADES
+  MIN_TRADING_DAYS
   MAX_DAILY_LOSS
   MAX_OPEN_TRADES
   MAX_LEVERAGE
   TRADING_SESSION
+}
+
+enum ProductCategory {
+  BEGINNER
+  PRO
+  EXPERT
+  DIRECT_FUNDED
+}
+
+enum EvaluationStructure {
+  THREE_STEP
+  FOUR_STEP
+  TWO_STEP
+  ONE_STEP
+  DIRECT_FUNDED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  UNAVAILABLE
+  RETIRED
+}
+
+enum RuleDisposition {
+  REQUIRED
+  OPTIONAL
+  UNRESOLVED
 }
 
 enum RulesetVersionStatus {
@@ -500,16 +573,25 @@ enum AuditAction {
   RECOVERY_FAILED
   RECONCILIATION_STARTED
   RECONCILIATION_REPAIRED
-   RECONCILIATION_SKIPPED
-   RECONCILIATION_REJECTED
-   ORDER_CREATED
-   ORDER_PAID
- }
+  RECONCILIATION_SKIPPED
+  RECONCILIATION_REJECTED
+  ORDER_CREATED
+  ORDER_PAID
+}
 
 enum RuleResult {
   PASS
   FAIL
   WARNING
+}
+
+enum RuleOutcomeState {
+  PASS
+  FAIL
+  INCOMPLETE
+  PENDING
+  STALE
+  UNAVAILABLE
 }
 
 enum LedgerEntryStatus {

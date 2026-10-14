@@ -3,9 +3,13 @@ import { SignJWT, jwtVerify } from "jose";
 
 const JWT_SECRET_VALUE = process.env.JWT_SECRET;
 
-if (!JWT_SECRET_VALUE || JWT_SECRET_VALUE === "change-me-in-production") {
+if (
+  !JWT_SECRET_VALUE ||
+  JWT_SECRET_VALUE === "change-me-in-production" ||
+  Buffer.byteLength(JWT_SECRET_VALUE, "utf8") < 32
+) {
   throw new Error(
-    "JWT_SECRET is required and must not be the default value. Set it in .env.local."
+    "JWT_SECRET is required, must not use the placeholder, and must contain at least 32 bytes. Set it in your server environment."
   );
 }
 

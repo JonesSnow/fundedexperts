@@ -64,8 +64,13 @@ export async function sendViaGmail(message: EmailMessage): Promise<EmailSendResu
       providerMessageId: info.messageId,
     };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "SMTP send failed";
-    return { success: false, error: errorMsg };
+    const error = err as { code?: string; responseCode?: number };
+    let category = "smtp_delivery_failed";
+    if (error?.code === "EAUTH") category = "smtp_authentication_failed";
+    else if (["ETIMEDOUT", "ESOCKET"].includes(error?.code ?? "")) category = "smtp_timeout";
+    else if (["ECONNECTION", "ECONNREFUSED", "EHOSTUNREACH", "ENOTFOUND"].includes(error?.code ?? "")) category = "smtp_connection_failed";
+    else if (error?.responseCode && error.responseCode >= 400) category = "smtp_message_rejected";
+    return { success: false, error: category };
   }
 }
 

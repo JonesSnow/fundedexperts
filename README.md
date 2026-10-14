@@ -32,18 +32,16 @@ pnpm install
 # Copy environment
 cp .env.example .env.local
 
-# Set up database
-cd prisma && npx prisma migrate dev --name init
+# Only after DATABASE_URL is verified as a local development database:
+pnpm exec prisma migrate dev --name init
 
 # Start development server
 pnpm dev
 ```
 
-### Docker Compose (optional)
+Do not point local development or test commands at a shared or production database. Before running a migration, verify the target independently and use a local disposable development database. Database-backed tests require a separately identified disposable test database; the test URL must not be copied from `.env.local`.
 
-```bash
-docker-compose up -d
-```
+This repository does not include a Docker Compose configuration. Use a separately verified local development database if you need database-backed features.
 
 ## Available Scripts
 
@@ -53,15 +51,16 @@ docker-compose up -d
 | Build | `pnpm build` |
 | Start production | `pnpm start` |
 | Lint | `pnpm lint` |
-| Type check | `pnpm tsc --noEmit` |
-| Run tests (sequential) | `node scripts/run-tests.js npx tsx tests/<file>.ts` |
-| Prisma migrate | `cd prisma && npx prisma migrate dev` |
+| Type check | `pnpm exec tsc --noEmit --incremental false` |
+| Safe database-guard tests | `pnpm test:safety` |
+| Database-free OTP/email helper tests | `pnpm exec tsx tests/auth-otp.unit.test.ts` |
+| Prisma migrate (verified local development target only) | `pnpm exec prisma migrate dev` |
 | Prisma generate | `cd prisma && npx prisma generate` |
 | Prisma studio | `cd prisma && npx prisma studio` |
 
 **Note:** Full `tsc --noEmit` and `next build` may exceed memory limits in constrained environments. Run type checks on individual files via IDE or use `npx tsc --noEmit` on specific directories.
 
-**Note:** Tests share a database. Run test files sequentially, not in parallel. Use `node scripts/run-tests.js npx tsx tests/<file>.ts` for one file at a time.
+**Database safety:** Database-backed tests require a dedicated `TEST_DATABASE_URL` or `PHASE33_DATABASE_URL` that passes the safety guard. The guard does not prove that a database is disposable; a product owner/operator must verify ownership and reset policy first. The test bootstrap does not select `.env.local` as a test target and does not fall back to `DATABASE_URL`. Some legacy database suites and utilities still perform broad table cleanup; do not run them until the target is explicitly verified as disposable. Never use `pnpm test` as a database-safety check.
 
 ## Project Structure
 
@@ -87,4 +86,4 @@ public/           Static assets
 
 ## Current Implementation Phase
 
-**Phase 21: Baseline Audit** — Comprehensive platform audit covering authentication, products, rulesets, MT5 accounts, monitoring, orders, coupons, notifications, security, and test infrastructure. Commercial global prop-firm platform.
+**Pre-launch engineering build** — Core account, evaluation, product, order, and admin interfaces exist, but real checkout, reliable evaluation/rule enforcement, account allocation, live monitoring, payouts, and customer support are not established as production workflows. Do not treat simulated account records as customer money, live broker activity, or payout entitlement. See `docs/full-project-audit-report.md` and the current master-scope completion matrix for evidence and blockers.

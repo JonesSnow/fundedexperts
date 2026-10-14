@@ -1,75 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "crypto";
-import { getSessionCookie, getSession } from "@/lib/auth/session";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { checkCooldown, checkRateLimit } from "@/lib/auth/rate-limit";
+import { generateOtp, hashOtp, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS } from "@/lib/auth/otp";
 import { sendVerificationEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
 
-
-async function getAuthenticatedUser(request: NextRequest) {
-  const token = getSessionCookie(request);
-  if (!token) return null;
-  const session = await getSession(token);
-  if (!session) return null;
-  return prisma.trader.findUnique({
-    where: { id: session.sub },
-    select: { id: true, email: true, role: true, status: true, emailVerified: true },
-  });
-}
+const GENERIC_RESPONSE = {
+  success: true,
+  message: "If an unverified account exists for this address, a new code will be sent.",
+};
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getAuthenticatedUser(request);
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
-      );
+    const body = await request.json();
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!email || email.length > 255 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ success: false, error: "Enter a valid email address." }, { status: 400 });
     }
 
-    const rateLimit = checkRateLimit(`verify-email:${user.id}`);
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { success: false, error: "Too many attempts. Try again later." },
-        {
-          status: 429,
-          headers: { "Retry-After": String(rateLimit.retryAfter) },
-        },
-      );
+    const limit = checkRateLimit(`verify-email:${email}`);
+    const cooldown = checkCooldown(`verify-email-resend:${email}`, OTP_RESEND_COOLDOWN_MS);
+    if (!limit.allowed || !cooldown.allowed) {
+      const retryAfter = Math.max(limit.retryAfter ?? 0, cooldown.retryAfter ?? 0);
+      return NextResponse.json(GENERIC_RESPONSE, {
+        status: 200,
+        headers: retryAfter > 0 ? { "Retry-After": String(retryAfter) } : undefined,
+      });
     }
 
-    if (user.emailVerified) {
-      return NextResponse.json(
-        { success: false, error: "Email already verified" },
-        { status: 400 },
-      );
+    const trader = await prisma.trader.findUnique({
+      where: { email },
+      select: { id: true, email: true, firstName: true, emailVerified: true },
+    });
+    if (!trader || trader.emailVerified) {
+      return NextResponse.json(GENERIC_RESPONSE, { status: 200 });
     }
 
-    const token = randomBytes(32).toString("hex");
-    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
+    const code = generateOtp();
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
     await prisma.trader.update({
-      where: { id: user.id },
+      where: { id: trader.id },
       data: {
-        emailVerificationToken: token,
-        emailVerificationExpires: expires,
+        emailVerificationToken: hashOtp("email-verification", trader.id, code),
+        emailVerificationExpires: expiresAt,
       },
     });
-
     await sendVerificationEmail(
-      { id: user.id, email: user.email, firstName: undefined },
-      token,
-      expires,
-    );
+      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+      code,
+      expiresAt,
+    ).catch(() => undefined);
 
-    return NextResponse.json(
-      { success: true, message: "Verification email sent" },
-      { status: 200 },
-    );
+    return NextResponse.json(GENERIC_RESPONSE, { status: 200 });
   } catch {
     return NextResponse.json(
-      { success: false, error: "Failed to send verification email" },
-      { status: 500 },
+      { success: false, error: "Unable to process this request right now. Try again later." },
+      { status: 503 },
     );
   }
 }

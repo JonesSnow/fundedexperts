@@ -1,7 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { prisma } from "@/lib/db";
+import { validateProductDraftInput, validateProductForPublication } from "@/lib/product-domain";
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -32,25 +34,84 @@ export async function GET(
     );
   }
 
-  const product = await prisma.product.findUnique({
+  const product = await prisma.product.findFirst({
     where: {
       id,
       isActive: true,
+      status: "ACTIVE",
+      code: { not: null },
+      category: { not: null },
+      evaluationStructure: { not: null },
+      denominationCurrency: { not: null },
+      accountSize: { not: null },
+      price: { not: null },
     },
     select: {
       id: true,
+      code: true,
       name: true,
       description: true,
+      category: true,
+      evaluationStructure: true,
+      status: true,
       accountSize: true,
+      denominationCurrency: true,
       price: true,
       currency: true,
       displayOrder: true,
       isActive: true,
       ruleset: { select: { name: true } },
+      stages: {
+        orderBy: { stageOrder: "asc" },
+        select: {
+          id: true,
+          stageKey: true,
+          displayName: true,
+          stageOrder: true,
+          rulesetVersion: {
+            select: {
+              id: true,
+              version: true,
+              status: true,
+              ruleset: { select: { id: true, name: true } },
+              rules: {
+                select: {
+                  id: true,
+                  name: true,
+                  ruleType: true,
+                  value: true,
+                  isRequired: true,
+                  disposition: true,
+                  calculation: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      operatingRulesetVersion: {
+        select: {
+          id: true,
+          version: true,
+          status: true,
+          ruleset: { select: { id: true, name: true } },
+          rules: {
+            select: {
+              id: true,
+              name: true,
+              ruleType: true,
+              value: true,
+              isRequired: true,
+              disposition: true,
+              calculation: true,
+            },
+          },
+        },
+      },
     },
   });
 
-  if (!product) {
+  if (!product || validateProductForPublication(product).length > 0) {
     return NextResponse.json(
       { success: false, error: "Product not found" },
       { status: 404 }
@@ -80,18 +141,12 @@ export async function PUT(
   }
 
   try {
-    const body = await request.json();
-    const validation = validateProductInput(body);
-    if (!validation.valid) {
-      return NextResponse.json(
-        { success: false, errors: validation.errors },
-        { status: 400 }
-      );
+    const body: unknown = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: "A product draft object is required" }, { status: 400 });
     }
-
-    const existing = await prisma.product.findUnique({
-      where: { id },
-    });
+    const input = body as Record<string, unknown>;
+    const existing = await prisma.product.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json(
         { success: false, error: "Product not found" },
@@ -99,21 +154,63 @@ export async function PUT(
       );
     }
 
-    const product = await prisma.product.update({
-      where: { id },
-      data: {
-        name: body.name ?? existing.name,
-        description: body.description ?? existing.description,
-        pricingPlan: body.pricingPlan ?? existing.pricingPlan,
-        settings: body.settings ?? existing.settings,
-        isActive: body.isActive ?? existing.isActive,
-        accountSize: body.accountSize ?? existing.accountSize,
-        price: body.price ?? existing.price,
-        currency: body.currency ?? existing.currency,
-        rulesetId: body.rulesetId ?? existing.rulesetId,
-        displayOrder: body.displayOrder ?? existing.displayOrder,
-        updatedAt: new Date(),
-      },
+    if (existing.status !== "DRAFT") {
+      return NextResponse.json({ success: false, error: "Only draft products can be edited. Create a new product revision for future terms." }, { status: 409 });
+    }
+
+    const mergedInput: Record<string, unknown> = {
+      name: input.name ?? existing.name,
+      accountSize: Object.prototype.hasOwnProperty.call(input, "accountSize") ? input.accountSize : existing.accountSize?.toString() ?? null,
+      price: Object.prototype.hasOwnProperty.call(input, "price") ? input.price : existing.price?.toString() ?? null,
+      currency: input.currency ?? existing.currency,
+      displayOrder: input.displayOrder ?? existing.displayOrder,
+    };
+    const optionalValues: Array<[string, unknown]> = [
+      ["code", input.code ?? existing.code ?? undefined],
+      ["description", Object.prototype.hasOwnProperty.call(input, "description") ? input.description : existing.description],
+      ["category", input.category ?? existing.category ?? undefined],
+      ["evaluationStructure", input.evaluationStructure ?? existing.evaluationStructure ?? undefined],
+      ["denominationCurrency", input.denominationCurrency ?? existing.denominationCurrency ?? undefined],
+    ];
+    for (const [key, value] of optionalValues) {
+      if (value !== undefined) mergedInput[key] = value;
+    }
+    if (input.status !== undefined) mergedInput.status = input.status;
+    if (input.isActive !== undefined) mergedInput.isActive = input.isActive;
+    const validation = validateProductDraftInput(mergedInput);
+    if (!validation.valid) {
+      return NextResponse.json({ success: false, errors: validation.errors }, { status: 400 });
+    }
+
+    if (!validation.data) {
+      return NextResponse.json({ success: false, error: "Invalid product draft" }, { status: 400 });
+    }
+
+    const draft = validation.data;
+    const updateData: Prisma.ProductUpdateInput = { isActive: false };
+    if ("name" in input) updateData.name = draft.name;
+    if ("code" in input) updateData.code = draft.code;
+    if ("description" in input) updateData.description = draft.description;
+    if ("category" in input) updateData.category = draft.category;
+    if ("evaluationStructure" in input) updateData.evaluationStructure = draft.evaluationStructure;
+    if ("accountSize" in input) updateData.accountSize = draft.accountSize ? new Prisma.Decimal(draft.accountSize) : null;
+    if ("price" in input) updateData.price = draft.price ? new Prisma.Decimal(draft.price) : null;
+    if ("currency" in input && draft.currency) updateData.currency = draft.currency;
+    if ("denominationCurrency" in input) updateData.denominationCurrency = draft.denominationCurrency;
+    if ("displayOrder" in input) updateData.displayOrder = draft.displayOrder;
+
+    const product = await prisma.$transaction(async (tx) => {
+      const updated = await tx.product.update({ where: { id }, data: updateData });
+      await tx.auditLog.create({
+        data: {
+          action: "PRODUCT_UPDATED",
+          entityType: "Product",
+          entityId: id,
+          performedBy: trader.id,
+          details: { status: "DRAFT", fields: Object.keys(input) },
+        },
+      });
+      return updated;
     });
 
     return NextResponse.json(
@@ -121,38 +218,12 @@ export async function PUT(
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json({ success: false, error: "Product name or code already exists" }, { status: 409 });
+    }
     return NextResponse.json(
       { success: false, error: "Failed to update product" },
       { status: 500 }
     );
   }
-}
-
-function validateProductInput(body: Record<string, unknown>): {
-  valid: boolean;
-  errors: Record<string, string>;
-} {
-  const errors: Record<string, string> = {};
-  if (body.name !== undefined) {
-    if (typeof body.name !== "string" || body.name.length > 100) {
-      errors.name = "Name must be 100 characters or less";
-    }
-  }
-  if (body.accountSize !== undefined) {
-    if (typeof body.accountSize !== "number" || body.accountSize <= 0) {
-      errors.accountSize = "Account size must be a positive number";
-    }
-  }
-  if (body.price !== undefined) {
-    if (typeof body.price !== "number" || body.price < 0) {
-      errors.price = "Price must be a non-negative number";
-    }
-  }
-  if (body.currency !== undefined && typeof body.currency !== "string") {
-    errors.currency = "Currency must be a string";
-  }
-  if (body.displayOrder !== undefined && typeof body.displayOrder !== "number") {
-    errors.displayOrder = "Display order must be a number";
-  }
-  return { valid: Object.keys(errors).length === 0, errors };
 }

@@ -147,3 +147,9 @@ Rules are individual criteria within a ruleset version.
 5. **Product-specific rulesets** — Enforce one ruleset per product or allow multiple
 6. **Admin notifications** — Notify admins of pending approvals or status changes
 7. **Audit logging** — Extend AuditLog entries for all product/ruleset mutations (partially implemented)
+
+## Block 2 implementation update — 2026-10-13
+
+The schema and APIs now represent product category, evaluation structure, lifecycle status, separate price/account-denomination currencies, ordered product stages, explicit rule disposition and calculation metadata, and a product/order-item terms snapshot. Product publication requires complete terms and published stage versions; ruleset publication is draft-only and validates rule fields. The public product API only returns active configurations that pass validation. No records were seeded or queried, so this document does not assert any live product values. Existing products will be DRAFT after the unapplied migration and require review.
+
+The implementation does not make the evaluator correct merely by storing calculation definitions. Current MIN_TRADES, MAX_DAILY_LOSS, TRADING_SESSION, and TRADING_HOURS behavior blocks activation pending fixes and regression coverage. Direct Funded has no evaluation stage but remains unpublished until post-activation policy and fulfillment exist. Admin APIs cover more operations than the current UI exposes. See [docs/block-2-product-foundation.md](block-2-product-foundation.md) for the compatibility matrix, validation, and remaining decisions.

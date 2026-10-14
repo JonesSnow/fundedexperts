@@ -10,15 +10,12 @@ export class ConsoleProvider implements EmailProviderInstance {
   }
 
   async send(message: EmailMessage): Promise<EmailSendResult> {
-    const sanitizedUrl = (message.html || message.text || "").length > 0 ? "[present]" : "[empty]";
+    const recipientDomain = message.to.includes("@") ? message.to.split("@").pop() : "unknown";
     console.log("[EMAIL][DEV][CONSOLE PROVIDER]");
     console.log("  Template:", message.templateId || "unknown");
-    console.log("  Recipient:", message.to);
-    console.log("  From:", message.from || "[default]");
-    console.log("  Subject:", message.subject);
-    console.log("  Body length:", message.text?.length ?? message.html?.length ?? 0, "chars");
-    console.log("  HTML present:", sanitizedUrl);
-    return { success: true, providerMessageId: `console-${Date.now()}` };
+    console.log("  Recipient domain:", recipientDomain || "unknown");
+    console.log("  Message content:", (message.html || message.text) ? "present" : "empty");
+    return { success: false, error: "email_console_mode_no_delivery" };
   }
 }
 

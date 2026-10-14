@@ -4,6 +4,7 @@ import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
+import { prepareMt5Credentials } from "@/lib/mt5-credential-storage";
 
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
@@ -123,8 +124,17 @@ export async function PATCH(
       broker?: string;
       server?: string;
       login?: string;
-      credentials?: string;
+      credentials?: string | null;
     };
+
+    const preparedCredentials = prepareMt5Credentials(credentials);
+    if (!preparedCredentials.ok) {
+      const invalidValue = preparedCredentials.reason === "invalid";
+      return NextResponse.json(
+        { success: false, error: invalidValue ? "Credentials must be a string" : "Credential encryption is unavailable" },
+        { status: invalidValue ? 400 : 503 },
+      );
+    }
 
     const account = await prisma.mT5Account.findUnique({ where: { id } });
     if (!account) {
@@ -141,7 +151,7 @@ export async function PATCH(
     if (broker !== undefined) updateData.broker = broker;
     if (server !== undefined) updateData.server = server;
     if (login !== undefined) updateData.login = login;
-    if (credentials !== undefined) updateData.credentials = credentials;
+    if (credentials !== undefined) updateData.credentials = preparedCredentials.value ?? null;
     updateData.updatedAt = new Date();
 
     if (Object.keys(updateData).length === 1) {

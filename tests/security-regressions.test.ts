@@ -1,3 +1,4 @@
+import "./support/test-env";
 /**
  * Security regression tests for four fixes.
  *

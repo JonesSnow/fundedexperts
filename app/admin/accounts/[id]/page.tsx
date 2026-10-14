@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 
 interface Account {
   id: string;
@@ -23,7 +23,6 @@ interface Account {
 
 export default function AdminAccountDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -79,8 +78,8 @@ export default function AdminAccountDetailPage() {
     }
   }
 
-  if (loading) return <div className="p-8 max-w-4xl mx-auto"><p className="text-gray-500">Loading account...</p></div>;
-  if (error) return <div className="p-8 max-w-4xl mx-auto"><p className="text-red-600">{error}</p><Link href="/admin/accounts" className="mt-4 inline-block px-4 py-2 bg-gray-300 rounded">Back</Link></div>;
+  if (loading) return <div className="p-8 max-w-4xl mx-auto"><p className="text-muted-foreground">Loading account...</p></div>;
+  if (error) return <div className="p-8 max-w-4xl mx-auto"><p className="text-danger">{error}</p><Link href="/admin/accounts" className="mt-4 inline-block px-4 py-2 bg-muted rounded">Back</Link></div>;
   if (!account) return <div className="p-8 max-w-4xl mx-auto"><p>Account not found</p></div>;
 
   return (
@@ -88,9 +87,9 @@ export default function AdminAccountDetailPage() {
       <div className="flex justify-between items-start mb-6">
         <div>
           <h1 className="text-3xl font-bold">{account.accountNumber}</h1>
-          <p className="text-gray-600">Account Details</p>
+          <p className="text-muted-foreground">Account Details</p>
         </div>
-        <Link href="/admin/accounts" className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Back</Link>
+        <Link href="/admin/accounts" className="px-4 py-2 bg-muted rounded hover:bg-muted">Back</Link>
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
@@ -156,19 +155,19 @@ export default function AdminAccountDetailPage() {
             onSelect={handleHealthChange}
           />
         </div>
-        <p className="text-sm text-gray-500 mt-2">
+        <p className="text-sm text-muted-foreground mt-2">
           Last health check: {account.lastHealthCheck ? new Date(account.lastHealthCheck).toLocaleString() : "Never"}
         </p>
       </div>
 
       {account.notes && (
-        <div className="mb-6 p-4 bg-gray-50 rounded">
+        <div className="mb-6 p-4 bg-background rounded">
           <h2 className="text-xl font-semibold mb-2">Notes</h2>
-          <p className="text-gray-700">{account.notes}</p>
+          <p className="text-muted-foreground">{account.notes}</p>
         </div>
       )}
 
-      <div className="text-sm text-gray-500">
+      <div className="text-sm text-muted-foreground">
         Last updated: {new Date(account.updatedAt).toLocaleString()}
       </div>
     </div>
@@ -178,7 +177,7 @@ export default function AdminAccountDetailPage() {
 function DetailCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="p-3 border rounded">
-      <p className="text-xs text-gray-500 uppercase">{label}</p>
+      <p className="text-xs text-muted-foreground uppercase">{label}</p>
       <p className="font-medium">{value}</p>
     </div>
   );
@@ -190,7 +189,7 @@ function StatusButton({ label, current, target, onSelect }: { label: string; cur
     <button
       onClick={() => onSelect(target)}
       disabled={isActive}
-      className={`px-3 py-1 rounded text-sm ${isActive ? "bg-green-200 text-green-800" : "bg-gray-200 text-gray-700 hover:bg-gray-300"}`}
+      className={`px-3 py-1 rounded text-sm ${isActive ? "bg-success-light text-success" : "bg-muted text-muted-foreground hover:bg-muted"}`}
     >
       {label}
     </button>
@@ -200,15 +199,15 @@ function StatusButton({ label, current, target, onSelect }: { label: string; cur
 function HealthButton({ label, current, target, onSelect }: { label: string; current: string; target: string; onSelect: (s: string) => void }) {
   const isActive = current === target;
   const colors: Record<string, string> = {
-    CONNECTED: "bg-green-200 text-green-800",
-    DISCONNECTED: "bg-gray-200 text-gray-700",
-    ERROR: "bg-red-200 text-red-800",
+    CONNECTED: "bg-success-light text-success",
+    DISCONNECTED: "bg-muted text-muted-foreground",
+    ERROR: "bg-danger-light text-danger",
   };
   return (
     <button
       onClick={() => onSelect(target)}
       disabled={isActive}
-      className={`px-3 py-1 rounded text-sm ${isActive ? colors[target] ?? "bg-green-200 text-green-800" : "bg-gray-200 text-gray-700 hover:bg-gray-300"}`}
+      className={`px-3 py-1 rounded text-sm ${isActive ? colors[target] ?? "bg-success-light text-success" : "bg-muted text-muted-foreground hover:bg-muted"}`}
     >
       {label}
     </button>

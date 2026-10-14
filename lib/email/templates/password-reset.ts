@@ -1,11 +1,11 @@
 import { EmailMessage } from "../types";
 import { renderEmailTemplate } from "../renderer";
-import { buildAppUrl, buildTokenUrl } from "../urls";
+import { buildAppUrl } from "../urls";
 
 export interface PasswordResetEmailVars {
   email: string;
   firstName?: string;
-  token: string;
+  code: string;
   expiresAt: string;
 }
 
@@ -14,10 +14,8 @@ export function buildPasswordResetMessage(
   vars: PasswordResetEmailVars,
   idempotencyKey?: string
 ): EmailMessage {
-  const resetUrl = buildTokenUrl("/reset-password", vars.token);
   const rendered = renderEmailTemplate("password-reset", {
     ...vars,
-    resetUrl,
     appUrl: buildAppUrl(""),
     dashboardUrl: buildAppUrl("/dashboard"),
   });

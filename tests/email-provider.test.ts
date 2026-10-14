@@ -1,3 +1,4 @@
+import "./support/test-env";
 import { describe, it, before, after, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";
@@ -7,17 +8,6 @@ import { GmailSmtpProvider } from "../lib/email/provider";
 import { sendEmail, MAX_RETRIES, RETRY_DELAYS } from "../lib/email/index";
 
 const prisma = new PrismaClient();
-
-async function createTrader(email: string) {
-  return prisma.trader.create({
-    data: {
-      email,
-      password: "hashedplaceholder",
-      role: "TRADER",
-      emailVerified: true,
-    },
-  });
-}
 
 describe("Email Provider SMTP Reliability", () => {
   before(async () => {
@@ -31,7 +21,7 @@ describe("Email Provider SMTP Reliability", () => {
   });
 
   describe("SMTP connection timeout configuration", () => {
-    let transporterCalls: Record<string, unknown>[] = [];
+    const transporterCalls: Record<string, unknown>[] = [];
 
     it("should configure connectionTimeout: 5000 on nodemailer transport", async () => {
       const originalEnv = { ...process.env };

@@ -1,3 +1,4 @@
+import "../support/test-env";
 import { describe, it, beforeEach, after, before, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";

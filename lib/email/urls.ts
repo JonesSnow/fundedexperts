@@ -1,5 +1,23 @@
 export function getAppUrl(): string {
-  const url = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "http://localhost:3000";
+  const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL;
+  if (!configuredUrl && process.env.NODE_ENV === "production") {
+    throw new Error("NEXT_PUBLIC_SITE_URL or SITE_URL is required in production.");
+  }
+
+  const url = configuredUrl || "http://localhost:3000";
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("The site URL must be a valid absolute URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("The site URL must use HTTP or HTTPS.");
+  }
+  if (process.env.NODE_ENV === "production" && (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash)) {
+    throw new Error("The production site URL must be an HTTPS URL without credentials, query, or fragment.");
+  }
+
   let cleaned = url;
   if (cleaned.endsWith("/")) {
     cleaned = cleaned.slice(0, -1);

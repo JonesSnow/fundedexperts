@@ -7,6 +7,7 @@ const logger = createLogger({ environment: process.env.NODE_ENV as "development"
 export interface AllocateAccountInput {
   traderId: string;
   minAccountSize?: number;
+  maxAccountSize?: number;
   purpose?: MT5AccountPurpose;
 }
 
@@ -28,7 +29,7 @@ export async function allocateAccount(
   prisma: PrismaClient,
   input: AllocateAccountInput
 ): Promise<AllocateAccountResult> {
-  const { traderId, minAccountSize, purpose } = input;
+  const { traderId, minAccountSize, maxAccountSize, purpose } = input;
 
   let evaluationId: string | null = null;
   try {
@@ -49,7 +50,7 @@ export async function allocateAccount(
     return { success: false, error: "No active evaluation found for this trader" } as AllocateAccountFailure;
   }
 
-  
+
   const result = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${traderId}))`;
 
@@ -65,6 +66,7 @@ export async function allocateAccount(
       WHERE "status" = 'AVAILABLE'
       AND (${purpose}::varchar IS NULL OR "purpose" = ${purpose})
       AND (${minAccountSize}::numeric IS NULL OR "accountSize" >= ${minAccountSize})
+      AND (${maxAccountSize}::numeric IS NULL OR "accountSize" <= ${maxAccountSize})
       ORDER BY "accountSize" ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED

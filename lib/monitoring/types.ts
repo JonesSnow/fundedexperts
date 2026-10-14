@@ -81,6 +81,15 @@ export interface ProviderSnapshot {
   timestamp?: Date | null;
   provider?: ProviderName;
   requestId?: string | null;
+  /** Optional only when the provider has a verified, complete event history. */
+  activityEvents?: MonitoringActivityEvent[] | null;
+  /** Optional provider-computed account high-water mark with a completeness guarantee. */
+  historicalPeakEquity?: number | null;
+  tradeHistoryComplete?: boolean;
+  activityEventsComplete?: boolean;
+  equityHistoryComplete?: boolean;
+  /** PnL components for the provider's explicit daily reset period, if supported. */
+  dailyPnl?: MonitoringDailyPnl | null;
 }
 
 export interface MonitoringAccountInfo {
@@ -127,6 +136,35 @@ export interface MonitoringSnapshot {
   dataTimestamp: Date | null;
   provider: ProviderName;
   snapshotTimestamp: Date;
+  /** Normalized qualifying events. Null means the adapter cannot prove completeness. */
+  activityEvents?: MonitoringActivityEvent[] | null;
+  historicalPeakEquity?: number | null;
+  tradeHistoryComplete?: boolean;
+  activityEventsComplete?: boolean;
+  equityHistoryComplete?: boolean;
+  dailyPnl?: MonitoringDailyPnl | null;
+  dataQuality?: {
+    positionsAvailable: boolean;
+    ordersAvailable: boolean;
+    historyAvailable: boolean;
+  };
+}
+
+export interface MonitoringActivityEvent {
+  eventId: string;
+  symbol: string | null;
+  occurredAt: Date | null;
+  completedAt?: Date | null;
+}
+
+export interface MonitoringDailyPnl {
+  realizedPnl: number | null;
+  floatingPnl: number | null;
+  commissionCosts: number | null;
+  swapPnl: number | null;
+  otherFees: number | null;
+  periodStart: Date | null;
+  periodEnd: Date | null;
 }
 
 export interface MonitoringPosition {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { hashPassword, verifyPassword } from "@/lib/auth/hash";
+import { validatePassword } from "@/lib/auth/validation";
 import { prisma } from "@/lib/db";
 
 
@@ -41,6 +42,9 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: "A settings object is required." }, { status: 400 });
+    }
     const { firstName, lastName, currentPassword, newPassword } = body as {
       firstName?: string;
       lastName?: string;
@@ -48,12 +52,24 @@ export async function PATCH(request: NextRequest) {
       newPassword?: string;
     };
 
+    if (firstName !== undefined && (typeof firstName !== "string" || firstName.length > 100)) {
+      return NextResponse.json({ success: false, error: "First name must be 100 characters or fewer." }, { status: 400 });
+    }
+    if (lastName !== undefined && (typeof lastName !== "string" || lastName.length > 100)) {
+      return NextResponse.json({ success: false, error: "Last name must be 100 characters or fewer." }, { status: 400 });
+    }
+
     if (currentPassword !== undefined || newPassword !== undefined) {
-      if (!currentPassword || !newPassword) {
+      if (typeof currentPassword !== "string" || !currentPassword || typeof newPassword !== "string" || !newPassword) {
         return NextResponse.json(
           { success: false, error: "Both currentPassword and newPassword are required" },
           { status: 400 },
         );
+      }
+
+      const passwordValidation = validatePassword(newPassword);
+      if (!passwordValidation.valid) {
+        return NextResponse.json({ success: false, error: passwordValidation.error }, { status: 400 });
       }
 
       const trader = await prisma.trader.findUnique({ where: { id: user.id } });
@@ -75,7 +91,11 @@ export async function PATCH(request: NextRequest) {
       const newHash = await hashPassword(newPassword);
       await prisma.trader.update({
         where: { id: user.id },
-        data: { password: newHash },
+        data: {
+          password: newHash,
+          passwordResetToken: null,
+          passwordResetExpires: null,
+        },
       });
     }
 

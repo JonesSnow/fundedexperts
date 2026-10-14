@@ -1,4 +1,3 @@
-import { RulesetVersion } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -24,8 +23,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const trader = await getAuthenticatedUser(request);
   const versions = await prisma.rulesetVersion.findMany({
-    where: { rulesetId: id },
+    where: { rulesetId: id, ...(trader?.role === "ADMIN" ? {} : { status: "PUBLISHED" }) },
     orderBy: { version: "desc" },
   });
 
@@ -84,20 +84,29 @@ export async function POST(
       );
     }
 
-    const rulesetVersion = await prisma.rulesetVersion.create({
-      data: {
-        version,
-        rulesetId: id,
-        status: "DRAFT",
-        effectiveDate: body.effectiveDate ? new Date(body.effectiveDate) : undefined,
-      },
+    if (body.effectiveDate !== undefined && body.effectiveDate !== null && (typeof body.effectiveDate !== "string" || Number.isNaN(Date.parse(body.effectiveDate)))) {
+      return NextResponse.json({ success: false, error: "Effective date must be a valid date string" }, { status: 400 });
+    }
+    const rulesetVersion = await prisma.$transaction(async (tx) => {
+      const created = await tx.rulesetVersion.create({
+        data: {
+          version,
+          rulesetId: id,
+          status: "DRAFT",
+          effectiveDate: typeof body.effectiveDate === "string" ? new Date(body.effectiveDate) : undefined,
+        },
+      });
+      await tx.auditLog.create({
+        data: { action: "RULESET_VERSION_CREATED", entityType: "RulesetVersion", entityId: created.id, performedBy: trader.id, details: { rulesetId: id, version } },
+      });
+      return created;
     });
 
     return NextResponse.json(
       { success: true, rulesetVersion },
       { status: 201 }
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { success: false, error: "Failed to create version" },
       { status: 500 }

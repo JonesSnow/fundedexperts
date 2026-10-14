@@ -1,11 +1,11 @@
 export default function VerifyEmailPendingLoading() {
   return (
-    <div className="flex items-center justify-center min-h-screen bg-zinc-50">
-      <div className="w-full max-w-md p-8 bg-white rounded-lg shadow">
-        <h1 className="text-2xl font-bold mb-6 text-center">Check Your Email</h1>
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 shadow">
+        <h1 className="mb-6 text-center text-2xl font-bold text-foreground">Verify your email</h1>
         <div className="text-center py-8">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <div className="mb-4 inline-block h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
+          <p className="text-muted-foreground">Preparing verification…</p>
         </div>
       </div>
     </div>

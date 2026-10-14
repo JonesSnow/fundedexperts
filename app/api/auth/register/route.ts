@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hashPassword } from "@/lib/auth/hash";
 import { validateRegisterInput } from "@/lib/auth/validation";
-import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
-import { randomBytes } from "crypto";
+import { generateOtp, hashOtp, OTP_TTL_MS } from "@/lib/auth/otp";
 import { sendVerificationEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
 
@@ -11,7 +10,11 @@ import { prisma } from "@/lib/db";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const rateLimit = checkRateLimit(`register:${body.email || "unknown"}`);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: "A registration object is required." }, { status: 400 });
+    }
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const rateLimit = checkRateLimit(`register:${email || "unknown"}`);
 
     if (!rateLimit.allowed) {
       return NextResponse.json(
@@ -24,14 +27,14 @@ export async function POST(request: NextRequest) {
     }
 
     const validation = validateRegisterInput({
-      email: body.email,
+      email,
       password: body.password,
       firstName: body.firstName,
       lastName: body.lastName,
     });
 
     if (!validation.valid) {
-      resetRateLimit(`register:${body.email || "unknown"}`);
+      resetRateLimit(`register:${email || "unknown"}`);
       return NextResponse.json(
         { success: false, errors: validation.errors },
         { status: 400 }
@@ -39,11 +42,11 @@ export async function POST(request: NextRequest) {
     }
 
     const existing = await prisma.trader.findUnique({
-      where: { email: body.email },
+      where: { email },
     });
 
     if (existing) {
-      resetRateLimit(`register:${body.email}`);
+      resetRateLimit(`register:${email}`);
       return NextResponse.json(
         { success: false, error: "Email already registered" },
         { status: 409 }
@@ -52,36 +55,39 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await hashPassword(body.password);
 
-    const verificationToken = randomBytes(32).toString("hex");
-    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
     const trader = await prisma.trader.create({
       data: {
-        email: body.email,
+        email,
         password: passwordHash,
         role: "TRADER",
         firstName: body.firstName,
         lastName: body.lastName,
-        emailVerificationToken: verificationToken,
+      },
+    });
+
+    resetRateLimit(`register:${email}`);
+
+    const verificationCode = generateOtp();
+    const verificationExpires = new Date(Date.now() + OTP_TTL_MS);
+    await prisma.trader.update({
+      where: { id: trader.id },
+      data: {
+        emailVerificationToken: hashOtp("email-verification", trader.id, verificationCode),
         emailVerificationExpires: verificationExpires,
       },
     });
 
-    resetRateLimit(`register:${body.email}`);
-
     const emailResult = await sendVerificationEmail(
       { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
-      verificationToken,
+      verificationCode,
       verificationExpires,
-    );
-
-    const token = await createSession(trader.id, trader.role);
+    ).catch(() => ({ success: false as const, error: "email_delivery_unavailable" }));
 
     const response = NextResponse.json(
       {
         success: true,
         emailSent: emailResult.success,
-        emailError: emailResult.success ? undefined : "Failed to send verification email",
+        emailError: emailResult.success ? undefined : "The current email mode did not deliver the verification message. Check the server mail configuration or request a new code.",
         trader: {
           id: trader.id,
           email: trader.email,
@@ -93,11 +99,6 @@ export async function POST(request: NextRequest) {
         },
       },
       { status: 201 }
-    );
-
-    response.headers.set(
-      "Set-Cookie",
-      `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${7 * 24 * 60 * 60}${process.env.NODE_ENV === "production" ? "; Secure" : ""}`
     );
 
     return response;

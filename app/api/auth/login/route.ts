@@ -10,7 +10,11 @@ import { prisma } from "@/lib/db";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const rateLimit = checkRateLimit(`login:${body.email || "unknown"}`);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: "A login object is required." }, { status: 400 });
+    }
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const rateLimit = checkRateLimit(`login:${email || "unknown"}`);
 
     if (!rateLimit.allowed) {
       return NextResponse.json(
@@ -23,7 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     const validation = validateLoginInput({
-      email: body.email,
+      email,
       password: body.password,
     });
 
@@ -45,7 +49,7 @@ export async function POST(request: NextRequest) {
 // trader row was loaded, which also pulled the password reset token and the
 // email verification token into memory on every login attempt.
 const trader = await prisma.trader.findUnique({
-      where: { email: body.email },
+      where: { email },
       select: {
         id: true,
         email: true,
@@ -86,7 +90,14 @@ const trader = await prisma.trader.findUnique({
       );
     }
 
-    resetRateLimit(`login:${body.email}`);
+    resetRateLimit(`login:${email}`);
+
+    if (!trader.emailVerified) {
+      return NextResponse.json(
+        { success: false, emailVerified: false, email: trader.email, error: "Verify your email address before signing in." },
+        { status: 403 },
+      );
+    }
 
     const token = await createSession(trader.id, trader.role);
 
@@ -118,7 +129,7 @@ const trader = await prisma.trader.findUnique({
     );
 
     return response;
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { success: false, error: "Login failed" },
       { status: 500 }
