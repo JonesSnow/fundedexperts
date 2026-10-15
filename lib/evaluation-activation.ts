@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { validateRulesetForPublication, type ProductRuleType } from "./product-domain";
+import { validateRulesetForPublication } from "./product-domain";
 
 export type ActivationFailureCode =
   | "ORDER_NOT_FOUND"
@@ -79,7 +79,7 @@ export interface ActivationTransaction {
   getAssignment(traderId: string, accountId: string): Promise<ActivationAssignment | null>;
   lockTraderActivation(traderId: string): Promise<void>;
   hasActiveAssignment(traderId: string): Promise<boolean>;
-  reserveMatchingAccount(accountSize: number): Promise<ActivationAccount | null>;
+  reserveMatchingAccount(accountSize: number, denominationCurrency: string): Promise<ActivationAccount | null>;
   createEvaluation(data: Omit<ActivationEvaluation, "id" | "startedAt"> & { startedAt: Date; startingBalance: number }): Promise<ActivationEvaluation>;
   createAssignment(data: { traderId: string; accountId: string; status: "ASSIGNED" }): Promise<ActivationAssignment>;
   markAccountInUse(accountId: string): Promise<void>;
@@ -125,6 +125,7 @@ export interface PurchasedTerms {
   productId: string;
   productName: string;
   accountSize: number;
+  denominationCurrency: string;
   stageId: string;
   stageKey: string;
   rulesetVersionId: string;
@@ -144,6 +145,10 @@ export function resolvePurchasedTerms(order: ActivationOrder, version: Activatio
   if (snapshot.productId !== item.productId) errors.push("Order snapshot product identity does not match its order item.");
   const accountSize = typeof snapshot.accountSize === "string" ? Number(snapshot.accountSize) : Number.NaN;
   if (!Number.isFinite(accountSize) || accountSize <= 0) errors.push("Order snapshot account size is missing or invalid.");
+  const denominationCurrency = typeof snapshot.denominationCurrency === "string" && /^[A-Z]{3}$/.test(snapshot.denominationCurrency)
+    ? snapshot.denominationCurrency
+    : "";
+  if (!denominationCurrency) errors.push("Order snapshot account-denomination currency is missing or invalid.");
   const snapshotPrice = priceString(snapshot.price);
   if (!snapshotPrice || priceString(item.unitPrice) !== snapshotPrice) errors.push("Order item price does not match the purchased product snapshot.");
   if (snapshot.priceCurrency !== item.currency) errors.push("Order item currency does not match the purchased product snapshot.");
@@ -179,6 +184,7 @@ export function resolvePurchasedTerms(order: ActivationOrder, version: Activatio
       productId: item.productId,
       productName: snapshot.name as string,
       accountSize,
+      denominationCurrency,
       stageId,
       stageKey,
       rulesetVersionId: version.id,
@@ -191,7 +197,6 @@ export function resolvePurchasedTerms(order: ActivationOrder, version: Activatio
 export async function activatePaidOrder(
   repository: ActivationRepository,
   input: { orderId: string; traderId: string },
-  evaluatorVerifiedRuleTypes: readonly ProductRuleType[] = [],
 ): Promise<ActivationResult> {
   try {
     return await repository.transaction(input.orderId, async (tx) => {
@@ -212,7 +217,7 @@ export async function activatePaidOrder(
         return { success: false, code: "TERMS_REVIEW_REQUIRED", error: "Purchased terms are inconsistent; administrator review is required", reviewRequired: true };
       }
       const terms = resolved.terms;
-      const ruleReadiness = validateRulesetForPublication(version.rules, evaluatorVerifiedRuleTypes);
+      const ruleReadiness = validateRulesetForPublication(version.rules);
       if (ruleReadiness.length > 0) {
         await tx.writeReviewAudit({ orderId: order.id, traderId: order.traderId, code: "TERMS_REVIEW_REQUIRED", reasons: ruleReadiness });
         return { success: false, code: "TERMS_REVIEW_REQUIRED", error: "Purchased rules are unresolved or not verified for enforcement; administrator review is required", reviewRequired: true };
@@ -232,8 +237,8 @@ export async function activatePaidOrder(
 
       await tx.lockTraderActivation(order.traderId);
       if (await tx.hasActiveAssignment(order.traderId)) return { success: false, code: "ACTIVE_ASSIGNMENT_EXISTS", error: "Customer already has an active account assignment" };
-      const account = await tx.reserveMatchingAccount(terms.accountSize);
-      if (!account) return { success: false, code: "NO_MATCHING_INVENTORY", error: "No available evaluation account matches the purchased account size" };
+      const account = await tx.reserveMatchingAccount(terms.accountSize, terms.denominationCurrency);
+      if (!account) return { success: false, code: "NO_MATCHING_INVENTORY", error: "No available evaluation account matches the purchased size and denomination currency" };
 
       const startedAt = new Date();
       const evaluation = await tx.createEvaluation({
@@ -298,13 +303,14 @@ export function prismaActivationRepository(prisma: PrismaClient): ActivationRepo
           async hasActiveAssignment(traderId) {
             return Boolean(await client.accountAssignment.findFirst({ where: { traderId, status: "ASSIGNED" }, select: { id: true } }));
           },
-          async reserveMatchingAccount(accountSize) {
+          async reserveMatchingAccount(accountSize, denominationCurrency) {
             const rows = await client.$queryRaw<Array<{ id: string; accountNumber: string; accountSize: unknown; currency: string; status: string; purpose: string | null }>>`
               SELECT "id", "accountNumber", "accountSize", "currency", "status", "purpose"
               FROM "MT5Account"
               WHERE "status" = 'AVAILABLE'
                 AND "purpose" = 'EVALUATION'::"MT5AccountPurpose"
                 AND "accountSize" = ${accountSize}
+                AND "currency" = ${denominationCurrency}
               ORDER BY "createdAt" ASC
               LIMIT 1
               FOR UPDATE SKIP LOCKED

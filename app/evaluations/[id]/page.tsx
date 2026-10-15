@@ -102,9 +102,19 @@ export default function EvaluationDetailPage() {
                 <Metric label="Recorded P&L" value={evaluation.totalPnl === null ? "Unavailable" : `${formatAmount(evaluation.totalPnl) ?? "Unavailable"} · currency not supplied`} />
                 <Metric label="Recorded drawdown" value={evaluation.maxDrawdown === null ? "Unavailable" : `${formatAmount(evaluation.maxDrawdown) ?? "Unavailable"} · currency not supplied`} />
               </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/50 p-4">
-                <p className="text-sm font-medium text-foreground">{evaluation.rulePassedCount} passed · {evaluation.ruleFailedCount} failed · {evaluation.ruleWarningCount} unresolved</p>
-                {evaluation.account ? <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm">Account {evaluation.account.accountNumber}</span><StatusBadge status={evaluation.account.healthStatus} size="sm" /></div> : <Link href="/accounts" className="text-sm font-semibold text-primary hover:underline">View accounts</Link>}
+              <div className="mt-5 rounded-xl border border-border bg-muted/40 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-foreground">Objective check summary</h3>
+                  {evaluation.account ? <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm">Account {evaluation.account.accountNumber}</span><StatusBadge status={evaluation.account.healthStatus} size="sm" /></div> : <Link href="/accounts" className="text-sm font-semibold text-primary hover:underline">View accounts</Link>}
+                </div>
+                <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                  <CheckCount label="Passed" count={evaluation.rulePassedCount} tone="success" />
+                  <CheckCount label="Failed" count={evaluation.ruleFailedCount} tone="danger" />
+                  <CheckCount label="Unresolved" count={evaluation.ruleWarningCount} tone="warning" />
+                  <CheckCount label="Pending" count={evaluation.rulePendingCount} />
+                  <CheckCount label="Incomplete" count={evaluation.ruleIncompleteCount} />
+                  <CheckCount label="Stale / unavailable" count={(evaluation.ruleStaleCount ?? 0) + (evaluation.ruleUnavailableCount ?? 0)} reported={evaluation.ruleStaleCount !== undefined || evaluation.ruleUnavailableCount !== undefined} />
+                </dl>
               </div>
             </CardContent>
           </Card>
@@ -151,4 +161,29 @@ function displayValue(value: unknown): string {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <div className="rounded-lg bg-muted/60 p-3"><p className="text-xs font-medium text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-semibold text-foreground">{value}</p></div>;
+}
+
+function CheckCount({
+  label,
+  count,
+  tone = "default",
+  reported = count !== undefined,
+}: {
+  label: string;
+  count: number | undefined;
+  tone?: "default" | "success" | "danger" | "warning";
+  reported?: boolean;
+}) {
+  const numberColor = {
+    default: "text-foreground",
+    success: "text-success",
+    danger: "text-danger",
+    warning: "text-warning",
+  }[tone];
+  return (
+    <div className="min-w-0 rounded-lg border border-border bg-card px-3 py-2">
+      <dt className="truncate text-xs text-muted-foreground">{label}</dt>
+      <dd className={`mt-1 text-lg font-semibold tabular-nums ${numberColor}`}>{reported ? count : "—"}</dd>
+    </div>
+  );
 }

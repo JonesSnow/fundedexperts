@@ -13,14 +13,27 @@
   const tsxCli = projectRequire.resolve('tsx/cli');
 
   const testsDir = path.join(projectRoot, 'tests');
-  const testFiles = fs.readdirSync(testsDir)
-    .filter((file) => file.endsWith('.test.ts'))
+  const hasGuardedTestBootstrap = (source) =>
+    /^\s*import\s+(?:[^'"]+\s+from\s+)?["'][^"']*support\/test-env["']/m.test(source);
+  const collectTests = (directory) => fs.readdirSync(directory, { withFileTypes: true })
+    .flatMap((entry) => {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) return collectTests(absolutePath);
+      if (!entry.isFile() || !entry.name.endsWith('.test.ts')) return [];
+      return hasGuardedTestBootstrap(fs.readFileSync(absolutePath, 'utf8')) ? [absolutePath] : [];
+    });
+  const explicitDatabaseSuites = [
+    path.join(testsDir, 'phase33-e2e.ts'),
+    path.join(testsDir, 'monitoring', 'persistence.ts'),
+  ].filter((file) => fs.existsSync(file) && hasGuardedTestBootstrap(fs.readFileSync(file, 'utf8')));
+  const testFiles = [...new Set([...collectTests(testsDir), ...explicitDatabaseSuites])]
     .sort()
-    .map((file) => path.join('tests', file));
+    .map((file) => path.relative(projectRoot, file));
 
   const childEnv = { ...process.env, TEST_DATABASE_URL };
   delete childEnv.DATABASE_URL;
   delete childEnv.DIRECT_URL;
+  delete childEnv.TEST_DATABASE_CLEANUP_CONFIRMATION;
   delete childEnv.PHASE33_ALLOW_PRODUCTION_DB;
 
   console.log('Found ' + testFiles.length + ' test files.\n');
@@ -56,5 +69,6 @@
   console.log('\nTotal: ' + totalPassed + '/' + results.length + ' passed, ' + totalFailed + '/' + results.length + ' failed');
   if (totalFailed > 0) process.exitCode = 1;
 })().catch(() => {
+  console.error('Database test runner failed before completing its suite; details are redacted.');
   process.exitCode = 1;
 });

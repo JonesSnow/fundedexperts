@@ -5,9 +5,14 @@ import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { generateOtp, hashOtp, OTP_TTL_MS } from "@/lib/auth/otp";
 import { sendVerificationEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
 
+const logger = createLogger({
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
+});
 
 export async function POST(request: NextRequest) {
+  const correlationId = generateCorrelationId();
   try {
     const body = await request.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -34,7 +39,6 @@ export async function POST(request: NextRequest) {
     });
 
     if (!validation.valid) {
-      resetRateLimit(`register:${email || "unknown"}`);
       return NextResponse.json(
         { success: false, errors: validation.errors },
         { status: 400 }
@@ -44,9 +48,7 @@ export async function POST(request: NextRequest) {
     const existing = await prisma.trader.findUnique({
       where: { email },
     });
-
     if (existing) {
-      resetRateLimit(`register:${email}`);
       return NextResponse.json(
         { success: false, error: "Email already registered" },
         { status: 409 }
@@ -81,7 +83,17 @@ export async function POST(request: NextRequest) {
       { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
       verificationCode,
       verificationExpires,
-    ).catch(() => ({ success: false as const, error: "email_delivery_unavailable" }));
+    ).catch(() => {
+      logger.error("AUTH", "Verification email dispatch failed after registration", {
+        correlationId,
+        entity: { type: "Trader", id: trader.id },
+        error: {
+          code: "VERIFICATION_EMAIL_DISPATCH_FAILED",
+          message: "Email delivery did not return a result",
+        },
+      });
+      return { success: false as const, error: "email_delivery_unavailable" };
+    });
 
     const response = NextResponse.json(
       {

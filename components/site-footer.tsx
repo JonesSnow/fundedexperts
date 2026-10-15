@@ -16,7 +16,7 @@ export default function SiteFooter() {
         </div>
         <nav aria-label="Footer navigation" className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm sm:grid-cols-3">
           <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/catalog">Accounts</Link>
-          <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/pricing">Compare and pricing</Link>
+          <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/catalog#configured-products">Plans and pricing</Link>
           <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/rules">Trading rules</Link>
           <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/how-it-works">How it works</Link>
           <Link className="text-muted-foreground transition-colors hover:text-foreground" href="/faq">FAQ</Link>

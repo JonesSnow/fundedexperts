@@ -73,7 +73,7 @@ describe("Authentication Session", () => {
     assert.equal(typeof SESSION_COOKIE, "string");
     assert.equal(SESSION_COOKIE, "session");
 
-    const token = await createSession("trader-1", "TRADER");
+    const token = await createSession("trader-1", "TRADER", true);
     assert.ok(token);
 
     const session = await getSession(token);
@@ -89,13 +89,13 @@ describe("Authentication Session", () => {
 
 describe("Authorization", () => {
   it("should verify trader role", async () => {
-    const token = await createSession("trader-1", "TRADER");
+    const token = await createSession("trader-1", "TRADER", true);
     const session = await getSession(token);
     assert.equal(session?.role, "TRADER");
   });
 
   it("should verify admin role", async () => {
-    const token = await createSession("admin-1", "ADMIN");
+    const token = await createSession("admin-1", "ADMIN", true);
     const session = await getSession(token);
     assert.equal(session?.role, "ADMIN");
   });

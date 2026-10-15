@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import TraderPageShell from "@/components/trader-page-shell";
 import TraderLoadError from "@/components/trader-load-error";
+import TraderStatusOverview from "@/components/trader-status-overview";
 import { Badge, ButtonLink, Card, EmptyState, LoadingState, StatusBadge } from "@/components/ui";
 import { formatAmount, formatDate } from "@/components/trader-format";
 
@@ -81,6 +82,16 @@ export default function AccountsPage() {
       description="Review your account status and monitoring details."
       actions={<ButtonLink href="/dashboard" variant="outline">Back to dashboard</ButtonLink>}
     >
+      <TraderStatusOverview
+        title="Account status"
+        total={accounts.length}
+        statuses={statuses.map((status) => ({
+          status,
+          count: accounts.filter((account) => account.status === status).length,
+        }))}
+        loading={loading}
+        unavailable={Boolean(error)}
+      />
       <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground" aria-live="polite">
           {loading ? "Loading accounts…" : `${visibleAccounts.length} ${visibleAccounts.length === 1 ? "account" : "accounts"}`}

@@ -98,7 +98,7 @@ export default function HomePage() {
                   <h2 className="site-section-title mt-4">Find Your Trading Plan</h2>
                   <p className="mt-4 text-sm leading-7 text-muted-foreground">Compare active plans by size, price, stages, and published rules.</p>
                 </div>
-                <ButtonLink href="/pricing" variant="outline">Plans and Pricing <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink>
+                <ButtonLink href="/catalog#configured-products" variant="outline">Compare Plans <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink>
               </div>
               <ProductShowcase compact purchaseUnavailable />
             </div>

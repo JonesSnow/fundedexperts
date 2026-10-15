@@ -44,6 +44,8 @@
 | `getFundedAccount(prisma, id)` | Fetch by ID. |
 | `listFundedAccounts(prisma, input)` | List with filters (traderId, status, evaluationId). |
 
+Funded-account inventory linking and reactivation must match both the account size and denomination currency in the immutable purchased-product snapshot. Evaluation activation applies the same size-and-currency match. If the snapshot identity or currency is missing or inconsistent, the operation fails closed for manual review; it does not substitute a same-sized account in another currency.
+
 ### Lifecycle States and Valid Transitions
 
 ```
@@ -58,10 +60,10 @@ SUSPENDED → TERMINATED
 | PENDING | Account created, awaiting eligibility verification | `createFundedAccount()` |
 | ELIGIBLE | Evaluation meets eligibility criteria | Admin approval |
 | APPROVED | Admin approved, awaiting MT5 account assignment | `approveFundedAccount()` |
-| ACTIVE | Funded and operational | `linkAccount()` or direct transition |
-| SUSPENDED | Suspended with documented reason | `transitionFundedAccountStatus()` with reason |
-| TERMINATED | Terminated with documented reason | `transitionFundedAccountStatus()` with reason |
-| COMPLETED | Challenge completed successfully | `transitionFundedAccountStatus()` |
+| ACTIVE | Funded and operational | `linkAccount()` after atomic MT5 inventory reservation; direct status transitions from APPROVED are rejected; reactivation checks the existing assignment |
+| SUSPENDED | Suspended with documented reason | `transitionFundedAccountStatus()`; the assignment stays reserved so the account cannot be reassigned |
+| TERMINATED | Terminated with documented reason | `transitionFundedAccountStatus()` revokes the assignment and marks its MT5 inventory INACTIVE in the same transaction |
+| COMPLETED | Challenge completed successfully | `transitionFundedAccountStatus()` revokes the assignment and marks its MT5 inventory INACTIVE in the same transaction |
 
 ### API Routes
 

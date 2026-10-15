@@ -1,11 +1,19 @@
-import "../tests/support/test-env";
-import { PrismaClient } from "@prisma/client";
+const CLEANUP_CONFIRMATION = "I_UNDERSTAND_THIS_DELETES_ALL_DATA_IN_THE_TEST_DATABASE";
 
 async function main() {
+  if (process.env.TEST_DATABASE_CLEANUP_CONFIRMATION !== CLEANUP_CONFIRMATION) {
+    throw new Error(
+      "Database cleanup is disabled. Independently verify the disposable test target, then set TEST_DATABASE_CLEANUP_CONFIRMATION."
+    );
+  }
+
+  await import("../tests/support/test-env");
+  const { PrismaClient } = await import("@prisma/client");
   const prisma = new PrismaClient();
+  let currentStep = "connect";
+
   try {
     await prisma.$connect();
-    console.log("Connected\n");
     const steps = [
       { label: "ruleEvaluation.deleteMany", fn: () => prisma.ruleEvaluation.deleteMany({}) },
       { label: "orderItem.deleteMany", fn: () => prisma.orderItem.deleteMany({}) },
@@ -24,19 +32,24 @@ async function main() {
       { label: "trader.deleteMany", fn: () => prisma.trader.deleteMany({}) },
     ];
     for (const step of steps) {
+      currentStep = step.label;
       const count = await step.fn();
       console.log(`${step.label}: ${count.count ?? count} deleted`);
     }
-    console.log("\nDB cleanup complete");
-  } catch (e) {
-    console.error("FAILED:", e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    console.log("Test database cleanup complete.");
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error &&
+      typeof error.code === "string"
+        ? ` (Prisma ${error.code})`
+        : "";
+    throw new Error(`Database cleanup failed during ${currentStep}${code}; error details redacted.`);
   } finally {
     await prisma.$disconnect();
   }
 }
 
-main().catch(async (e) => {
-  console.error("FATAL:", e instanceof Error ? e.message : String(e));
-  process.exit(1);
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : "Database cleanup failed; error details redacted.");
+  process.exitCode = 1;
 });

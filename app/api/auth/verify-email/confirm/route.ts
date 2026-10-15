@@ -3,8 +3,14 @@ import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { hashOtp, isSixDigitOtp } from "@/lib/auth/otp";
 import { sendWelcomeEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
+
+const logger = createLogger({
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
+});
 
 export async function POST(request: NextRequest) {
+  const correlationId = generateCorrelationId();
   try {
     const body = await request.json();
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -67,7 +73,16 @@ export async function POST(request: NextRequest) {
     void sendWelcomeEmail(
       { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
       { isVerified: true },
-    ).catch(() => undefined);
+    ).catch(() => {
+      logger.error("AUTH", "Welcome email dispatch failed after verification", {
+        correlationId,
+        entity: { type: "Trader", id: trader.id },
+        error: {
+          code: "WELCOME_EMAIL_DISPATCH_FAILED",
+          message: "Email delivery did not return a result",
+        },
+      });
+    });
 
     return NextResponse.json({ success: true, message: "Email verified. You can now sign in." }, { status: 200 });
   } catch {

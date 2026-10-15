@@ -45,7 +45,7 @@ The `activateEvaluation` function in `lib/activation.ts` implements the server-s
 2. **Verify ownership**: `order.traderId === performedBy` (server-side check)
 3. **Load order**: Fetch order from DB including status and rulesetVersionId
 4. **Verify eligibility**: Order must be PAID or have confirmed payment reference; not cancelled
-5. **Confirm payment**: If `paymentReference` provided, check via `provider.getPaymentStatus()` (MOCK only). If no reference, check `order.status === "PAID"`.
+5. **Confirm payment**: If `paymentReference` is provided, retrieve the provider record and require COMPLETED status plus exact order ID, amount, and currency matches. If no reference is provided, require `order.status === "PAID"`.
 6. **Do NOT trust browser payment status**: Payment verified server-side only
 7. **Idempotency check**: Look for existing evaluation for same (trader, rulesetVersion)
 8. **Create evaluation**: Within transaction — creates evaluation or reuses existing
@@ -60,9 +60,9 @@ The `activateEvaluation` function in `lib/activation.ts` implements the server-s
 ## Design Decisions
 
 ### Payment Verification
-- **Mock provider only**: `provider.getPaymentStatus()` returns COMPLETED for mock payments
-- **No production payment verification**: Documented limitation — in production, would integrate with Stripe/PayPal server-side verification
-- **No webhook assumptions**: Activation is initiated by trader action, not payment webhook
+- **Mock provider only**: `getPaymentRecord()` returns the payment identity and commercial terms used to bind a completed payment to the order
+- **No production payment verification**: The `/api/orders/[id]/pay` endpoint remains disabled until a real provider, server-side verification, and reconciliation are implemented
+- **No webhook assumptions**: The current application does not receive or verify payment webhooks
 - **Do not activate based on client-provided paymentStatus=PAID**: Server verifies via provider API or order status only
 
 ### Error Handling

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeSnapshot, NormalizeError } from "../../lib/monitoring/normalize";
-import { ProviderSnapshot, ProviderName, ProviderPosition, ProviderOrder, ProviderDeal } from "../../lib/monitoring/types";
+import { ProviderSnapshot, ProviderPosition, ProviderOrder, ProviderDeal } from "../../lib/monitoring/types";
 
 describe("normalizeSnapshot", () => {
   describe("Valid snapshot", () => {
@@ -37,8 +37,8 @@ describe("normalizeSnapshot", () => {
     });
   });
 
-  describe("Missing optional fields", () => {
-    it("handles null accountInfo", () => {
+  describe("Missing account fields", () => {
+    it("fails safely when accountInfo is absent", () => {
       const raw: ProviderSnapshot = {
         accountInfo: null,
         positions: [],
@@ -49,7 +49,7 @@ describe("normalizeSnapshot", () => {
         provider: "MT5",
       };
       const result = normalizeSnapshot("acc-1", "ACCT-001", "MT5", raw);
-      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.success, false);
       assert.strictEqual(result.accountInfo, null);
       assert.strictEqual(result.snapshot?.balance, null);
       assert.ok(result.errors.some((e: NormalizeError) => e.code === "NULL_ACCOUNT_INFO"));
@@ -152,6 +152,23 @@ describe("normalizeSnapshot", () => {
       assert.strictEqual(result.success, true);
       assert.deepStrictEqual(result.snapshot!.positions, []);
       assert.deepStrictEqual(result.snapshot!.orders, []);
+      assert.equal(result.snapshot!.dataQuality?.positionsAvailable, false);
+      assert.equal(result.snapshot!.dataQuality?.ordersAvailable, false);
+    });
+
+    it("does not claim position or order arrays are complete when null entries were omitted", () => {
+      const raw: ProviderSnapshot = {
+        accountInfo: { login: 12345678, balance: 100000 },
+        positions: [null as unknown as ProviderPosition],
+        orders: [null as unknown as ProviderOrder],
+        history: [],
+        terminalInfo: { connected: true },
+        timestamp: new Date(),
+        provider: "MT5",
+      };
+      const result = normalizeSnapshot("acc-1", "ACCT-001", "MT5", raw);
+      assert.equal(result.snapshot?.dataQuality?.positionsAvailable, false);
+      assert.equal(result.snapshot?.dataQuality?.ordersAvailable, false);
     });
   });
 
@@ -169,6 +186,45 @@ describe("normalizeSnapshot", () => {
       };
       const result = normalizeSnapshot("acc-1", "ACCT-001", "MT5", raw);
       assert.deepStrictEqual(result.snapshot!.dataTimestamp, ts);
+    });
+  });
+
+  describe("MT5 pending-order state normalization", () => {
+    it("preserves MT5 terminal, active, and in-flight order states used by the trade-count rule", () => {
+      const raw: ProviderSnapshot = {
+        accountInfo: { login: 12345678, balance: 100000 },
+        positions: [],
+        orders: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((state) => ({ type: state, state })),
+        history: [],
+        terminalInfo: { connected: true },
+        timestamp: new Date("2025-01-06T14:59:00Z"),
+        provider: "MT5",
+      };
+      const result = normalizeSnapshot("acc-1", "ACCT-001", "MT5", raw);
+      assert.deepStrictEqual(result.snapshot?.orders.map((order) => order.state), [
+        "STARTED",
+        "PLACED",
+        "CANCELED",
+        "PARTIAL",
+        "FILLED",
+        "REJECTED",
+        "EXPIRED",
+        "REQUEST_ADD",
+        "REQUEST_MODIFY",
+        "REQUEST_CANCEL",
+      ]);
+      assert.deepStrictEqual(result.snapshot?.orders.map((order) => order.type), [
+        "BUY",
+        "SELL",
+        "BUY_LIMIT",
+        "SELL_LIMIT",
+        "BUY_STOP",
+        "SELL_STOP",
+        "BUY_STOP_LIMIT",
+        "SELL_STOP_LIMIT",
+        "CLOSE_BY",
+        null,
+      ]);
     });
   });
 

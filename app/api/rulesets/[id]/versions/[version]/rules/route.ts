@@ -1,9 +1,25 @@
 import { Prisma } from "@prisma/client";
+import { getRuleCapability } from "@/lib/rule-capabilities";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
 import { validateRuleDraftInput } from "@/lib/product-domain";
+import {
+  approvedPublicProducts,
+  isValidPublicRulesetIdentifier,
+  publicApiFailure,
+  publicApiStatus,
+  publicRulesForVersion,
+  PUBLIC_PRODUCT_SELECT,
+  PUBLIC_PRODUCT_WHERE,
+  safePrismaErrorCode,
+} from "@/lib/public-catalog";
+import type { PublicRulesResponse } from "@/lib/product-experience";
 
+const logger = createLogger({
+  environment: process.env.NODE_ENV as "development" | "production" | "test",
+});
 
 async function getAuthenticatedUser(request: NextRequest) {
   const token = getSessionCookie(request);
@@ -25,31 +41,70 @@ export async function GET(
   { params }: { params: Promise<{ id: string; version: string }> }
 ) {
   const { id, version } = await params;
-  const rulesetVersion = await prisma.rulesetVersion.findFirst({
-    where: { rulesetId: id, version },
-    select: { id: true, status: true },
-  });
-  if (!rulesetVersion) {
+  const correlationId = generateCorrelationId();
+  if (!isValidPublicRulesetIdentifier(id, version)) {
     return NextResponse.json(
-      { success: false, error: "Ruleset version not found" },
-      { status: 404 }
+      publicApiFailure("INVALID_IDENTIFIER", "The requested ruleset identifier is invalid.", correlationId),
+      { status: publicApiStatus("INVALID_IDENTIFIER") },
     );
   }
 
-  if (rulesetVersion.status !== "PUBLISHED") {
-    const trader = await getAuthenticatedUser(request);
-    if (!trader || trader.role !== "ADMIN") {
-      return NextResponse.json({ success: false, error: "Ruleset version not found" }, { status: 404 });
+  try {
+    const records = await prisma.product.findMany({
+      where: PUBLIC_PRODUCT_WHERE,
+      select: PUBLIC_PRODUCT_SELECT,
+      orderBy: [{ displayOrder: "asc" }, { id: "asc" }],
+    });
+    const publicRules = publicRulesForVersion(approvedPublicProducts(records), id, version);
+    if (publicRules) {
+      const response: PublicRulesResponse = { success: true, rules: publicRules };
+      return NextResponse.json(response, { status: 200 });
     }
+
+    const trader = await getAuthenticatedUser(request);
+    if (trader?.role !== "ADMIN") {
+      return NextResponse.json(
+        publicApiFailure("NOT_FOUND", "Published rules for this plan were not found.", correlationId),
+        { status: publicApiStatus("NOT_FOUND") },
+      );
+    }
+    const rulesetVersion = await prisma.rulesetVersion.findFirst({
+      where: { rulesetId: id, version },
+      select: { id: true },
+    });
+    if (!rulesetVersion) {
+      return NextResponse.json(
+        publicApiFailure("NOT_FOUND", "Ruleset version was not found.", correlationId),
+        { status: publicApiStatus("NOT_FOUND") },
+      );
+    }
+    const draftRules = await prisma.rule.findMany({
+      where: { rulesetVersionId: rulesetVersion.id },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, name: true, ruleType: true, value: true, isRequired: true, disposition: true, calculation: true },
+    });
+    const rules = draftRules.map((rule) => {
+      const capability = getRuleCapability(rule.ruleType);
+      return {
+        ...rule,
+        enforcement: {
+          status: capability?.status ?? "UNSUPPORTED" as const,
+          details: capability?.reason ?? "No evaluator capability is registered for this rule type.",
+        },
+      };
+    });
+    const response: PublicRulesResponse = { success: true, rules };
+    return NextResponse.json(response, { status: 200 });
+  } catch (error) {
+    logger.error("RULESET", "Published rules retrieval failed", {
+      correlationId,
+      error: { code: safePrismaErrorCode(error), message: "Unable to query or serialize approved product rules" },
+    });
+    return NextResponse.json(
+      publicApiFailure("SERVICE_UNAVAILABLE", "Published plan rules are temporarily unavailable. Please try again.", correlationId),
+      { status: publicApiStatus("SERVICE_UNAVAILABLE") },
+    );
   }
-
-  const rules = await prisma.rule.findMany({
-    where: { rulesetVersionId: rulesetVersion.id },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, name: true, ruleType: true, value: true, isRequired: true, disposition: true, calculation: true, effectiveDate: true },
-  });
-
-  return NextResponse.json({ success: true, rules }, { status: 200 });
 }
 
 export async function POST(

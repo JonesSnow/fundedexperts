@@ -1,4 +1,4 @@
-import { PrismaClient, MT5Account, AccountAssignment, Evaluation, AuditAction } from "@prisma/client";
+import { PrismaClient, AuditAction } from "@prisma/client";
 
 export interface Inconsistency {
   type: "IN_USE_WITHOUT_ASSIGNMENT" | "AVAILABLE_WITH_ASSIGNMENT" | "EVAL_LINKED_TO_WRONG_ACCOUNT" | "EVAL_LINKED_TO_UNOWNED_ACCOUNT" | "MULTIPLE_ACTIVE_ASSIGNMENTS";
@@ -73,11 +73,34 @@ export async function reconcile(prisma: PrismaClient, performedBy: string): Prom
       inconsistencies.push(inconsistency);
 
       try {
-        await prisma.$transaction(async (tx) => {
-          await tx.mT5Account.update({
+        const repair = await prisma.$transaction(async (tx) => {
+          const locked = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "MT5Account" WHERE "id" = ${account.id} FOR UPDATE
+          `;
+          if (locked.length === 0) return { repaired: false, reason: "Account no longer exists" };
+
+          const current = await tx.mT5Account.findUnique({
             where: { id: account.id },
+            select: { status: true },
+          });
+          if (!current || current.status !== "AVAILABLE") {
+            return { repaired: false, reason: "Account state changed; repair skipped" };
+          }
+
+          const activeAssignments = await tx.accountAssignment.findMany({
+            where: { accountId: account.id, status: "ASSIGNED" },
+            select: { id: true },
+          });
+          if (activeAssignments.length === 0) {
+            return { repaired: false, reason: "Active assignment no longer exists; repair skipped" };
+          }
+
+          const updated = await tx.mT5Account.updateMany({
+            where: { id: account.id, status: "AVAILABLE" },
             data: { status: "IN_USE", updatedAt: new Date() },
           });
+          if (updated.count !== 1) return { repaired: false, reason: "Account state changed; repair skipped" };
+
           await tx.auditLog.create({
             data: {
               action: AuditAction.RECONCILIATION_REPAIRED,
@@ -91,13 +114,21 @@ export async function reconcile(prisma: PrismaClient, performedBy: string): Prom
               },
             },
           });
+          return { repaired: true as const };
         });
-        repairs.push({
-          inconsistencyId: account.id,
-          repaired: true,
-          action: AuditAction.RECONCILIATION_REPAIRED,
-          details: { previousStatus: "AVAILABLE", newStatus: "IN_USE" },
-        });
+        repairs.push(repair.repaired
+          ? {
+              inconsistencyId: account.id,
+              repaired: true,
+              action: AuditAction.RECONCILIATION_REPAIRED,
+              details: { previousStatus: "AVAILABLE", newStatus: "IN_USE" },
+            }
+          : {
+              inconsistencyId: account.id,
+              repaired: false,
+              action: AuditAction.RECONCILIATION_SKIPPED,
+              details: { ...inconsistency.details, reason: repair.reason },
+            });
       } catch (e) {
         repairs.push({
           inconsistencyId: account.id,

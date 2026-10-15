@@ -108,8 +108,7 @@ export default function Header({ currentPath }: HeaderProps) {
         <Brand />
 
         <nav aria-label="Primary navigation" className="hidden items-center gap-1 lg:flex">
-          <NavLink href="/catalog" currentPath={currentPath}>Accounts</NavLink>
-          <NavLink href="/pricing" currentPath={currentPath}>Pricing</NavLink>
+          <NavLink href="/catalog" currentPath={currentPath}>Plans</NavLink>
           <NavLink href="/rules" currentPath={currentPath}>Rules</NavLink>
           <NavLink href="/how-it-works" currentPath={currentPath}>How it works</NavLink>
           <NavLink href="/faq" currentPath={currentPath}>FAQ</NavLink>
@@ -118,7 +117,7 @@ export default function Header({ currentPath }: HeaderProps) {
         </nav>
 
         <div className="hidden items-center gap-3 lg:flex">
-          <ButtonLink href="/catalog" size="sm">View Plans</ButtonLink>
+          <ButtonLink href="/catalog#configured-products" size="sm">Compare Plans</ButtonLink>
           {loading ? (
             <span className="h-9 w-36 animate-pulse rounded-lg bg-muted" aria-hidden="true" />
           ) : trader ? (
@@ -219,8 +218,7 @@ export default function Header({ currentPath }: HeaderProps) {
         <div id="mobile-navigation" ref={mobileNavRef} className="border-t border-border bg-background px-5 pb-6 pt-4 sm:px-8 lg:hidden">
           <nav aria-label="Mobile navigation" className="mx-auto flex max-w-7xl flex-col gap-1">
             <NavLink href="/" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Home</NavLink>
-            <NavLink href="/catalog" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Accounts</NavLink>
-            <NavLink href="/pricing" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Pricing</NavLink>
+            <NavLink href="/catalog" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Plans</NavLink>
             <NavLink href="/rules" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Trading rules</NavLink>
             <NavLink href="/how-it-works" currentPath={currentPath} onClick={() => setMobileOpen(false)}>How it works</NavLink>
             <NavLink href="/faq" currentPath={currentPath} onClick={() => setMobileOpen(false)}>FAQ</NavLink>
@@ -239,7 +237,7 @@ export default function Header({ currentPath }: HeaderProps) {
           </nav>
           <div className="mx-auto mt-4 max-w-7xl border-t border-border pt-4">
             {logoutError && <p className="mb-3 text-sm text-danger" role="alert">{logoutError}</p>}
-            <ButtonLink href="/catalog" fullWidth onClick={() => setMobileOpen(false)}>View Plans</ButtonLink>
+            <ButtonLink href="/catalog#configured-products" fullWidth onClick={() => setMobileOpen(false)}>Explore plans</ButtonLink>
             {loading ? (
               <span className="block h-10 w-full animate-pulse rounded-lg bg-muted" aria-hidden="true" />
             ) : trader ? (

@@ -133,10 +133,18 @@ export default function SettingsPage() {
           <Card>
             <CardHeader><CardTitle>Profile details</CardTitle><p className="mt-1 text-sm text-muted-foreground">Your email address is used for account access and cannot be changed here.</p></CardHeader>
             <CardContent>
-              <div className="mb-5 grid gap-3 rounded-xl bg-muted/60 p-4 sm:grid-cols-2">
-                <Info label="Account email" value={user.email} />
-                <Info label="Account status" value={<StatusBadge status={user.status} size="sm" />} />
-                <Info label="Email verification" value={<Badge variant={user.emailVerified ? "success" : "warning"}>{user.emailVerified ? "Verified" : "Not verified"}</Badge>} />
+              <div className="mb-5 flex flex-col gap-4 rounded-xl border border-border bg-muted/40 p-4 sm:flex-row sm:items-center">
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-primary/10 text-base font-bold text-primary" aria-hidden="true">
+                  {[firstName[0], lastName[0]].filter(Boolean).join("").toUpperCase() || user.email[0]?.toUpperCase() || "?"}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold text-foreground">{[firstName, lastName].filter(Boolean).join(" ") || "Profile name not set"}</p>
+                  <p className="mt-0.5 break-all text-sm text-muted-foreground">{user.email}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  <StatusBadge status={user.status} size="sm" />
+                  <Badge variant={user.emailVerified ? "success" : "warning"}>{user.emailVerified ? "Email verified" : "Email not verified"}</Badge>
+                </div>
               </div>
               {!user.emailVerified && <p className="mb-5 text-sm text-muted-foreground">Verify your email to complete account setup. <Link href="/verify-email-pending" className="font-semibold text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Open verification options</Link></p>}
               <form onSubmit={saveProfile} className="space-y-4">
@@ -168,8 +176,4 @@ export default function SettingsPage() {
 
 function Field({ id, label, value, onChange, maxLength, autoComplete }: { id: string; label: string; value: string; onChange: (value: string) => void; maxLength: number; autoComplete: string }) {
   return <label htmlFor={id} className="block text-sm font-medium text-foreground">{label}<input id={id} value={value} onChange={(event) => onChange(event.target.value)} maxLength={maxLength} autoComplete={autoComplete} className="mt-1.5 min-h-11 w-full rounded-lg border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>;
-}
-
-function Info({ label, value }: { label: string; value: React.ReactNode }) {
-  return <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">{label}</p><div className="mt-1 break-words text-sm font-semibold text-foreground">{value}</div></div>;
 }

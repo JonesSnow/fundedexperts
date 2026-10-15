@@ -1,4 +1,4 @@
-import { buildProductOrderSnapshot, validateProductForPublication, type ProductConfiguration, type ProductRuleType } from "./product-domain";
+import { buildProductOrderSnapshot, validateProductForPublication, type ProductConfiguration } from "./product-domain";
 
 export type PurchasableProduct = ProductConfiguration & { isActive: boolean };
 
@@ -7,10 +7,10 @@ export type OrderTermsResult =
   | { valid: false; errors: string[] };
 
 /** Resolves all commercial terms from the server-side catalog record. */
-export function resolveOrderTerms(product: PurchasableProduct, capturedAt: Date = new Date(), evaluatorVerifiedRuleTypes: readonly ProductRuleType[] = []): OrderTermsResult {
+export function resolveOrderTerms(product: PurchasableProduct, capturedAt: Date = new Date()): OrderTermsResult {
   const errors: string[] = [];
   if (product.status !== "ACTIVE" || !product.isActive) errors.push("Product is not active.");
-  errors.push(...validateProductForPublication(product, evaluatorVerifiedRuleTypes));
+  errors.push(...validateProductForPublication(product));
   const price = typeof product.price === "string" ? product.price : product.price !== null && product.price !== undefined && typeof product.price === "object" && "toString" in product.price
     ? String(product.price)
     : typeof product.price === "number" ? String(product.price) : "";

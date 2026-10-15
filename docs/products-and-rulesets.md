@@ -1,10 +1,10 @@
 # Products and Rulesets
 
-**Last Updated:** 2026-09-20
+**Last Updated:** 2026-10-14
 
 ## Product Catalog
 
-Products represent funded account packages offered to traders.
+Products represent configured simulated evaluation offers. A record or category label is not an offer: only active products that pass publication validation and have published, active stage rules can appear in the public catalog.
 
 ### Product Fields
 
@@ -23,16 +23,16 @@ Products represent funded account packages offered to traders.
 | `createdAt` | DateTime | Auto | Creation timestamp |
 | `updatedAt` | DateTime | Auto | Update timestamp |
 
-### Products
+### Product category concepts
 
-| Name | Type |
+| Category | Meaning |
 |---|---|
-| Beginner | Entry-level challenge |
-| Pro | Intermediate challenge |
-| Experts | Advanced challenge |
-| Direct Funded | Direct funded account |
+| Beginner | Category label; not evidence of an active offer |
+| Pro | Category label; not evidence of an active offer |
+| Expert | Category label; not evidence of an active offer |
+| Direct Funded | Category label; fulfillment is unavailable until implemented |
 
-**Note:** Product entries are created and managed through the admin panel. The catalog page displays active products.
+Only validated, active product records are offers. Product briefs and category labels do not create offers, prices, account sizes, or purchase availability.
 
 ## Ruleset Management
 
@@ -122,6 +122,20 @@ Rules are individual criteria within a ruleset version.
 | Add rule | ADMIN | `POST /api/rulesets/[id]/versions/[version]/rules` |
 
 **All admin operations check both JWT session validity and ADMIN role server-side.**
+
+## Public catalog API contract
+
+Public reads require no session and expose only validated active products and published rules attached to those products. Inactive products, unsupported direct-funded offers, draft or archived versions, and unrelated rulesets are excluded.
+
+| Endpoint | Success response | Empty result | Failure status |
+|---|---|---|---|
+| `GET /api/products` | `{ "success": true, "products": [...] }` | HTTP 200 with `products: []` | HTTP 429 when rate limited; HTTP 503 when catalog data cannot be read or safely serialized |
+| `GET /api/rulesets` | `{ "success": true, "rulesets": [...] }` | HTTP 200 with `rulesets: []` | HTTP 503 when approved product rules cannot be read or safely serialized |
+| `GET /api/rulesets/{id}/versions/{version}/rules` | `{ "success": true, "rules": [...] }` | HTTP 200 with `rules: []` for an attached published version | HTTP 400 for malformed identifiers, HTTP 404 for a version not attached to a public offer, HTTP 503 when published rules cannot be read |
+
+Failure bodies use `{ "success": false, "code": "...", "error": "...", "correlationId": "..." }`. Server logs record the correlation ID and a sanitized database/query failure category; raw exception messages, connection strings, and credentials are not returned to callers. Product prices and account sizes are decimal strings to avoid floating-point rounding.
+
+`/catalog` is the canonical plan-discovery route. `/pricing` redirects to `/catalog#configured-products` for existing links.
 
 ## Security Notes
 

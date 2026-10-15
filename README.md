@@ -19,29 +19,28 @@ A simulated prop-firm platform for evaluating traders and managing funded accoun
 
 ### Prerequisites
 
-- Node.js 20+
-- pnpm 8+
-- PostgreSQL 15+ (or use Docker)
+- Node.js 24 (CI-pinned)
+- pnpm 12.5.1 (CI-pinned)
+- PostgreSQL 16+ for database-backed local development and testing
 
 ### Installation
 
 ```bash
-# Install dependencies
+# Install the locked dependencies
 pnpm install
 
-# Copy environment
-cp .env.example .env.local
-
-# Only after DATABASE_URL is verified as a local development database:
-pnpm exec prisma migrate dev --name init
-
-# Start development server
+# Configure ignored .env.local for a verified local development database.
+# See docs/test-environment.md for PostgreSQL provisioning and safe test setup.
 pnpm dev
 ```
 
-Do not point local development or test commands at a shared or production database. Before running a migration, verify the target independently and use a local disposable development database. Database-backed tests require a separately identified disposable test database; the test URL must not be copied from `.env.local`.
-
-This repository does not include a Docker Compose configuration. Use a separately verified local development database if you need database-backed features.
+Do not point local development or test commands at a shared or production
+database. Prisma CLI does not automatically load `.env.local`; supply the
+independently verified local development target explicitly before running a
+development migration. Database-backed tests require the separate disposable
+test target and guarded commands documented in
+[docs/test-environment.md](./docs/test-environment.md). This repository does
+not include a Docker Compose configuration.
 
 ## Available Scripts
 
@@ -52,15 +51,19 @@ This repository does not include a Docker Compose configuration. Use a separatel
 | Start production | `pnpm start` |
 | Lint | `pnpm lint` |
 | Type check | `pnpm exec tsc --noEmit --incremental false` |
-| Safe database-guard tests | `pnpm test:safety` |
-| Database-free OTP/email helper tests | `pnpm exec tsx tests/auth-otp.unit.test.ts` |
-| Prisma migrate (verified local development target only) | `pnpm exec prisma migrate dev` |
-| Prisma generate | `cd prisma && npx prisma generate` |
-| Prisma studio | `cd prisma && npx prisma studio` |
+| Database-free unit tests | `pnpm test:unit` |
+| Database safety tests | `pnpm test:safety` |
+| Guarded disposable-test migration | `pnpm db:test:migrate` |
+| Guarded database integration tests | `pnpm test:db` |
+| Guarded test schema comparison | `pnpm db:test:diff` |
+| Destructive test-only cleanup | `pnpm db:test:cleanup` |
+| Prisma Client generation | `pnpm prisma:generate` |
 
-**Note:** Full `tsc --noEmit` and `next build` may exceed memory limits in constrained environments. Run type checks on individual files via IDE or use `npx tsc --noEmit` on specific directories.
-
-**Database safety:** Database-backed tests require a dedicated `TEST_DATABASE_URL` or `PHASE33_DATABASE_URL` that passes the safety guard. The guard does not prove that a database is disposable; a product owner/operator must verify ownership and reset policy first. The test bootstrap does not select `.env.local` as a test target and does not fall back to `DATABASE_URL`. Some legacy database suites and utilities still perform broad table cleanup; do not run them until the target is explicitly verified as disposable. Never use `pnpm test` as a database-safety check.
+`pnpm test` and `pnpm test:unit` run database-free suites only. The guard does
+not prove that a database is disposable; an authorized operator must verify
+ownership and reset policy before setting the explicit test confirmations.
+The legacy reset scripts are disabled. Cleanup is separately gated and is
+never invoked by unit tests or CI.
 
 ## Project Structure
 

@@ -4,8 +4,9 @@
  * Import this before application modules or Prisma clients in every
  * database-capable test and database utility. It validates a dedicated test
  * URL before setting DATABASE_URL, then redirects Prisma to that verified URL.
- * .env.local may supply non-database secrets; its database URLs are kept only
- * as comparison references and never become the test connection target.
+ * The operator must explicitly attest that the target is a disposable local
+ * test database. .env.local is only used as a comparison reference and source
+ * for non-database settings.
  */
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
@@ -50,7 +51,6 @@ const verification = withVerifiedTestDatabase(
   process.env as NodeJS.ProcessEnv,
   ({ resolved, report }) => ({ resolved, report }),
   {
-    allowedHosts: process.env.PHASE33_TEST_DB_HOST_ALLOWLIST,
     productionDatabaseUrls: [localFileEnv.DATABASE_URL, localFileEnv.DIRECT_URL]
       .filter((value): value is string => Boolean(value?.trim())),
   }

@@ -1,12 +1,9 @@
-import { FundedAccountStatus, AuditAction } from "@prisma/client";
+import { FundedAccountStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-import {
-  createFundedAccount,
-  approveFundedAccount,
-  listFundedAccounts,
-} from "@/lib/funded-account";
+import { createFundedAccount } from "@/lib/funded-account";
+import { getEvaluationDenominationCurrency } from "@/lib/funded-account-link-policy";
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -34,10 +31,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { search, status, evaluationId } = Object.fromEntries(
+    const { status, evaluationId } = Object.fromEntries(
       request.nextUrl.searchParams,
     ) as {
-      search?: string;
       status?: string;
       evaluationId?: string;
     };
@@ -53,15 +49,39 @@ export async function GET(request: NextRequest) {
       where.evaluationId = evaluationId;
     }
 
-    const accounts = await prisma.fundedAccount.findMany({
+    const accountRecords = await prisma.fundedAccount.findMany({
       where,
       orderBy: { createdAt: "desc" },
       take: 100,
       include: {
-        evaluation: { select: { id: true, status: true, traderId: true } },
+        evaluation: {
+          select: {
+            id: true,
+            productId: true,
+            status: true,
+            traderId: true,
+            startingBalance: true,
+            order: { select: { orderItems: { select: { productId: true, productSnapshot: true } } } },
+          },
+        },
         rulesetVersion: { select: { id: true, version: true } },
-        account: { select: { id: true, accountNumber: true, status: true } },
+        account: { select: { id: true, accountNumber: true, status: true, accountSize: true, currency: true, purpose: true } },
       },
+    });
+    const accounts = accountRecords.map((account) => {
+      const evaluation = account.evaluation;
+      return {
+        ...account,
+        evaluation: evaluation
+          ? {
+              id: evaluation.id,
+              status: evaluation.status,
+              traderId: evaluation.traderId,
+              startingBalance: evaluation.startingBalance,
+              denominationCurrency: getEvaluationDenominationCurrency(evaluation.order?.orderItems, evaluation.productId),
+            }
+          : null,
+      };
     });
 
     return NextResponse.json(

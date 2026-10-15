@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, RefreshCw, ShieldCheck } from "lucide-react";
 import TraderPageShell from "@/components/trader-page-shell";
 import TraderLoadError from "@/components/trader-load-error";
+import TraderStatusOverview from "@/components/trader-status-overview";
 import { Badge, ButtonLink, Card, EmptyState, LoadingState, StatusBadge } from "@/components/ui";
 import { formatAmount, formatDate } from "@/components/trader-format";
 
@@ -76,6 +77,16 @@ export default function EvaluationsPage() {
       description="See recorded stages, objective checks, and the latest available evaluation outcomes."
       actions={<><ButtonLink href="/accounts" variant="outline">Trading accounts</ButtonLink><ButtonLink href="/dashboard" variant="outline">Dashboard</ButtonLink></>}
     >
+      <TraderStatusOverview
+        title="Evaluation status"
+        total={evaluations.length}
+        statuses={statuses.map((status) => ({
+          status,
+          count: evaluations.filter((evaluation) => evaluation.status === status).length,
+        }))}
+        loading={loading}
+        unavailable={Boolean(error)}
+      />
       <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground" aria-live="polite">{loading ? "Loading evaluations…" : `${visibleEvaluations.length} ${visibleEvaluations.length === 1 ? "evaluation" : "evaluations"}`}</p>
         <div className="flex flex-wrap items-end gap-3">

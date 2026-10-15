@@ -115,12 +115,30 @@ export default function AccountDetailPage() {
           </Card>
           <div className="space-y-6">
             <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5 text-primary" aria-hidden="true" />Account timeline</CardTitle></CardHeader>
-              <CardContent className="space-y-3">
-                <Detail label="Created" value={formatDate(account.createdAt)} />
-                <Detail label="Allocated" value={formatDate(account.allocatedAt)} />
-                <Detail label="Activated" value={formatDate(account.activatedAt)} />
-                <Detail label="Closed" value={formatDate(account.closedAt)} />
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5 text-primary" aria-hidden="true" />Account timeline</CardTitle>
+                <p className="text-sm text-muted-foreground">Milestones recorded for this account.</p>
+              </CardHeader>
+              <CardContent>
+                <ol className="space-y-0">
+                  {[
+                    { label: "Created", date: account.createdAt },
+                    { label: "Allocated", date: account.allocatedAt },
+                    { label: "Activated", date: account.activatedAt },
+                    { label: "Closed", date: account.closedAt },
+                  ].map((milestone, index, milestones) => (
+                    <li key={milestone.label} className="relative flex gap-3 pb-5 last:pb-0">
+                      {index < milestones.length - 1 && <span className="absolute left-[0.4375rem] top-3 h-full w-px bg-border" aria-hidden="true" />}
+                      <span className={`relative mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ring-4 ring-card ${milestone.date ? "bg-primary" : "bg-muted-foreground/40"}`} aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                          <p className="text-sm font-medium text-foreground">{milestone.label}</p>
+                          <p className={`text-xs ${milestone.date ? "text-muted-foreground" : "text-muted-foreground/75"}`}>{milestone.date ? formatDate(milestone.date) : "Not recorded"}</p>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
               </CardContent>
             </Card>
             <Card>

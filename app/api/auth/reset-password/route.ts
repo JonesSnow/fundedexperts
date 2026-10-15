@@ -5,8 +5,14 @@ import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { hashOtp } from "@/lib/auth/otp";
 import { sendPasswordChangedEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
+
+const logger = createLogger({
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
+});
 
 export async function POST(request: NextRequest) {
+  const correlationId = generateCorrelationId();
   try {
     const body = await request.json();
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -65,7 +71,16 @@ export async function POST(request: NextRequest) {
     void sendPasswordChangedEmail(
       { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
       { changedByAdmin: false },
-    ).catch(() => undefined);
+    ).catch(() => {
+      logger.error("AUTH", "Password changed email dispatch failed", {
+        correlationId,
+        entity: { type: "Trader", id: trader.id },
+        error: {
+          code: "PASSWORD_CHANGED_EMAIL_DISPATCH_FAILED",
+          message: "Email delivery did not return a result",
+        },
+      });
+    });
 
     return NextResponse.json({ success: true, message: "Password has been reset. Sign in with your new password." }, { status: 200 });
   } catch {

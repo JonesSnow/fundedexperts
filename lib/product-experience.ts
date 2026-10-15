@@ -76,6 +76,10 @@ export interface ConfiguredRule {
   isRequired: boolean;
   disposition: string;
   calculation: unknown;
+  enforcement: {
+    status: "SUPPORTED" | "LIMITED" | "UNSUPPORTED";
+    details: string;
+  };
 }
 
 export interface PublicRuleset {
@@ -85,11 +89,143 @@ export interface PublicRuleset {
   versions: Array<{ id: string; version: string; status: string }>;
 }
 
+export type PublicApiFailureCode =
+  | "INVALID_IDENTIFIER"
+  | "NOT_FOUND"
+  | "RATE_LIMITED"
+  | "SERVICE_UNAVAILABLE";
+
+export interface PublicApiFailure {
+  success: false;
+  code: PublicApiFailureCode;
+  error: string;
+  correlationId: string;
+}
+
+export interface PublicProductsResponse {
+  success: true;
+  products: CatalogProduct[];
+}
+
+export interface PublicRulesetsResponse {
+  success: true;
+  rulesets: PublicRuleset[];
+}
+
+export interface PublicRulesResponse {
+  success: true;
+  rules: ConfiguredRule[];
+}
+
 export interface ProductRules {
   productId: string;
   stages: ConfiguredProductStage[];
   operatingRulesetVersion: ConfiguredProductStage["rulesetVersion"] | null;
   unavailable: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNullableText(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isPositiveAmount(value: unknown): value is string | number {
+  return (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) > 0)
+    || (typeof value === "number" && Number.isFinite(value) && value > 0);
+}
+
+function isConfiguredRule(value: unknown): value is ConfiguredRule {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.name === "string"
+    && typeof value.ruleType === "string"
+    && typeof value.isRequired === "boolean"
+    && (value.disposition === "REQUIRED" || value.disposition === "OPTIONAL" || value.disposition === "UNRESOLVED")
+    && value.isRequired === (value.disposition === "REQUIRED")
+    && "value" in value
+    && "calculation" in value
+    && isRecord(value.enforcement)
+    && (value.enforcement.status === "SUPPORTED" || value.enforcement.status === "LIMITED" || value.enforcement.status === "UNSUPPORTED")
+    && typeof value.enforcement.details === "string"
+    && value.enforcement.details.trim() !== "";
+}
+
+function isPublishedRulesetVersion(value: unknown): value is ConfiguredProductStage["rulesetVersion"] {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.version === "string"
+    && value.status === "PUBLISHED"
+    && isRecord(value.ruleset)
+    && typeof value.ruleset.id === "string"
+    && typeof value.ruleset.name === "string"
+    && Array.isArray(value.rules)
+    && value.rules.every(isConfiguredRule);
+}
+
+function isConfiguredProductStage(value: unknown): value is ConfiguredProductStage {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.stageKey === "string"
+    && typeof value.displayName === "string"
+    && typeof value.stageOrder === "number"
+    && Number.isFinite(value.stageOrder)
+    && isPublishedRulesetVersion(value.rulesetVersion);
+}
+
+function hasPublishableRuleDisclosures(rules: ConfiguredRule[]): boolean {
+  return rules.every((rule) => {
+    if (rule.disposition === "UNRESOLVED") return false;
+    if (rule.disposition === "OPTIONAL") {
+      return !rule.isRequired && (rule.value === null || rule.value === undefined)
+        && (rule.calculation === null || rule.calculation === undefined);
+    }
+    return rule.disposition === "REQUIRED"
+      && rule.isRequired
+      && rule.enforcement.status !== "UNSUPPORTED";
+  });
+}
+
+function isCatalogProduct(value: unknown): value is CatalogProduct {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.code === "string"
+    && typeof value.name === "string"
+    && isNullableText(value.description)
+    && typeof value.category === "string"
+    && typeof value.evaluationStructure === "string"
+    && value.status === "ACTIVE"
+    && isPositiveAmount(value.accountSize)
+    && typeof value.denominationCurrency === "string"
+    && value.denominationCurrency.trim() !== ""
+    && isPositiveAmount(value.price)
+    && typeof value.currency === "string"
+    && value.currency.trim() !== ""
+    && value.category !== "DIRECT_FUNDED"
+    && value.evaluationStructure !== "DIRECT_FUNDED"
+    && (value.ruleset === null || (isRecord(value.ruleset) && typeof value.ruleset.name === "string"))
+    && Array.isArray(value.stages)
+    && value.stages.every((stage) => isConfiguredProductStage(stage) && hasPublishableRuleDisclosures(stage.rulesetVersion.rules))
+    && (value.operatingRulesetVersion === null || (isPublishedRulesetVersion(value.operatingRulesetVersion) && hasPublishableRuleDisclosures(value.operatingRulesetVersion.rules)))
+    && value.isActive === true
+    && typeof value.displayOrder === "number"
+    && Number.isFinite(value.displayOrder);
+}
+
+export function isPublicProductsResponse(value: unknown): value is PublicProductsResponse {
+  return isRecord(value)
+    && value.success === true
+    && Array.isArray(value.products)
+    && value.products.every(isCatalogProduct);
+}
+
+export function isPublicRulesResponse(value: unknown): value is PublicRulesResponse {
+  return isRecord(value)
+    && value.success === true
+    && Array.isArray(value.rules)
+    && value.rules.every(isConfiguredRule);
 }
 
 export function pathwayIdForCategory(category: string | null): AccountPathwayId | "other" {

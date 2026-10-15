@@ -121,7 +121,22 @@ export default function OrderDetailPage() {
           <div className="space-y-6">
             <Card>
               <CardHeader><CardTitle>Order total</CardTitle></CardHeader>
-              <CardContent className="space-y-3"><Detail label="Subtotal" value={formatAmount(order.subtotal, order.currency) ?? "Unavailable"} /><Detail label="Tax" value={formatAmount(order.taxAmount, order.currency) ?? "Unavailable"} /><div className="border-t border-border pt-3"><Detail label="Total recorded" value={formatAmount(order.totalAmount, order.currency) ?? "Unavailable"} /></div></CardContent>
+              <CardContent>
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total recorded</p>
+                  <p className="mt-1 break-words text-2xl font-semibold tracking-tight text-foreground">{formatAmount(order.totalAmount, order.currency) ?? "Unavailable"}</p>
+                </div>
+                <dl className="mt-4 divide-y divide-border">
+                  <div className="flex items-center justify-between gap-3 py-3 first:pt-0">
+                    <dt className="text-sm text-muted-foreground">Subtotal</dt>
+                    <dd className="text-sm font-medium text-foreground">{formatAmount(order.subtotal, order.currency) ?? "Unavailable"}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
+                    <dt className="text-sm text-muted-foreground">Tax</dt>
+                    <dd className="text-sm font-medium text-foreground">{formatAmount(order.taxAmount, order.currency) ?? "Unavailable"}</dd>
+                  </div>
+                </dl>
+              </CardContent>
             </Card>
             <Card>
               <CardHeader><CardTitle>Payment and activity</CardTitle></CardHeader>

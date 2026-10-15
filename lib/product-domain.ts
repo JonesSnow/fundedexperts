@@ -1,5 +1,7 @@
 /** Pure product and ruleset validation shared by server routes and isolated tests. */
 
+import { allowedCalculationForRule, getRuleCapability } from "./rule-capabilities";
+
 export const PRODUCT_CATEGORIES = ["BEGINNER", "PRO", "EXPERT", "DIRECT_FUNDED"] as const;
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
 
@@ -42,6 +44,8 @@ export interface ProductRuleConfiguration {
   name: string;
   ruleType: string;
   disposition: string;
+  /** Legacy runtime flag must agree with the explicit disposition when supplied. */
+  isRequired?: boolean;
   value: unknown;
   calculation: unknown;
 }
@@ -240,6 +244,7 @@ function validateRuleValue(ruleType: ProductRuleType, value: unknown): string | 
     case "PROFIT_TARGET":
       return finitePositive(value.target) ? null : "Profit target must be a positive number.";
     case "DRAWDOWN_LIMIT":
+      if (finitePositive(value.maxDrawdown) && finitePositive(value.maxDrawdownPercent)) return "Drawdown must use either maxDrawdown or maxDrawdownPercent, not both.";
       return finitePositive(value.maxDrawdown) || finitePositive(value.maxDrawdownPercent)
         ? null
         : "Drawdown requires a positive maxDrawdown or maxDrawdownPercent.";
@@ -303,33 +308,7 @@ export function validateCalculationDefinition(ruleType: ProductRuleType, value: 
     if (value.method !== "NET_PNL_COMPONENTS") errors.push("Daily loss calculation method is unsupported.");
     if (!finitePositive(value.maxSnapshotAgeMs)) errors.push("Daily loss calculation requires an explicit positive data freshness limit in milliseconds.");
   }
-  if (ruleType === "DRAWDOWN_LIMIT") {
-    if (value.method !== "STATIC_STARTING_EQUITY" && value.method !== "TRAILING_PEAK_EQUITY") errors.push("Drawdown calculation must select a supported static or trailing equity model.");
-    if (!finitePositive(value.maxSnapshotAgeMs)) errors.push("Drawdown calculation requires an explicit positive data freshness limit in milliseconds.");
-    if (value.breachComparison !== "STRICTLY_GREATER_THAN" && value.breachComparison !== "GREATER_THAN_OR_EQUAL") errors.push("Drawdown calculation requires an explicit supported breach comparison.");
-  }
-  const expectedMethods: Partial<Record<ProductRuleType, string>> = {
-    PROFIT_TARGET: "REALIZED_PLUS_FLOATING_PNL",
-    MIN_TRADES: "COUNT_DISTINCT_COMPLETED_TRADES",
-    MIN_TRADING_DAYS: "COUNT_DISTINCT_COMPLETED_TRADE_DATES",
-    MAX_OPEN_TRADES: "COUNT_OPEN_POSITIONS_AND_PENDING_ORDERS",
-    MAX_LEVERAGE: "SNAPSHOT_ACCOUNT_LEVERAGE",
-    TRADING_HOURS: "EVENT_WITHIN_WEEKLY_WINDOW",
-    TRADING_SESSION: "ALLOWED_SYMBOLS",
-  };
-  const expectedComparisons: Partial<Record<ProductRuleType, string[]>> = {
-    PROFIT_TARGET: ["GREATER_THAN_OR_EQUAL"],
-    MIN_TRADES: ["GREATER_THAN_OR_EQUAL"],
-    MIN_TRADING_DAYS: ["GREATER_THAN_OR_EQUAL"],
-    MAX_OPEN_TRADES: ["GREATER_THAN"],
-    MAX_LEVERAGE: ["GREATER_THAN"],
-    TRADING_HOURS: ["OUTSIDE_CONFIGURED_POLICY"],
-    TRADING_SESSION: ["OUTSIDE_CONFIGURED_POLICY"],
-  };
-  if (expectedMethods[ruleType] && value.method !== expectedMethods[ruleType]) errors.push(`${ruleType} calculation method is unsupported.`);
-  if (expectedComparisons[ruleType] && !expectedComparisons[ruleType]!.includes(String(value.breachComparison))) {
-    errors.push(`${ruleType} breach comparison policy is unsupported.`);
-  }
+  if (ruleType === "DRAWDOWN_LIMIT" && !finitePositive(value.maxSnapshotAgeMs)) errors.push("Drawdown calculation requires an explicit positive data freshness limit in milliseconds.");
   if (["PROFIT_TARGET", "MIN_TRADES", "MIN_TRADING_DAYS", "MAX_OPEN_TRADES", "MAX_LEVERAGE", "TRADING_HOURS", "TRADING_SESSION"].includes(ruleType) && !finitePositive(value.maxSnapshotAgeMs)) {
     errors.push(`${ruleType} calculation requires an explicit positive data freshness limit in milliseconds.`);
   }
@@ -340,15 +319,32 @@ export function validateCalculationDefinition(ruleType: ProductRuleType, value: 
     if (typeof value.endTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value.endTime)) errors.push("Trading-hours calculation requires an explicit HH:mm endTime.");
     if (!Array.isArray(value.allowedDays) || value.allowedDays.length === 0) errors.push("Trading-hours calculation requires explicit weekdays.");
   }
+  const capability = getRuleCapability(ruleType);
+  if (!capability || capability.status === "UNSUPPORTED") {
+    errors.push(`${ruleType} cannot be published: ${capability?.reason ?? "no evaluator capability is registered"}`);
+  } else {
+    const calculation = allowedCalculationForRule(ruleType, value.method);
+    if (!calculation) {
+      const methods = capability.calculations.map((entry) => entry.method).join(", ");
+      errors.push(`${ruleType} calculation method is unsupported; allowed method${capability.calculations.length === 1 ? " is" : "s are"} ${methods}. ${capability.reason}`);
+    } else {
+      if (!calculation.breachComparisons.includes(String(value.breachComparison))) {
+        errors.push(`${ruleType} breach comparison policy is unsupported for ${calculation.method}.`);
+      }
+      const configuredInputs = new Set(
+        (Array.isArray(value.requiredInputs) ? value.requiredInputs : [])
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.toLowerCase().replace(/[\s_-]+/g, "")),
+      );
+      const missingInputs = calculation.requiredInputs.filter((input) => !configuredInputs.has(input.toLowerCase()));
+      if (missingInputs.length > 0) errors.push(`${ruleType} calculation must list these required inputs: ${missingInputs.join(", ")}.`);
+    }
+  }
   return errors;
 }
 
-// No rule type is activated by default. The current evaluator has known semantic gaps
-// in several types and the rest lack isolated freshness/failure-mode verification.
-
 export function validateRulesetForPublication(
   rules: ProductRuleConfiguration[],
-  evaluatorVerifiedRuleTypes: readonly ProductRuleType[] = [],
 ): string[] {
   const errors: string[] = [];
   if (rules.length === 0) return ["A ruleset version must explicitly define at least one rule before publication."];
@@ -366,6 +362,9 @@ export function validateRulesetForPublication(
       errors.push(`${label}: required/optional/unresolved disposition must be explicit.`);
       continue;
     }
+    if (rule.isRequired !== undefined && rule.isRequired !== (rule.disposition === "REQUIRED")) {
+      errors.push(`${label}: required flag must match the configured disposition.`);
+    }
     if (rule.disposition === "UNRESOLVED") {
       errors.push(`${label}: rule is unresolved.`);
       continue;
@@ -379,9 +378,6 @@ export function validateRulesetForPublication(
     const valueError = validateRuleValue(ruleType, rule.value);
     if (valueError) errors.push(`${label}: ${valueError}`);
     errors.push(...validateCalculationDefinition(ruleType, rule.calculation).map((error) => `${label}: ${error}`));
-    if (!evaluatorVerifiedRuleTypes.includes(ruleType)) {
-      errors.push(`${label}: evaluator enforcement is not verified; this rule cannot be activated yet.`);
-    }
   }
 
   return errors;
@@ -389,7 +385,6 @@ export function validateRulesetForPublication(
 
 export function validateProductForPublication(
   product: ProductConfiguration,
-  evaluatorVerifiedRuleTypes: readonly ProductRuleType[] = [],
 ): string[] {
   const errors: string[] = [];
   if (!product.code || !SAFE_CODE.test(product.code)) errors.push("A stable lowercase product code is required.");
@@ -414,7 +409,7 @@ export function validateProductForPublication(
       if (product.rulesetId && product.operatingRulesetVersion.rulesetId && product.rulesetId !== product.operatingRulesetVersion.rulesetId) {
         errors.push("Legacy Product.rulesetId conflicts with the Direct Funded operating ruleset version.");
       }
-      errors.push(...validateRulesetForPublication(product.operatingRulesetVersion.rules, evaluatorVerifiedRuleTypes).map((error) => `Operating rules: ${error}`));
+      errors.push(...validateRulesetForPublication(product.operatingRulesetVersion.rules).map((error) => `Operating rules: ${error}`));
     }
     errors.push("Direct Funded order fulfillment is not implemented; this product cannot be activated.");
     return errors;
@@ -431,7 +426,7 @@ export function validateProductForPublication(
     if (!stage.stageKey || !SAFE_CODE.test(stage.stageKey)) errors.push(`Stage ${index + 1} requires a stable lowercase stage key.`);
     if (!stage.displayName?.trim()) errors.push(`Stage ${index + 1} requires a display name.`);
     if (stage.rulesetVersion.status !== "PUBLISHED") errors.push(`Stage ${index + 1} must reference a published ruleset version.`);
-    errors.push(...validateRulesetForPublication(stage.rulesetVersion.rules, evaluatorVerifiedRuleTypes).map((error) => `Stage ${index + 1}: ${error}`));
+    errors.push(...validateRulesetForPublication(stage.rulesetVersion.rules).map((error) => `Stage ${index + 1}: ${error}`));
   });
   return errors;
 }

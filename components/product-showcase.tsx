@@ -15,16 +15,12 @@ import {
   formatAccountSize,
   formatMoney,
   formatRuleValue,
+  isPublicProductsResponse,
   pathwayIdForCategory,
   structureKey,
   ruleGroup,
 } from "@/lib/product-experience";
 import { categoryLabel, structureLabel } from "@/lib/product-domain";
-
-interface ProductsResponse {
-  success?: boolean;
-  products?: CatalogProduct[];
-}
 
 interface Props {
   compact?: boolean;
@@ -58,7 +54,7 @@ function StageRules({ stageName, rulesetId, rules }: {
         <Badge variant="success">Rules published</Badge>
       </div>
       <Link href={`/rules#ruleset-${encodeURIComponent(rulesetId)}`} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-info hover:underline">Open rules center <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
-      {rules.length === 0 ? <p className="mt-2 text-xs text-warning-foreground">No rules are published for this stage.</p> : <div className="mt-3 space-y-3">{Object.entries(groups).map(([group, groupedRules]) => <section key={group}><h5 className="text-sm font-semibold">{group}</h5><dl className="mt-2 divide-y divide-border border-y border-border">{groupedRules.map((rule) => <div key={rule.id} className="grid gap-1 py-2 sm:grid-cols-[1fr_1fr] sm:gap-4"><dt className="text-muted-foreground">{rule.name}{rule.disposition === "OPTIONAL" && <span className="ml-2 text-xs text-muted-foreground">Optional</span>}{rule.disposition === "UNRESOLVED" && <span className="ml-2 text-xs text-warning-foreground">Details incomplete</span>}</dt><dd className="break-words font-medium sm:text-right"><code className="whitespace-pre-wrap break-all font-mono text-xs">{formatRuleValue(rule.value)}</code></dd></div>)}</dl></section>)}</div>}
+              {rules.length === 0 ? <p className="mt-2 text-xs text-warning-foreground">No rules are published for this stage.</p> : <div className="mt-3 space-y-3">{Object.entries(groups).map(([group, groupedRules]) => <section key={group}><h5 className="text-sm font-semibold">{group}</h5><dl className="mt-2 divide-y divide-border border-y border-border">{groupedRules.map((rule) => <div key={rule.id} className="grid gap-1 py-2 sm:grid-cols-[1fr_1fr] sm:gap-4"><div><dt className="text-muted-foreground">{rule.name}{rule.disposition === "OPTIONAL" && <span className="ml-2 text-xs text-muted-foreground">Optional</span>}{rule.disposition === "UNRESOLVED" && <span className="ml-2 text-xs text-warning-foreground">Details incomplete</span>}</dt><dd className="mt-1 break-words font-medium"><code className="whitespace-pre-wrap break-all font-mono text-xs">{formatRuleValue(rule.value)}</code></dd></div><dd className="text-xs text-muted-foreground sm:text-right"><span className={`font-semibold ${rule.enforcement.status === "UNSUPPORTED" ? "text-warning-foreground" : "text-foreground"}`}>{rule.enforcement.status === "UNSUPPORTED" ? "Not enforced" : rule.enforcement.status === "LIMITED" ? "Limited enforcement" : "Enforcement conditions"}</span><span className="mt-1 block">{rule.enforcement.details}</span></dd></div>)}</dl></section>)}</div>}
     </section>
   );
 }
@@ -100,9 +96,9 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
       setLoading(true);
       setError("");
       try {
-        const productsResponse = await fetch("/api/products", { signal: controller.signal });
-        const productsData = (await productsResponse.json()) as ProductsResponse;
-        if (!productsResponse.ok || !productsData.success || !Array.isArray(productsData.products)) {
+        const productsResponse = await fetch("/api/products", { cache: "no-store", signal: controller.signal });
+        const productsData: unknown = await productsResponse.json();
+        if (!productsResponse.ok || !isPublicProductsResponse(productsData)) {
           throw new Error("Product list unavailable");
         }
         const activeProducts = productsData.products.filter((product) => product.isActive && product.status === "ACTIVE");

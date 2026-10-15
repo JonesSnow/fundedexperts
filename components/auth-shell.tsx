@@ -21,7 +21,7 @@ export default function AuthShell({
     <main className="grid min-h-screen bg-background lg:grid-cols-[minmax(21rem,0.9fr)_1.1fr]">
       <aside className="relative hidden min-h-full overflow-hidden border-r border-border bg-card px-10 py-12 lg:flex lg:flex-col lg:justify-between xl:px-16">
         <div className="pointer-events-none absolute inset-0 site-dot-field opacity-40" aria-hidden="true" />
-        <div className="pointer-events-none absolute -right-28 top-1/4 h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(59,10,107,.34),transparent_70%)]" aria-hidden="true" />
+        <div className="auth-accent-orb pointer-events-none absolute -right-28 top-1/4 h-80 w-80 rounded-full" aria-hidden="true" />
         <div className="relative z-10">
           <Brand />
           <p className="site-kicker mt-20 text-primary">Account access</p>

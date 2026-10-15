@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type {
   PaymentProvider,
+  PaymentProviderName,
   PaymentRequest,
   PaymentResult,
   PaymentRecord,
@@ -15,7 +16,7 @@ interface StoredPayment {
   status: PaymentStatus;
   amount: number;
   currency: string;
-  provider: string;
+  provider: PaymentProviderName;
   providerRefId?: string;
   providerStatus?: string;
   idempotencyKey?: string;
@@ -33,6 +34,17 @@ export function createMockPaymentProvider(): PaymentProvider {
 
       for (const payment of payments.values()) {
         if (payment.idempotencyKey === idempotencyKey) {
+          const sameTerms = payment.orderId === request.orderId &&
+            payment.amount === request.amount &&
+            payment.currency.toUpperCase() === request.currency.toUpperCase() &&
+            payment.provider === request.provider;
+          if (!sameTerms) {
+            return {
+              success: false,
+              status: "FAILED",
+              error: "Idempotency key was already used with different payment details",
+            };
+          }
           return {
             success: true,
             paymentId: payment.id,
@@ -80,6 +92,13 @@ export function createMockPaymentProvider(): PaymentProvider {
       }
 
       return null;
+    },
+
+    async getPaymentRecord(paymentId: string): Promise<PaymentRecord | null> {
+      const payment = payments.get(paymentId) ?? [...payments.values()].find(
+        (candidate) => candidate.idempotencyKey === paymentId,
+      );
+      return payment ? { ...payment } : null;
     },
 
     async refundPayment(request: RefundRequest): Promise<RefundResult> {

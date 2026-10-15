@@ -2,6 +2,7 @@ import { AccountStatus, MT5Account } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { evaluateMt5AccountStatusChange, type Mt5AccountStatus } from "@/lib/mt5-account-status-policy";
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -19,21 +20,9 @@ async function getAuthenticatedUser(request: NextRequest) {
   return trader;
 }
 
-type StatusTransition = Record<AccountStatus, AccountStatus[]>;
-
-const VALID_TRANSITIONS: StatusTransition = {
-  AVAILABLE: ["IN_USE", "INACTIVE", "MAINTENANCE"],
-  IN_USE: ["INACTIVE", "MAINTENANCE"],
-  INACTIVE: ["AVAILABLE", "MAINTENANCE"],
-  MAINTENANCE: ["AVAILABLE", "INACTIVE"],
-};
-
-function isValidTransition(from: AccountStatus, to: AccountStatus): boolean {
-  return VALID_TRANSITIONS[from]?.includes(to) ?? false;
-}
-
 function omitCredentials(account: MT5Account) {
-  const { credentials: _credentials, ...rest } = account;
+  const { credentials, ...rest } = account;
+  void credentials;
   return rest;
 }
 
@@ -58,106 +47,85 @@ export async function PUT(
   const { id } = await params;
 
   try {
-    const account = await prisma.mT5Account.findUnique({
-      where: { id },
-    });
-    if (!account) {
+    const body: unknown = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json(
-        { success: false, error: "Account not found" },
-        { status: 404 }
+        { success: false, error: "A status transition is required" },
+        { status: 400 }
       );
     }
-
-    const body = await request.json();
-    const { status, adminOverride } = body as { status?: AccountStatus; adminOverride?: boolean };
-
-    if (!status || !Object.values(AccountStatus).includes(status as AccountStatus)) {
+    const status = (body as Record<string, unknown>).status;
+    if (typeof status !== "string" || !Object.values(AccountStatus).includes(status as AccountStatus)) {
       return NextResponse.json(
         { success: false, error: "Valid status is required: AVAILABLE, IN_USE, INACTIVE, MAINTENANCE" },
         { status: 400 }
       );
     }
-
     const newStatus = status as AccountStatus;
-    if (newStatus === account.status) {
-      return NextResponse.json(
-        { success: true, account: omitCredentials(account) },
-        { status: 200 }
-      );
-    }
 
-    if (!isValidTransition(account.status, newStatus)) {
-      return NextResponse.json(
-        { success: false, error: `Invalid status transition from ${account.status} to ${newStatus}` },
-        { status: 400 }
-      );
-    }
+    const transition = await prisma.$transaction(async (tx) => {
+      // Serialize admin transitions with allocator reservations of this account row.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "MT5Account" WHERE "id" = ${id} FOR UPDATE
+      `;
+      if (locked.length === 0) return { kind: "missing" as const };
 
-    if (newStatus === "IN_USE") {
-      const activeAssignment = await prisma.accountAssignment.findFirst({
+      const account = await tx.mT5Account.findUnique({ where: { id } });
+      if (!account) return { kind: "missing" as const };
+      const activeAssignment = await tx.accountAssignment.findFirst({
         where: { accountId: id, status: "ASSIGNED" },
       });
-      if (!activeAssignment) {
-        return NextResponse.json(
-          { success: false, error: "Cannot set IN_USE: no active assignment exists" },
-          { status: 409 }
-        );
+      const decision = evaluateMt5AccountStatusChange(
+        account.status as Mt5AccountStatus,
+        newStatus as Mt5AccountStatus,
+        Boolean(activeAssignment),
+      );
+      if (decision.kind !== "allowed") return decision;
+      if (newStatus === account.status) {
+        return { kind: "updated" as const, account };
       }
-    }
 
-    if (newStatus === "AVAILABLE") {
-      const activeAssignment = await prisma.accountAssignment.findFirst({
-        where: { accountId: id, status: "ASSIGNED" },
+      const changed = await tx.mT5Account.updateMany({
+        where: { id, status: account.status },
+        data: { status: newStatus, updatedAt: new Date() },
       });
-      if (activeAssignment) {
-        if (adminOverride === true) {
-          await prisma.auditLog.create({
-            data: {
-              action: "ACCOUNT_UPDATED",
-              entityType: "MT5Account",
-              entityId: account.id,
-              performedBy: trader.id,
-              details: {
-                accountNumber: account.accountNumber,
-                statusChange: { from: account.status, to: newStatus },
-                adminOverride: true,
-                reason: "Admin override: AVAILABLE while active assignment exists",
-              },
-            },
-          });
-        } else {
-          return NextResponse.json(
-            { success: false, error: "Cannot set AVAILABLE: active assignment exists. Use adminOverride flag to force." },
-            { status: 409 }
-          );
-        }
-      }
-    }
+      if (changed.count !== 1) return { kind: "conflict" as const };
+      const updated = await tx.mT5Account.findUnique({ where: { id } });
+      if (!updated) return { kind: "missing" as const };
 
-    const updated = await prisma.mT5Account.update({
-      where: { id },
-      data: {
-        status: newStatus,
-        updatedAt: new Date(),
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_UPDATED",
-        entityType: "MT5Account",
-        entityId: account.id,
-        performedBy: trader.id,
-        details: {
-          accountNumber: account.accountNumber,
-          statusChange: { from: account.status, to: newStatus },
-          adminOverride: adminOverride === true,
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_UPDATED",
+          entityType: "MT5Account",
+          entityId: account.id,
+          performedBy: trader.id,
+          details: {
+            accountNumber: account.accountNumber,
+            statusChange: { from: account.status, to: newStatus },
+          },
         },
-      },
+      });
+      return { kind: "updated" as const, account: updated };
     });
+
+    if (transition.kind === "missing") {
+      return NextResponse.json({ success: false, error: "Account not found" }, { status: 404 });
+    }
+    if (transition.kind === "invalid-transition") {
+      return NextResponse.json(
+        { success: false, error: `Invalid status transition from ${transition.from} to ${newStatus}` },
+        { status: 400 },
+      );
+    }
+    if (transition.kind === "assignment-conflict") {
+      return NextResponse.json({ success: false, error: transition.message }, { status: 409 });
+    }
+    if (transition.kind === "conflict") {
+      return NextResponse.json({ success: false, error: "Account status changed; reload and try again." }, { status: 409 });
+    }
 
     return NextResponse.json(
-      { success: true, account: omitCredentials(updated) },
+      { success: true, account: omitCredentials(transition.account) },
       { status: 200 }
     );
   } catch {

@@ -1,5 +1,6 @@
 import type { Rule, RuleType } from "@prisma/client";
 import type { MonitoringSnapshot } from "./monitoring/types";
+import { getRuleCapability, isRuleCalculationSupported } from "./rule-capabilities";
 import {
   countUniqueCompletedTrades,
   countUniqueTradingDays,
@@ -60,9 +61,13 @@ export function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function computeOpenTradeCount(snapshot: MonitoringSnapshot): number {
+const OPEN_MT5_ORDER_STATES = new Set(["STARTED", "PLACED", "PARTIAL", "REQUEST_ADD", "REQUEST_MODIFY", "REQUEST_CANCEL"]);
+
+function computeOpenTradeCount(snapshot: MonitoringSnapshot): number | null {
   const positions = snapshot.positions ?? [];
-  const openOrders = (snapshot.orders ?? []).filter((o) => o.state === "PLACED" || o.state === "PARTIAL");
+  const orders = snapshot.orders ?? [];
+  if (orders.some((order) => typeof order.state !== "string")) return null;
+  const openOrders = orders.filter((order) => OPEN_MT5_ORDER_STATES.has(order.state!));
   return positions.length + openOrders.length;
 }
 
@@ -234,6 +239,7 @@ function evaluateMaxOpenTrades(rule: Rule, snapshot: MonitoringSnapshot): RuleEv
   if (typeof rv.maxTrades !== "number" || !snapshot.dataQuality?.positionsAvailable || !snapshot.dataQuality.ordersAvailable) return unavailableRule(rule, "open-position or pending-order data is incomplete", calculation?.method);
   if (calculation?.breachComparison !== "GREATER_THAN") return unavailableRule(rule, "maximum-open-trades comparison policy is unsupported", calculation?.method);
   const actual = computeOpenTradeCount(snapshot);
+  if (actual === null) return unavailableRule(rule, "one or more order states are missing and cannot be classified safely", calculation?.method);
   const state: CalculationState = actual > rv.maxTrades ? "FAIL" : "PASS";
   return ruleOutcome(rule, { state, actualValue: actual, expectedValue: { maxTrades: rv.maxTrades }, details: `${state}: open trade count ${actual}; configured maximum ${rv.maxTrades}` }, calculation?.method);
 }
@@ -317,7 +323,17 @@ export function evaluateRule(rule: Rule, snapshot: MonitoringSnapshot, options?:
 }
 
 export function evaluateAllRules(rules: Rule[], snapshot: MonitoringSnapshot, options?: EvaluateRuleOptions): RuleEvaluationOutcome[] {
-  return rules.filter(requiredRule).map((rule) => evaluateRule(rule, snapshot, options));
+  return rules.filter(requiredRule).map((rule) => {
+    const capability = getRuleCapability(rule.ruleType);
+    const calculation = record(rule.calculation);
+    if (!capability || capability.status === "UNSUPPORTED") {
+      return unavailableRule(rule, capability?.reason ?? "no evaluator capability is registered", calculation?.method);
+    }
+    if (!isRuleCalculationSupported(rule.ruleType, calculation?.method, calculation?.breachComparison)) {
+      return unavailableRule(rule, capability.reason, calculation?.method);
+    }
+    return evaluateRule(rule, snapshot, options);
+  });
 }
 
 export function getOverallResult(outcomes: RuleEvaluationOutcome[]): "PASS" | "FAIL" | "WARNING" {

@@ -14,6 +14,7 @@ import { allocateAccount } from "./allocation";
 import { linkEvaluation } from "./evaluation-link";
 import { releaseAccount } from "./release";
 import { PaymentProvider } from "./payment";
+import { verifyProviderPaymentForOrder } from "./payment-verification";
 import { createLedgerEntry, CreateLedgerEntryInput } from "./ledger";
 import { createLogger, generateCorrelationId } from "./logger";
 import { sendEvaluationStartedEmail, sendAccountAllocatedEmail } from "./email/templates";
@@ -123,21 +124,24 @@ export async function activateEvaluation(
   }
 
   if (paymentReference) {
-    const paymentStatus = await provider.getPaymentStatus(paymentReference);
-    if (paymentStatus !== "COMPLETED") {
+    const verification = await verifyProviderPaymentForOrder(provider, paymentReference, {
+      orderId: order.id,
+      amount: order.totalAmount,
+      currency: order.currency,
+    });
+    if (!verification.valid) {
+      const mismatch = verification.reason !== "NOT_FOUND" && verification.reason !== "NOT_COMPLETED";
+      const errorCategory = mismatch ? "PAYMENT_MISMATCH" : "PAYMENT_NOT_CONFIRMED";
       logger.error("ACTIVATION", "Payment not confirmed", {
         correlationId,
         actor: makeActor(performedBy),
         entity: makeEntity("Order", orderId),
-        error: makeError(
-          "PAYMENT_NOT_CONFIRMED",
-          `Payment status: ${paymentStatus}`,
-        ),
+        error: makeError(errorCategory, "Payment does not match the order or is not confirmed"),
       });
       return {
         success: false,
-        error: "Payment not confirmed",
-        errorCategory: "PAYMENT_NOT_CONFIRMED",
+        error: mismatch ? "Payment does not match this order" : "Payment not confirmed",
+        errorCategory,
         recoverable: true,
         correlationId,
       };

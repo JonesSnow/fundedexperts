@@ -1,15 +1,10 @@
 import "./support/test-env";
 import { describe, it, after, beforeEach } from "node:test";
-import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
 import {
   Prisma,
   PrismaClient,
-  FundedAccountStatus,
-  MT5Account,
-  AccountStatus,
   MT5AccountPurpose,
-  AuditAction,
 } from "@prisma/client";
 import {
   createFundedAccount,
@@ -19,7 +14,6 @@ import {
   getFundedAccount,
   listFundedAccounts,
 } from "../lib/funded-account";
-import { allocateAccount } from "../lib/allocation";
 import {
   runCleanupSteps,
   assertCleanup,
@@ -85,6 +79,7 @@ async function createTestTrader(prisma: PrismaClient, email: string) {
 async function createTestEvaluation(
   prisma: PrismaClient,
   traderId: string,
+  status: "IN_PROGRESS" | "PASSED" | "FAILED" = "PASSED",
 ) {
   const ruleset = await prisma.ruleset.create({
     data: { name: `RS-${RUN_ID}-${Math.random().toString(36).slice(2, 8)}`, isActive: true },
@@ -92,8 +87,48 @@ async function createTestEvaluation(
   const version = await prisma.rulesetVersion.create({
     data: { rulesetId: ruleset.id, version: "1.0", status: "PUBLISHED", effectiveDate: new Date() },
   });
+  const productSuffix = Math.random().toString(36).slice(2, 8);
+  const product = await prisma.product.create({
+    data: {
+      code: "fa-test-" + RUN_ID + "-" + productSuffix,
+      name: "FA Test Product " + RUN_ID + " " + productSuffix,
+      status: "ACTIVE",
+      isActive: true,
+      accountSize: 50000,
+      price: 1,
+      denominationCurrency: "USD",
+    },
+  });
+  const order = await prisma.order.create({
+    data: {
+      orderNumber: "FA-TEST-" + RUN_ID + "-" + productSuffix,
+      traderId,
+      rulesetVersionId: version.id,
+      status: "PAID",
+      subtotal: 1,
+      totalAmount: 1,
+      currency: "USD",
+      orderItems: {
+        create: {
+          productId: product.id,
+          unitPrice: 1,
+          currency: "USD",
+          productSnapshot: {
+            schemaVersion: 1,
+            productId: product.id,
+            name: product.name,
+            accountSize: "50000.00",
+            denominationCurrency: "USD",
+            price: "1.00",
+            priceCurrency: "USD",
+            stages: [],
+          },
+        },
+      },
+    },
+  });
   return prisma.evaluation.create({
-    data: { traderId, rulesetVersionId: version.id, status: "IN_PROGRESS" },
+    data: { traderId, orderId: order.id, productId: product.id, rulesetVersionId: version.id, status, startingBalance: 50000 },
   });
 }
 
@@ -101,13 +136,15 @@ async function createTestMT5Account(
   prisma: PrismaClient,
   accountNumber: string,
   traderId: string,
+  purpose: MT5AccountPurpose = MT5AccountPurpose.EVALUATION,
+  accountSize = 150000,
 ) {
   return prisma.mT5Account.create({
     data: {
       accountNumber,
       status: "AVAILABLE",
-      accountSize: 150000,
-      purpose: MT5AccountPurpose.EVALUATION,
+      accountSize,
+      purpose,
       broker: "XM",
       server: "Server-XM",
     },
@@ -236,7 +273,7 @@ describe("Funded Account — Approval", () => {
     if (fa) {
       await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
 
-      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-001`, trader.id);
+      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-001`, trader.id, MT5AccountPurpose.FUNDED, 50000);
       const linkResult = await linkAccount(prisma, {
         fundedAccountId: fa.id,
         accountId: account.id,
@@ -268,12 +305,9 @@ describe("Funded Account — Authorization", () => {
     check("Funded account exists", fa !== null, "");
 
     if (fa) {
-      const result = await getFundedAccount(prisma, fa.id);
-      check("Fetch succeeded", result.success === true, "");
-      if (result.success) {
-        check("Data returned", result.account.id === fa.id, "");
-      }
-      check("Service does not enforce auth (API does)", true, "Auth enforced at API route level");
+      const result = await getFundedAccount(prisma, fa.id, trader2.id);
+      check("Another trader cannot read the funded account", result.success === false, "");
+      if (!result.success) check("Foreign account is hidden as not found", result.errorCategory === "NOT_FOUND", result.errorCategory);
     }
   });
 
@@ -315,7 +349,7 @@ describe("Funded Account — Lifecycle Transitions", () => {
         check("ELIGIBLE→APPROVED succeeded", r2.success === true, r2.success ? "" : (r2 as { error: string }).error);
 
         if (r2.success) {
-          const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-flow`, trader.id);
+          const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-flow`, trader.id, MT5AccountPurpose.FUNDED, 50000);
           const linkResult = await linkAccount(prisma, {
             fundedAccountId: fa.id,
             accountId: account.id,
@@ -331,7 +365,7 @@ describe("Funded Account — Lifecycle Transitions", () => {
     }
   });
 
-  it("should reject invalid transition COMPLETED → ACTIVE", async () => {
+  it("should reject direct activation from APPROVED without a linked inventory account", async () => {
     const trader = await createTestTrader(prisma, `fa-inv2-${RUN_ID}@example.com`);
     const evaluation = await createTestEvaluation(prisma, trader.id);
 
@@ -340,6 +374,8 @@ describe("Funded Account — Lifecycle Transitions", () => {
     check("Funded account exists", fa !== null, "");
 
     if (fa) {
+      await transitionFundedAccountStatus(prisma, { id: fa.id, status: "ELIGIBLE", performedBy: trader.id });
+      await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
       const result = await transitionFundedAccountStatus(prisma, {
         id: fa.id,
         status: "ACTIVE",
@@ -349,6 +385,9 @@ describe("Funded Account — Lifecycle Transitions", () => {
       if (!result.success) {
         check("Error category INVALID_TRANSITION", result.errorCategory === "INVALID_TRANSITION", result.errorCategory);
       }
+      const unchanged = await prisma.fundedAccount.findUnique({ where: { id: fa.id } });
+      check("Account remains APPROVED", unchanged?.status === "APPROVED", `status=${unchanged?.status}`);
+      check("No MT5 account was linked", unchanged?.accountId === null, `accountId=${unchanged?.accountId}`);
     }
   });
 
@@ -362,7 +401,7 @@ describe("Funded Account — Lifecycle Transitions", () => {
 
     if (fa) {
       await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
-      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-sus`, trader.id);
+      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-sus`, trader.id, MT5AccountPurpose.FUNDED, 50000);
       await linkAccount(prisma, { fundedAccountId: fa.id, accountId: account.id, performedBy: trader.id });
 
       const suspendResult = await transitionFundedAccountStatus(prisma, {
@@ -376,6 +415,10 @@ describe("Funded Account — Lifecycle Transitions", () => {
       if (suspendResult.success) {
         const suspended = await prisma.fundedAccount.findUnique({ where: { id: fa.id } });
         check("Status is SUSPENDED", suspended?.status === "SUSPENDED", `status=${suspended?.status}`);
+        const heldInventory = await prisma.mT5Account.findUnique({ where: { id: account.id } });
+        const heldAssignment = await prisma.accountAssignment.findFirst({ where: { accountId: account.id, status: "ASSIGNED" } });
+        check("Suspension keeps inventory reserved", heldInventory?.status === "IN_USE", `status=${heldInventory?.status}`);
+        check("Suspension keeps its assignment", heldAssignment !== null, "");
 
         const termResult = await transitionFundedAccountStatus(prisma, {
           id: fa.id,
@@ -389,6 +432,10 @@ describe("Funded Account — Lifecycle Transitions", () => {
           const terminated = await prisma.fundedAccount.findUnique({ where: { id: fa.id } });
           check("Status is TERMINATED", terminated?.status === "TERMINATED", `status=${terminated?.status}`);
           check("ClosedAt set", terminated?.closedAt !== null, `closedAt=${terminated?.closedAt}`);
+          const retiredInventory = await prisma.mT5Account.findUnique({ where: { id: account.id } });
+          const revokedAssignment = await prisma.accountAssignment.findFirst({ where: { accountId: account.id, status: "REVOKED" } });
+          check("Termination deactivates inventory", retiredInventory?.status === "INACTIVE", `status=${retiredInventory?.status}`);
+          check("Termination revokes its assignment", revokedAssignment !== null, "");
         }
       }
     }
@@ -404,7 +451,7 @@ describe("Funded Account — Lifecycle Transitions", () => {
 
     if (fa) {
       await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
-      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-comp`, trader.id);
+      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-comp`, trader.id, MT5AccountPurpose.FUNDED, 50000);
       await linkAccount(prisma, { fundedAccountId: fa.id, accountId: account.id, performedBy: trader.id });
 
       const result = await transitionFundedAccountStatus(prisma, {
@@ -430,8 +477,8 @@ describe("Funded Account — Linking", () => {
     check("Funded account exists", fa !== null, "");
 
     if (fa) {
-      const account1 = await createTestMT5Account(prisma, `ACC-${RUN_ID}-a`, trader.id);
-      const account2 = await createTestMT5Account(prisma, `ACC-${RUN_ID}-b`, trader.id);
+      const account1 = await createTestMT5Account(prisma, `ACC-${RUN_ID}-a`, trader.id, MT5AccountPurpose.FUNDED, 50000);
+      const account2 = await createTestMT5Account(prisma, `ACC-${RUN_ID}-b`, trader.id, MT5AccountPurpose.FUNDED, 50000);
 
       await approveFundedAccount(prisma, { id: fa.id, performedBy: trader.id });
 
@@ -439,6 +486,16 @@ describe("Funded Account — Linking", () => {
       check("First link succeeded", r1.success === true, "");
 
       if (r1.success) {
+        const reservedAccount = await prisma.mT5Account.findUnique({ where: { id: account1.id } });
+        const firstAssignments = await prisma.accountAssignment.findMany({ where: { accountId: account1.id, status: "ASSIGNED" } });
+        check("Linked inventory account is IN_USE", reservedAccount?.status === "IN_USE", `status=${reservedAccount?.status}`);
+        check("Link creates one active account assignment", firstAssignments.length === 1, `count=${firstAssignments.length}`);
+
+        const retry = await linkAccount(prisma, { fundedAccountId: fa.id, accountId: account1.id, performedBy: trader.id });
+        check("Retry of the same link succeeds", retry.success === true, retry.success ? "" : retry.error);
+        const retriedAssignments = await prisma.accountAssignment.findMany({ where: { accountId: account1.id, status: "ASSIGNED" } });
+        check("Same-link retry does not duplicate assignment", retriedAssignments.length === 1, `count=${retriedAssignments.length}`);
+
         const r2 = await linkAccount(prisma, { fundedAccountId: fa.id, accountId: account2.id, performedBy: trader.id });
         check("Second link rejected", r2.success === false, "");
         if (!r2.success) {
@@ -478,7 +535,8 @@ describe("Funded Account — Linking", () => {
     check("Funded account exists", fa !== null, "");
 
     if (fa) {
-      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-elig`, trader.id);
+      await transitionFundedAccountStatus(prisma, { id: fa.id, status: "ELIGIBLE", performedBy: trader.id });
+      const account = await createTestMT5Account(prisma, `ACC-${RUN_ID}-elig`, trader.id, MT5AccountPurpose.FUNDED, 50000);
       const result = await linkAccount(prisma, { fundedAccountId: fa.id, accountId: account.id, performedBy: trader.id });
       check("Link rejected from ELIGIBLE", result.success === false, "");
       if (!result.success) {
@@ -494,7 +552,6 @@ describe("Funded Account — List and Query", () => {
     const evaluation = await createTestEvaluation(prisma, trader.id);
 
     await createFundedAccount(prisma, { evaluationId: evaluation.id, performedBy: trader.id });
-    const fa = await prisma.fundedAccount.findFirst({ where: { evaluationId: evaluation.id } });
 
     const accounts = await listFundedAccounts(prisma, { traderId: trader.id });
     check("Listed at least 1 account", accounts.length >= 1, `count=${accounts.length}`);

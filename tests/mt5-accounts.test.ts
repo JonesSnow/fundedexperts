@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { encrypt, decrypt, isEncryptionAvailable } from "../lib/encryption";
 import fs from "fs";
 import path from "path";
+import { evaluateMt5AccountStatusChange } from "../lib/mt5-account-status-policy";
 
 // These tests validate the MT5 Account Inventory system business logic.
 // Database-dependent tests are noted where they require PostgreSQL.
@@ -221,52 +222,31 @@ describe("Encryption", () => {
 
 describe("Account Status Transitions", () => {
   it("should allow AVAILABLE to IN_USE", () => {
-    const validTransitions: Record<string, string[]> = {
-      AVAILABLE: ["IN_USE", "INACTIVE", "MAINTENANCE"],
-    };
-    assert.equal(validTransitions.AVAILABLE.includes("IN_USE"), true);
+    assert.deepEqual(evaluateMt5AccountStatusChange("AVAILABLE", "IN_USE", true), { kind: "allowed" });
   });
 
   it("should allow IN_USE to INACTIVE", () => {
-    const validTransitions: Record<string, string[]> = {
-      IN_USE: ["INACTIVE", "MAINTENANCE"],
-    };
-    assert.equal(validTransitions.IN_USE.includes("INACTIVE"), true);
+    assert.deepEqual(evaluateMt5AccountStatusChange("IN_USE", "INACTIVE", true), { kind: "allowed" });
   });
 
   it("should reject IN_USE to AVAILABLE", () => {
-    const validTransitions: Record<string, string[]> = {
-      IN_USE: ["INACTIVE", "MAINTENANCE"],
-    };
-    assert.equal(validTransitions.IN_USE.includes("AVAILABLE"), false);
+    assert.equal(evaluateMt5AccountStatusChange("IN_USE", "AVAILABLE", true).kind, "assignment-conflict");
   });
 
-  it("should reject AVAILABLE to MAINTENANCE", () => {
-    const validTransitions: Record<string, string[]> = {
-      AVAILABLE: ["IN_USE", "INACTIVE", "MAINTENANCE"],
-    };
-    assert.equal(validTransitions.AVAILABLE.includes("MAINTENANCE"), true);
+  it("should allow AVAILABLE to MAINTENANCE", () => {
+    assert.deepEqual(evaluateMt5AccountStatusChange("AVAILABLE", "MAINTENANCE", false), { kind: "allowed" });
   });
 
   it("should reject invalid transition from INACTIVE to IN_USE", () => {
-    const validTransitions: Record<string, string[]> = {
-      INACTIVE: ["AVAILABLE", "MAINTENANCE"],
-    };
-    assert.equal(validTransitions.INACTIVE.includes("IN_USE"), false);
+    assert.equal(evaluateMt5AccountStatusChange("INACTIVE", "IN_USE", true).kind, "invalid-transition");
   });
 
   it("should allow MAINTENANCE to AVAILABLE", () => {
-    const validTransitions: Record<string, string[]> = {
-      MAINTENANCE: ["AVAILABLE", "INACTIVE"],
-    };
-    assert.equal(validTransitions.MAINTENANCE.includes("AVAILABLE"), true);
+    assert.deepEqual(evaluateMt5AccountStatusChange("MAINTENANCE", "AVAILABLE", false), { kind: "allowed" });
   });
 
   it("should allow INACTIVE to AVAILABLE", () => {
-    const validTransitions: Record<string, string[]> = {
-      INACTIVE: ["AVAILABLE", "MAINTENANCE"],
-    };
-    assert.equal(validTransitions.INACTIVE.includes("AVAILABLE"), true);
+    assert.deepEqual(evaluateMt5AccountStatusChange("INACTIVE", "AVAILABLE", false), { kind: "allowed" });
   });
 });
 
@@ -292,9 +272,15 @@ describe("Audit Logging", () => {
   });
 
   it("should not log credential values", () => {
-    const auditDetail = { credentialsStored: true, credentials: "secret123" };
-    assert.equal(auditDetail.credentialsStored, true);
-    assert.notEqual(auditDetail.credentials, undefined);
+    const accountRoute = fs.readFileSync(path.resolve(__dirname, "../app/api/accounts/route.ts"), "utf8");
+    const adminRoute = fs.readFileSync(path.resolve(__dirname, "../app/api/admin/mt5-accounts/[id]/route.ts"), "utf8");
+    const accountAudit = accountRoute.match(/details:\s*\{[^}]*\}/)?.[0] ?? "";
+    const adminUpdateLog = adminRoute.slice(adminRoute.indexOf('logger.info("MT5_ACCOUNT"'));
+
+    assert.match(accountAudit, /credentialsStored:\s*encryptedCredentials !== null/);
+    assert.doesNotMatch(accountAudit, /\bcredentials\s*:/);
+    assert.match(adminUpdateLog, /updatedFields:\s*Object\.keys\(updateData\)/);
+    assert.doesNotMatch(adminUpdateLog, /credentials\s*:\s*(?:credentials|preparedCredentials)/);
   });
 });
 

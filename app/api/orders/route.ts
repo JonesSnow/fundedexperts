@@ -7,6 +7,8 @@ import { sendOrderCreatedEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
 import { validateCreateOrderInput } from "@/lib/order-validation";
 import { resolveOrderTerms } from "@/lib/order-domain";
+import { attemptOrderCreatedNotification } from "@/lib/order-notification";
+import { redeemableCouponWhere } from "@/lib/coupon-redemption";
 
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
@@ -135,6 +137,16 @@ export async function POST(request: NextRequest) {
     const orderNumber = `ORD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
     const order = await prisma.$transaction(async (tx) => {
+      if (coupon) {
+        const reservation = await tx.coupon.updateMany({
+          where: redeemableCouponWhere(coupon, new Date()),
+          data: { usedCount: { increment: 1 } },
+        });
+        if (reservation.count !== 1) {
+          throw new Error("COUPON_NO_LONGER_REDEEMABLE");
+        }
+      }
+
       const createdOrder = await tx.order.create({
         data: {
           orderNumber,
@@ -169,10 +181,6 @@ export async function POST(request: NextRequest) {
             orderId: createdOrder.id,
           },
         });
-        await tx.coupon.update({
-          where: { id: coupon.id },
-          data: { usedCount: { increment: 1 } },
-        });
       }
 
       return createdOrder;
@@ -193,20 +201,33 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    await sendOrderCreatedEmail(
-      { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
-      {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        productName: product.name,
-        totalAmount: Number(order.totalAmount),
-        currency: order.currency,
-        orderStatus: order.status,
-      },
+    await attemptOrderCreatedNotification(
+      () => sendOrderCreatedEmail(
+        { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
+        {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          productName: product.name,
+          totalAmount: Number(order.totalAmount),
+          currency: order.currency,
+          orderStatus: order.status,
+        },
+      ),
+      () => logger.warn("ORDER", "Order created but confirmation email delivery failed", {
+        correlationId,
+        actor: { type: "trader", id: trader.id },
+        entity: { type: "Order", id: order.id },
+      }),
     );
 
     return NextResponse.json({ success: true, order }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.message === "COUPON_NO_LONGER_REDEEMABLE") {
+      return NextResponse.json(
+        { success: false, error: "Coupon is no longer available. Review the coupon and try again." },
+        { status: 409 },
+      );
+    }
     const msg = error instanceof Error ? error.message : "Unknown error";
     logger.error("ORDER", "Order creation failed", {
       correlationId,

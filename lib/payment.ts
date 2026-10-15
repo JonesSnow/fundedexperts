@@ -49,5 +49,6 @@ export interface RefundResult {
 export interface PaymentProvider {
   processPayment(request: PaymentRequest): Promise<PaymentResult>;
   getPaymentStatus(paymentId: string): Promise<PaymentStatus | null>;
+  getPaymentRecord(paymentId: string): Promise<PaymentRecord | null>;
   refundPayment(request: RefundRequest): Promise<RefundResult>;
 }

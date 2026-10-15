@@ -40,6 +40,23 @@ export default function AdminPage() {
       <h1 className="text-3xl font-bold mb-4">Admin Panel</h1>
       <p className="text-muted-foreground mb-6">Manage products, rulesets, and customer lifecycles.</p>
 
+      <div className="mb-6">
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href="/admin/funded-accounts"
+            className="inline-flex min-h-10 items-center rounded-lg border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Review funded accounts
+          </Link>
+          <Link
+            href="/admin/audit-logs"
+            className="inline-flex min-h-10 items-center rounded-lg border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Review audit history
+          </Link>
+        </div>
+      </div>
+
       <div className="mb-6 flex flex-wrap gap-3" role="group" aria-label="Admin sections">
         <button
           type="button"

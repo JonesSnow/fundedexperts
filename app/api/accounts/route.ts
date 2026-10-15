@@ -21,7 +21,8 @@ async function getAuthenticatedUser(request: NextRequest) {
 }
 
 function omitCredentials(account: MT5Account) {
-  const { credentials: _credentials, ...rest } = account;
+  const { credentials, ...rest } = account;
+  void credentials;
   return rest;
 }
 
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
       { success: true, accounts: accounts.map(omitCredentials) },
       { status: 200 }
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { success: false, error: "Failed to list accounts" },
       { status: 500 }
@@ -121,6 +122,8 @@ export async function POST(request: NextRequest) {
     }
     if (body.status !== undefined && !Object.values(AccountStatus).includes(body.status)) {
       errors.status = "Status must be one of: AVAILABLE, IN_USE, INACTIVE, MAINTENANCE";
+    } else if (body.status === "IN_USE") {
+      errors.status = "A new account cannot be IN_USE without an active assignment";
     }
     if (body.healthStatus !== undefined && !Object.values(MT5HealthStatus).includes(body.healthStatus)) {
       errors.healthStatus = "Health status must be one of: CONNECTED, DISCONNECTED, ERROR";
@@ -168,42 +171,52 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const account = await prisma.mT5Account.create({
-      data: {
-        accountNumber: body.accountNumber,
-        broker: body.broker ?? null,
-        server: body.server ?? null,
-        login: body.login ?? null,
-        accountSize: body.accountSize ?? null,
-        currency: body.currency ?? "USD",
-        purpose: body.purpose ?? null,
-        status: body.status ?? "AVAILABLE",
-        healthStatus: body.healthStatus ?? "DISCONNECTED",
-        credentials: encryptedCredentials,
-        notes: body.notes ?? null,
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_CREATED",
-        entityType: "MT5Account",
-        entityId: account.id,
-        performedBy: trader.id,
-        details: {
-          accountNumber: account.accountNumber,
-          broker: account.broker,
-          status: account.status,
-          credentialsStored: encryptedCredentials !== null,
+    const account = await prisma.$transaction(async (tx) => {
+      const created = await tx.mT5Account.create({
+        data: {
+          accountNumber: body.accountNumber,
+          broker: body.broker ?? null,
+          server: body.server ?? null,
+          login: body.login ?? null,
+          accountSize: body.accountSize ?? null,
+          currency: body.currency ?? "USD",
+          purpose: body.purpose ?? null,
+          status: body.status ?? "AVAILABLE",
+          healthStatus: body.healthStatus ?? "DISCONNECTED",
+          credentials: encryptedCredentials,
+          notes: body.notes ?? null,
         },
-      },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_CREATED",
+          entityType: "MT5Account",
+          entityId: created.id,
+          performedBy: trader.id,
+          details: {
+            accountNumber: created.accountNumber,
+            broker: created.broker,
+            status: created.status,
+            credentialsStored: encryptedCredentials !== null,
+          },
+        },
+      });
+
+      return created;
     });
 
     return NextResponse.json(
       { success: true, account: omitCredentials(account) },
       { status: 201 }
     );
-  } catch {
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") {
+      return NextResponse.json(
+        { success: false, error: "Account number already exists" },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { success: false, error: "Failed to create account" },
       { status: 500 }

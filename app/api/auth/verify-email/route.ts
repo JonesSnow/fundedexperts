@@ -3,6 +3,11 @@ import { checkCooldown, checkRateLimit } from "@/lib/auth/rate-limit";
 import { generateOtp, hashOtp, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS } from "@/lib/auth/otp";
 import { sendVerificationEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
+
+const logger = createLogger({
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
+});
 
 const GENERIC_RESPONSE = {
   success: true,
@@ -10,6 +15,7 @@ const GENERIC_RESPONSE = {
 };
 
 export async function POST(request: NextRequest) {
+  const correlationId = generateCorrelationId();
   try {
     const body = await request.json();
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -48,7 +54,16 @@ export async function POST(request: NextRequest) {
       { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
       code,
       expiresAt,
-    ).catch(() => undefined);
+    ).catch(() => {
+      logger.error("AUTH", "Verification resend email dispatch failed", {
+        correlationId,
+        entity: { type: "Trader", id: trader.id },
+        error: {
+          code: "VERIFICATION_RESEND_DISPATCH_FAILED",
+          message: "Email delivery did not return a result",
+        },
+      });
+    });
 
     return NextResponse.json(GENERIC_RESPONSE, { status: 200 });
   } catch {

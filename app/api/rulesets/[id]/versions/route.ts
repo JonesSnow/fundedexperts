@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { PUBLIC_RULESET_VERSION_WHERE } from "@/lib/ruleset-visibility";
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -25,7 +26,10 @@ export async function GET(
   const { id } = await params;
   const trader = await getAuthenticatedUser(request);
   const versions = await prisma.rulesetVersion.findMany({
-    where: { rulesetId: id, ...(trader?.role === "ADMIN" ? {} : { status: "PUBLISHED" }) },
+    where: {
+      rulesetId: id,
+      ...(trader?.role === "ADMIN" ? {} : PUBLIC_RULESET_VERSION_WHERE),
+    },
     orderBy: { version: "desc" },
   });
 

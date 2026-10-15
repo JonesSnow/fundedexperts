@@ -21,10 +21,19 @@ const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
 export interface SessionPayload {
   sub: string;
   role: string;
+  emailVerified: true;
 }
 
-export async function createSession(traderId: string, role: string): Promise<string> {
-  const token = await new SignJWT({ sub: traderId, role })
+export async function createSession(
+  traderId: string,
+  role: string,
+  emailVerified: boolean
+): Promise<string> {
+  if (!emailVerified) {
+    throw new Error("Cannot create a session for an unverified email address.");
+  }
+
+  const token = await new SignJWT({ sub: traderId, role, emailVerified: true })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime("7d")
     .setIssuedAt()
@@ -37,7 +46,18 @@ export async function getSession(token: string): Promise<SessionPayload | null> 
     const { payload } = await jwtVerify(token, JWT_SECRET, {
       algorithms: ["HS256"],
     });
-    return payload as unknown as SessionPayload;
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.role !== "string" ||
+      payload.emailVerified !== true
+    ) {
+      return null;
+    }
+    return {
+      sub: payload.sub,
+      role: payload.role,
+      emailVerified: true,
+    };
   } catch {
     return null;
   }

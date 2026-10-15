@@ -808,3 +808,607 @@ The Beginner/Pro/Expert catalog and rules are not guaranteed by seed data or cod
 **NO-GO for public launch, paid orders, or real trading accounts.** F-01 alone makes the documented test process unsafe for a shared/production database. Payment is simulated and client-declared; the UI checkout is incomplete; rule calculations and lifecycle transitions can misallocate accounts or produce false decisions; MT5 credential storage is inconsistent; and there is no deployed monitoring/CI/rollback boundary.
 
 **Conditional internal demo only:** use mock data and an isolated disposable database, do not treat order/evaluation/payout states as financial truth, and do not use real MT5 credentials or production records.
+
+---
+
+## 20. Local database and test infrastructure addendum — 2026-10-14
+
+This addendum updates only the database test-safety and CI portions of the
+historical audit. The original audit baseline and its unrelated findings are
+preserved.
+
+| Finding | Updated status | Evidence and remaining limit |
+|---|---|---|
+| F-01 — unsafe test reset path | **Source-level remediation implemented; runtime integration remains blocked.** The default test command runs database-free suites; legacy global resets exit before Prisma; every discovered database test/script Prisma client or CLI entry point is checked for the test bootstrap; cleanup requires a separate process-only confirmation before loading the test environment or Prisma. Guard and subprocess tests pass. | No PostgreSQL server or utilities are installed. No database target was connected, migrated, reset, or independently verified. |
+| F-14 — CI/deployment controls | **Partially addressed.** `.github/workflows/ci.yml` is now a validation-only workflow that installs the frozen lockfile, generates Prisma Client, validates the Prisma schema, runs TypeScript/lint/database-free tests, and has no database credentials, migration, cleanup, or deployment. | Workflow structure received a dependency-free subset check because no YAML parser/actionlint was available; this is not full GitHub Actions schema validation. Deployment, rollback, branch-protection, and database-backed CI controls remain unverified or absent. |
+
+The local PostgreSQL prerequisite remains unmet. An authorized operator must
+install a supported local PostgreSQL release, provision distinct development
+and disposable test databases, and independently verify their ownership,
+server, port, and data-retention policy before running `pnpm db:test:migrate`
+or `pnpm test:db`. No environment-file values were read for this addendum, and
+no database, external service, or production deployment was contacted.
+
+## 21. Production-first browser and catalog follow-up — 2026-10-14
+
+The unauthenticated production site was inspected read-only at
+`https://fundedexperts.vercel.app/`. Public pages returned HTTP 200 for `/`,
+`/catalog`, `/pricing`, `/how-it-works`, `/faq`, `/rules`, `/policies`,
+`/register`, `/login`, `/verify-email`, `/verify-email-pending`,
+`/forgot-password`, and `/reset-password`. Requests to trader and admin pages
+redirected to sign-in where access was required. No authenticated test
+credentials were available, so those workflows and all admin actions remain
+unverified. The mobile navigation and FAQ disclosure opened successfully;
+no horizontal overflow was found at 390, 768, or 1440 CSS pixels on the
+homepage, catalog, pricing, FAQ, and login pages.
+
+| Observation | Evidence | Status |
+|---|---|---|
+| Public catalog API fails | `GET /api/products` returned HTTP 500 with an empty response body (`Content-Length: 0`) at `2026-10-14T21:44:37Z`. Its Vercel response identifier was `bom1::iad1::ctqw2-1792014276880-3ac183a9d7d7`. The matching function log reports Prisma `P2021`, `modelName: Product`, and missing object `public.ProductStage`. | Confirmed production defect and runtime missing-table failure. |
+| Homepage plans are unavailable | The homepage displayed the retryable catalog-load error after its API request failed; pricing redirects to the same catalog journey. | Confirmed customer impact; product/pricing data could not be inspected. |
+| Prohibited legacy label is served | Production rendered the legacy “DEMO VIEW” badge. The current worktree changes this copy to “Illustrative”; committed `HEAD` still contains the old text. This proves a difference from current worktree state, not the deployment SHA. | Confirmed production copy issue; local correction is not deployed. |
+| Deployed code version | Vercel shows the Production deployment as Ready on `main`, linked to commit `6b94ad59fc714c4b32213710e8513f7452924ad9`. That matches local `HEAD` and `origin/main`; uncommitted worktree changes are not part of that deployment. | Confirmed deployment SHA and status. |
+| Additional browser errors | Unauthenticated API requests returned 401 as expected. Repeated navigation during the inspection also triggered 429 rate limits; these were not treated as independent defects. | Expected/inspection-induced responses, not evidence of a persistent site-wide outage. |
+
+The subsequent authorized, read-only provider inspection retrieved the
+correlated Vercel function log and inspected Neon metadata using `SELECT`
+queries only. No environment-variable values, credentials, database URLs,
+customer records, or provider data beyond the identifiers and schema/migration
+metadata below were retrieved.
+
+During a local built-app UI smoke, the first navigation occurred before the
+browser API fixture interception was installed. The local `/api/products`
+handler emitted a sanitized Prisma `P2021` diagnostic with
+`meta.table = public.ProductStage` at `2026-10-14T21:54:39Z`. Next.js reported
+that `.env.local` was loaded, but its value and destination were not inspected
+and the target had not been independently verified. This result is evidence
+only about that unverified local runtime target; it is not evidence about the
+Vercel deployment or Neon. No further local API/database requests were made.
+
+The Vercel log confirms that the database connection used by the failing
+function did not expose `public.ProductStage` to Prisma when that request ran;
+this is the immediate cause of its `P2021` response. Independently, the
+read-only Neon inspection showed project `fundedexperts`, branch `production`,
+database `neondb`, schema `public`, with no `ProductStage` table. Its
+`_prisma_migrations` history contained 12 completed rows and no row for
+`20261013000000_product_domain_foundation`; the listed history ended at
+`20260927000000_evaluation_starting_balance`.
+
+The Vercel environment-variable list confirms that the secret named
+`DATABASE_URL` is scoped to **Production**. The Vercel project Integrations
+page reports no integrations installed. The value is write-only in the
+dashboard; it was not revealed, copied, or otherwise inspected. Thus the
+scope is confirmed, but no available metadata maps its target to the inspected
+Neon project, branch, and database. The function log proves the function's
+actual database connection lacked `public.ProductStage`; the inspected Neon
+target independently has the same missing table and migration row. Whether
+these are the same target remains unproven. Do not apply a migration to Neon
+until an authorized operator verifies this mapping without disclosing the
+connection string. If it maps elsewhere, inspect that target read-only
+instead.
+
+The repository migration
+`prisma/migrations/20261013000000_product_domain_foundation/migration.sql`
+creates `ProductStage` and adds product/evaluation relationships that follow
+on from the existing `Product`, `RulesetVersion`, `Rule`, `OrderItem`,
+`Evaluation`, and `Order` objects. It is present locally; its absence from the
+inspected Neon migration history does not by itself prove it was never
+partially applied or that the inspected Neon target serves Vercel.
+
+The repository has 14 ordered migrations. The inspected Neon history had 12
+completed entries through `20260927000000_evaluation_starting_balance`; the
+next checked-in migrations are:
+
+1. `20261013000000_product_domain_foundation` — builds on the existing
+   `Product`, `RulesetVersion`, `Rule`, `OrderItem`, `Evaluation`, and `Order`
+   objects. It adds product metadata and ruleset links, creates
+   `ProductStage` with its product/ruleset foreign keys and unique/index
+   constraints, adds evaluation links to stages/orders, adds an order-item
+   product snapshot, and adds rule disposition/calculation fields.
+2. `20261014000000_evaluation_integrity` — follows the product foundation
+   chronologically and adds evaluation outcome/idempotency fields and a
+   funded-account uniqueness constraint. It does not create `ProductStage`.
+
+The catalog's immediate missing-table symptom maps specifically to the first
+migration. If the inspected Neon branch is confirmed as Vercel's target, its
+history indicates the foundation migration is not recorded as completed;
+the live metadata query found no partial foundation objects among the
+expected enums, columns, indexes, or constraints. This confirmation applies
+only to the inspected Neon branch, not yet to Vercel's exact target. The
+second migration is also later in the checked-in chain and must be included
+in any `migrate deploy` plan.
+
+### Migration SQL and data-impact review
+
+The full SQL of
+`prisma/migrations/20261013000000_product_domain_foundation/migration.sql`
+was reviewed. It contains no `DROP`, `DELETE`, or `TRUNCATE`. It does perform
+the following schema and data operations:
+
+| SQL operations | Impact / preconditions |
+|---|---|
+| Creates `ProductCategory` (`BEGINNER`, `PRO`, `EXPERT`, `DIRECT_FUNDED`), `EvaluationStructure` (`THREE_STEP`, `FOUR_STEP`, `TWO_STEP`, `ONE_STEP`, `DIRECT_FUNDED`), `ProductStatus` (`DRAFT`, `ACTIVE`, `UNAVAILABLE`, `RETIRED`), and `RuleDisposition` (`REQUIRED`, `OPTIONAL`, `UNRESOLVED`). | Type names must not already exist as a partial application. Read-only metadata on the inspected Neon branch found none of these four enums. |
+| Adds nullable `Product.code`, `category`, `evaluationStructure`, `denominationCurrency`, and `operatingRulesetVersionId`; adds non-null `status` with default `DRAFT`. Adds unique index `Product_code_key` and index `Product_status_isActive_displayOrder_idx`. | Existing Product rows logically receive `status = DRAFT`; other new fields begin NULL. The unique code index accepts multiple NULL values on PostgreSQL. The FK below relies on `RulesetVersion(id)`. No Product rows were inspected. |
+| Adds `Product_operatingRulesetVersionId_fkey` from `Product.operatingRulesetVersionId` to `RulesetVersion.id`, `ON DELETE RESTRICT ON UPDATE CASCADE`. | Newly added references are NULL for preexisting rows, so those rows do not violate the FK. |
+| Creates `ProductStage` with required `id`, `productId`, `stageKey`, `displayName`, `stageOrder`, and `rulesetVersionId`, plus timestamps; primary key `ProductStage_pkey`; unique indexes `ProductStage_productId_stageKey_key` and `ProductStage_productId_stageOrder_key`; index `ProductStage_rulesetVersionId_idx`. | New table starts empty; it does not create stages for any existing product. Requires existing `Product(id)` and `RulesetVersion(id)`. |
+| Adds `ProductStage_productId_fkey` to `Product(id)` and `ProductStage_rulesetVersionId_fkey` to `RulesetVersion(id)`, both `ON DELETE RESTRICT ON UPDATE CASCADE`. | No preexisting stage rows are present in the new table to violate these FKs. |
+| Adds non-null `Rule.disposition` with default `UNRESOLVED` and nullable JSONB `Rule.calculation`, then updates every existing `Rule.disposition` to `REQUIRED` when `isRequired` is true and `OPTIONAL` otherwise. | Existing Rule rows are updated in place; no Rule values or calculation contracts are backfilled. This is a real write across the Rule table and its lock/runtime cost depends on row count, which was not queried. |
+| Adds nullable JSONB `OrderItem.productSnapshot`. | Existing order items remain without snapshots; this migration does not backfill authoritative product terms. |
+| Adds nullable `Evaluation.productStageId` and `Evaluation.orderId`, unique index `Evaluation_orderId_key`, and FKs to `ProductStage(id)` and `Order(id)`, both `ON DELETE RESTRICT ON UPDATE CASCADE`. | Existing evaluations receive NULL references; multiple NULLs are permitted by the default PostgreSQL unique-index semantics. Requires existing `Evaluation`, `Order`, and newly created `ProductStage`. |
+
+The inspected Neon branch has all referenced base tables:
+`Product`, `RulesetVersion`, `Rule`, `OrderItem`, `Evaluation`, and `Order`.
+Read-only column metadata confirms the relevant existing key/configuration
+columns `Product.id`, `Product.isActive`, `Product.displayOrder`,
+`RulesetVersion.id`, `Rule.id`, and `Rule.isRequired`. It does not have
+`ProductStage` or the foundation's listed new columns; no foundation enum,
+index, or constraint names were found. The migration history has no row for
+the foundation. This is consistent with the migration being unapplied on
+that inspected branch, not proof that it is Vercel's target.
+
+The file has no explicit `BEGIN`/`COMMIT`; the recovery procedure must not
+assume that a failed apply is fully rolled back. After any failure, inspect
+both `_prisma_migrations` and the actual schema before deciding on recovery.
+DDL locks, the full-table Rule update, row counts, and production traffic
+impact have not been measured. A rehearsal and a reviewed operational window
+are prerequisites, not optional assumptions.
+
+### Subsequent migration dependency and chain risk
+
+There is one later checked-in migration:
+`20261014000000_evaluation_integrity/migration.sql`. It does not reference
+`ProductStage`, the new Product columns, or any other object created by the
+foundation, so there is no direct object dependency on the foundation. It
+does depend on the preexisting `RuleEvaluation`, `RuleEvent`, and
+`FundedAccount` tables and `FundedAccount.evaluationId`. Those objects are
+created/added earlier in the checked-in chain (`20260920164647_init` and
+`20260922130000_funded_account_lifecycle`).
+
+However, Prisma `migrate deploy` processes all pending migrations in order,
+so a normal deploy will apply both pending October migrations. The later SQL
+adds `RuleEvaluation.state` (default `UNAVAILABLE`) and nullable
+`sourceDataTimestamp`, nullable `RuleEvent.idempotencyKey` and unique index
+`RuleEvent_idempotencyKey_key`, then unique index
+`FundedAccount_evaluationId_key`. The nullable additions/default are
+non-destructive, but the last unique index can fail if existing non-NULL
+`FundedAccount.evaluationId` values are duplicated. The earlier
+`20260923010524_phase20_business_readiness` migration explicitly dropped
+`FundedAccount_evaluationId_idx`, and the later migration relies on the
+uniqueness constraint without any data cleanup or duplicate resolution.
+No production row-level duplicate check was run. Before applying the full
+pending chain, an authorized operator must run a read-only preflight that
+returns only whether/count of duplicates (not IDs or customer data), and
+stop for review if any duplicate exists. Also verify the later migration's
+new enum/column/index objects are absent or consistently applied before
+retrying after any partial failure.
+
+### Applicability and safety decision
+
+The foundation SQL appears structurally compatible with the inspected
+branch's required tables and columns, and the new foundation objects were not
+partially present there. It does make intended writes (`Product.status`
+defaults and the Rule disposition backfill), and it creates locks/indexes.
+The full pending chain has an additional unresolved data-dependent unique
+index risk. Therefore this is **not yet authorized or unconditionally
+certified safe to apply in production**: first prove that Neon is the Vercel
+target, rehearse on an isolated copy, measure/review the planned write and
+lock impact, and check the later unique-index precondition. No customer
+records were queried as part of this review.
+
+**Controlled production recovery (not executed):**
+
+1. An authorized operator must privately verify that the Production
+   `DATABASE_URL` endpoint/database identifies the Neon `fundedexperts`
+   project, `production` branch, and `neondb` database. The dashboard only
+   shows the variable as a Production-scoped secret; it does not disclose
+   target metadata. Use an approved private verification method and record
+   only a yes/no match and resource identifiers, never the URL or credentials.
+   Check whether any separately named direct-connection variable is used by
+   the migration workflow and verify its target the same way.
+2. Rehearse the complete pending chain on an isolated disposable target with
+   synthetic or policy-approved sanitized data. Before scheduling production,
+   run a read-only duplicate preflight for the later unique index; it should
+   return only aggregate counts, never evaluation/account IDs:
+   `SELECT count(*) AS duplicate_evaluation_keys, COALESCE(sum(n), 0) AS affected_rows FROM (SELECT count(*) AS n FROM "FundedAccount" WHERE "evaluationId" IS NOT NULL GROUP BY "evaluationId" HAVING count(*) > 1) AS d;`
+   Stop for business review if either count is nonzero. Rehearsal must also
+   measure migration duration/locks and confirm the result's catalog readiness.
+   The migration does not create or publish products.
+3. Before production execution, verify a provider-supported recoverable
+   snapshot/restore point exists, its retention and restore permissions, and
+   the exact restore/recovery steps. Record only the snapshot/branch identifier.
+   Coordinate a write/change freeze appropriate to the restore point, since
+   restoring it could discard writes made afterward.
+4. If target mapping, rehearsal, duplicate preflight, and backup checks all
+   pass, obtain explicit production-change approval. Apply only the
+   repository's pinned `prisma migrate deploy` chain to that confirmed target.
+   Do not use `db push`, reset, manual table creation, or `migrate resolve` as
+   substitutes.
+5. Verify migration history and every new object using read-only metadata
+   queries. Confirm product publication/stage configuration through a
+   separately approved read-only readiness check; do not invent or mutate
+   prices, rules, or products. Then request/verify `GET /api/products` and the
+   rendered catalog against the deployed code. A 200 response with an empty
+   list is not proof that customers can discover a purchasable plan.
+6. If the migration fails or leaves a partial schema, stop. Do not blindly
+   retry or attempt destructive rollback. Capture the sanitized error, compare
+   actual objects and migration history to the SQL, and prefer a reviewed
+   forward repair. Use snapshot restore only under the approved recovery plan
+   after accounting for writes since the restore point. If Vercel targets
+   another database, do not migrate this Neon branch; repeat the read-only
+   checks against the actual target first.
+
+No migration, production configuration change, deployment, or production data
+write was made. The local route's correlated 503 and structured sanitized
+diagnostics improve failure handling and observability only; they do not
+create the missing relation or restore catalog availability. The live catalog
+therefore remains unrestored pending the target mapping and an approved
+production migration or other target-specific remediation.
+
+The local `/api/products` handler now returns a generic correlated 503 on
+catalog query failures and records only a classified Prisma error and a
+validated table identifier in structured logs. Database-free regression
+tests cover P2021, verify the table identifier and classified code remain in
+server diagnostics, and verify neither the identifier nor raw error details
+are returned to public clients. These local changes, including the homepage
+copy correction, are not production-verified and do not resolve the live
+outage until safely reviewed and deployed. No production data, database,
+email, or authenticated account was accessed or changed during this
+follow-up.
+
+### 22. Production recovery and migration review — 2026-10-14
+
+The Vercel project Environment Variables list showed `DATABASE_URL` as a
+secret scoped to **Production**. The project Integrations page reported no
+installed integrations. The dashboard value is write-only; it was not
+revealed, copied, or inspected. The Production scope is confirmed, but the
+variable's endpoint/database cannot be mapped from the available dashboard
+metadata to Neon project `fundedexperts`, branch `production`, database
+`neondb`. The exact target question therefore remains open; no production
+settings were changed.
+
+On the inspected Neon `production` branch/database `neondb`, read-only
+metadata queries reconfirmed the six base tables required by the foundation
+migration (`Product`, `RulesetVersion`, `Rule`, `OrderItem`, `Evaluation`,
+`Order`) and their key/configuration columns. `ProductStage`, the migration's
+new columns, its four enum types, and its named indexes/constraints were
+absent. Its `_prisma_migrations` table still showed 12 completed migrations
+through `20260927000000_evaluation_starting_balance`, with neither
+`20261013000000_product_domain_foundation` nor
+`20261014000000_evaluation_integrity` recorded. These are facts about the
+inspected Neon branch only until target mapping is proven.
+
+The foundation migration has no destructive drops/deletes/truncates, but it
+does default every existing Product to `DRAFT`, update every Rule's
+disposition from `isRequired`, and add the listed schema objects. It creates
+no ProductStage rows and does not publish or seed products. Even when the
+missing-table error is removed, the public catalog may return an empty list
+until legitimate offers are separately configured and published. The later
+integrity migration has no direct dependency on ProductStage, but runs next
+under normal `prisma migrate deploy`; its unique
+`FundedAccount.evaluationId` index requires a read-only duplicate preflight.
+The prior migration `20260923010524_phase20_business_readiness` dropped the
+earlier non-unique index on that column, so uniqueness is not established by
+the checked-in migration history. No row-level data or aggregate duplicate
+query was run.
+
+**Current decision:** Do not apply either migration yet. The schema prerequisites
+and absence of partial foundation objects are verified for the inspected
+Neon branch, but Vercel target mapping, the later uniqueness precondition,
+rehearsal, backup/restore readiness, and actual product publication readiness
+remain pending. Follow the controlled recovery checklist above only after
+these prerequisites and explicit production-change approval.
+
+Continuation verification used only database-free local checks:
+`pnpm test:unit` passed (27/27 suites), `pnpm exec tsc --noEmit --incremental
+false` passed, targeted ESLint passed for the catalog handler/helper/tests,
+and `git diff --check` passed. No migration, database-backed test, local
+database connection, deployment, commit, or push was performed. The existing
+uncommitted worktree changes were preserved.
+
+### 23. Autonomous engineering continuation — 2026-10-14
+
+**Baseline:** The repository remains on `main` at
+`6b94ad59fc714c4b32213710e8513f7452924ad9`, tracking `origin/main`. The
+working tree contains many pre-existing uncommitted changes; none were
+discarded. This continuation added only the order-notification isolation
+fix/test and this report update. The earlier accidental local request through
+ambient `.env.local` remains documented above and was not repeated.
+
+**Production incident recheck:** A single unauthenticated GET of the live
+`/api/products` endpoint again returned HTTP 500 (browser recorded a 500
+resource failure at approximately `2026-10-14T22:25:25Z`). The production
+outage remains unresolved. The Vercel secret `DATABASE_URL` was already
+confirmed Production-scoped, but no available provider metadata exposes the
+write-only target. The Neon console is labeled project `fundedexperts`,
+branch `production`, database `neondb`; this target has not been proven to
+match the Vercel runtime.
+
+**Read-only Neon preflight:** The migration-chain key tables/columns and
+absence of the foundation objects remain as stated in §22. A new aggregate-
+only read-only query for duplicate non-NULL `FundedAccount.evaluationId`
+values on the inspected Neon branch returned `duplicate_evaluation_keys = 0`
+and `affected_rows = 0`. This does not establish the state of the Vercel
+function's actual database unless target mapping is confirmed. No individual
+rows or customer data were selected. No backup/restore changes or migration
+rehearsal were performed; no verified existing disposable Neon branch was
+available, and creating a provider branch/database was outside the approved
+scope.
+
+The Neon branch list showed only one project branch, `production`; there was
+no existing isolated rehearsal branch. The production Backup & Restore page
+showed a six-hour history window, with “No snapshots, no schedule set.”
+Therefore no separately retained snapshot or scheduled backup was visible in
+that view. The UI offered restore-to-point-in-time on the existing branch;
+using it could rewind production writes made after the chosen point and is
+not a rollback plan for this schema change. Backup retention beyond that
+history window, point-in-time recovery guarantees, and restore permissions
+were not independently established. Do not use the Restore or Configure
+controls without separate approval.
+
+**Migration/workflow target mapping:** `prisma/schema.prisma` configures only
+`DATABASE_URL` for its datasource; it does not declare a separate `directUrl`.
+The guarded local migration script maps `TEST_DATABASE_URL` to the Prisma
+CLI's `DATABASE_URL` and also sets `DIRECT_URL` for compatibility. No
+repository production migration workflow is configured. The exact Production
+target remains blocked on a private, non-disclosing operator verification
+method for the secret's resource identity. Do not apply either pending
+migration until that is resolved.
+
+**Additional local reliability fix:** Order creation commits its database
+transaction before attempting the confirmation email. Previously, an email
+provider failure could escape to the route's outer catch and return HTTP 500
+after the order already existed, making a successful persistence operation
+look failed to the customer. `app/api/orders/route.ts` now isolates this
+ancillary notification through `lib/order-notification.ts`; delivery failure
+or a thrown provider error is logged as a warning with the existing
+correlation ID and order entity, while the successful order-creation response
+remains tied to the committed order. No provider detail or message content is
+logged. `tests/order-notification.test.ts` covers returned delivery failure,
+thrown failure, and successful delivery; the explicit database-free unit test
+manifest now includes it.
+
+**Monitoring trust-boundary fix:** The admin monitoring route accepts
+caller-supplied snapshots and has no authenticated provider-ingestion
+signature or deployed trusted worker boundary. It could therefore persist
+invented monitoring results in production. The route now rejects that manual
+and mock ingestion with HTTP 503 in Production, while allowing it only in
+known `development` or `test` environments; unknown environments fail closed.
+`tests/monitoring/ingestion-policy.test.ts` covers production, development,
+test, and unknown environment values. This disables an unsupported production
+path; it does not add live broker ingestion.
+
+**Additional source review:** The simulated payment confirmation endpoint
+remains disabled with HTTP 503 and cannot accept client-declared payment
+success. MT5 account create/update uses the credential-encryption boundary,
+and the account response selectors inspected do not select the credential
+field. Evaluation activation has an order-scoped transaction lock, trader
+activation lock, `FOR UPDATE SKIP LOCKED` inventory reservation, purpose and
+exact-size checks, purchased-snapshot/ruleset identity validation, and audit
+records. Rule-engine logic reviewed in this continuation fails closed when
+required input, freshness, or an explicit supported calculation is missing.
+These are source-level observations and database-free tests, not live
+operational verification. Authenticated user/admin browser workflows,
+live broker ingestion, actual payment integration, and production migration
+behavior remain unverified or intentionally disabled.
+
+**Current verification:**
+
+| Check | Result |
+|---|---|
+| `pnpm test:unit` | PASS — 29/29 database-free suites, including order notification and monitoring-ingestion policy regression tests. |
+| `pnpm test:safety` | PASS — 7 database guard tests and 5 destructive-entry-point/subprocess safety tests. |
+| `pnpm exec tsc --noEmit --incremental false` | PASS. |
+| `pnpm lint` | PASS — zero errors, 94 existing unused-variable warnings. |
+| Targeted ESLint for changed order route/helper/test/runner | PASS — no diagnostics. |
+| `pnpm exec prisma validate` | PASS with a non-routable placeholder `DATABASE_URL`; schema validation only, no connection. |
+| `pnpm exec prisma generate` | PASS — Prisma 6.19.3 client generation; no connection. |
+| `pnpm build` | PASS — production build and static generation completed (56 pages), with `DATABASE_URL` overridden to a loopback port that cannot reach a database. Next.js reported the existing middleware-to-proxy deprecation warning. |
+| `git diff --check` | PASS. |
+| Production catalog GET | FAIL — still HTTP 500. |
+| Database-backed tests, migration rehearsal, production schema repair | BLOCKED — no verified disposable rehearsal target; production target mapping and explicit operation approval still required. |
+
+**Next checkpoint:** An authorized operator must privately verify whether
+Vercel Production `DATABASE_URL` targets Neon `fundedexperts` /
+`production` / `neondb` without sharing its value; establish an adequate
+recoverable backup beyond the currently visible six-hour window; and approve
+provisioning or identify an existing disposable rehearsal target. After the
+ordered chain rehearsal and data/lock preflights, the production migration
+still requires explicit approval. Only then can live endpoint and populated
+catalog verification establish restoration. No production schema/data,
+provider setting, deployment, commit, or push was changed in this continuation.
+
+### Follow-up: enforce verified-email status in signed sessions
+
+The audit's F-15 session concern was addressed locally at the shared session
+boundary. `createSession` now refuses unverified identities and signs an
+`emailVerified: true` claim only after the login route's database-backed
+verification check. `getSession` validates the signed payload shape and
+rejects tokens without that claim, including previously issued legacy tokens.
+This makes all consumers of the shared session helper fail closed without
+repeating checks across every protected route. Database-free regression tests
+cover verified issuance, unverified issuance rejection, and legacy-token
+rejection. The database-backed verification-flow test was updated to reflect
+the fail-closed behavior but was not run.
+
+This is a local source change only; it has not been deployed. Existing
+production sessions will be rejected once this change is deployed, requiring
+users to sign in again; login already checks `emailVerified` before issuing a
+new token. No production authentication behavior was changed during this
+continuation.
+
+**Follow-up verification:** `pnpm test:unit` passed all 30 database-free
+suites; `pnpm exec tsc --noEmit --incremental false` passed; targeted ESLint
+for the changed session, login, test, and runner files exited successfully
+with zero errors (four warnings in database-backed test files). `git diff
+--check` passed. No database-backed tests or live service checks were run.
+
+### Local catalog and ruleset API failure observed on 2026-10-15
+
+The developer's local Webpack server started successfully with
+`pnpm exec next dev --webpack`, and the homepage returned HTTP 200. The
+server then logged HTTP 503 responses from `GET /api/products` and
+`GET /api/rulesets`; the sanitized product log identified `public.ProductStage`
+and `SCHEMA_TABLE_MISSING` (correlation IDs were visible in the local terminal
+but are intentionally not repeated here). The UI routes themselves returned
+200, which is not evidence that their catalog/rules data loaded.
+
+Repository evidence confirms `ProductStage` is declared in
+`prisma/schema.prisma` and created by
+`20261013000000_product_domain_foundation/migration.sql`. Earlier checked-in
+migrations create the prerequisite `Product`, `RulesetVersion`, and `Order`
+tables. Both public API routes select nested product stages through
+`PUBLIC_PRODUCT_SELECT`, so a missing `ProductStage` relation causes both to
+fail. The API's `P2021` classifier maps that Prisma error to the sanitized
+`SCHEMA_TABLE_MISSING` diagnostic; it does not suppress the failure as an
+empty catalog.
+
+**Root-cause status: ROOT CAUSE IDENTIFIED, REPAIR BLOCKED.** The runtime
+evidence establishes that the database target used by this local server
+cannot resolve `public.ProductStage`. It does not establish whether the
+product-domain migration is unapplied, the configured target is not the
+intended local database, the migration stopped partially, or the application
+is pointed at another schema. No database connection, query, migration,
+cleanup, provider action, or environment value inspection was performed in
+this continuation. The existing migration file is not evidence that it was
+applied to the local target.
+
+**Safe recovery prerequisite:** an authorized operator must privately verify
+that the configured target is the intended dedicated local database and
+inspect its migration history/schema without sharing its connection value.
+Only if that exact target is verified and approved for modification should
+the operator use the repository's guarded migration procedure; do not create
+an ad-hoc table or mark a migration applied to silence the error. Then verify
+the migration history and `ProductStage` schema, and exercise both
+`GET /api/products` and `GET /api/rulesets` against that same authorized
+target. A successful empty response is valid only if the database contains
+no published products; it is not proof that catalog data is configured.
+
+**Additional auth hardening and validation (2026-10-15):** Registration
+attempts previously cleared their in-process rate-limit counter on malformed
+input and when the address was already registered. Those failure paths no
+longer reset the counter; a successful account creation still clears it. A
+database-free source-contract test covers the reset boundaries. The
+rate-limiter remains process-local, so it is not a distributed production
+control; shared rate-limit infrastructure is still required before treating
+it as effective across serverless instances.
+
+Validation after this follow-up: `pnpm test:unit` passed **31/31**
+database-free suites; `pnpm test:safety` passed **7/7 guard tests and 5/5
+destructive-entry-point/subprocess tests**; `pnpm exec tsc --noEmit
+--incremental false` passed; `pnpm lint` exited successfully with **0 errors
+and 94 warnings**; `git diff --check` passed. Database-backed tests, Prisma
+queries, migrations, cleanup, and provider operations were not run.
+
+The login handler now returns the same generic 401 response for missing
+accounts, incorrect passwords, and suspended/inactive accounts after
+comparable password work, avoiding disclosure of account existence/status
+through its credential failure response. A database-free unit test covers the
+shared response policy. `pnpm test:unit` now passes **32/32** suites;
+TypeScript, targeted ESLint, and `git diff --check` pass after this change.
+
+**Public ruleset visibility:** the public `/api/rulesets/[id]` and
+`/api/rulesets/[id]/versions` reads now require both the ruleset and referenced
+version to remain active as well as published. This aligns those legacy routes
+with the catalog's publication filters. Pure database-free policy tests
+verify the public Prisma filters; they do not establish live endpoint output.
+
+**Order cancellation concurrency:** cancellation now uses a conditional
+`updateMany` inside a transaction, requiring the order to remain in a
+cancellable state and (for traders) to remain owned by the caller at the
+moment of transition. A concurrent state change results in HTTP 409 instead
+of being overwritten. Database-free tests verify ownership and state
+predicates; no database-backed concurrency test was run.
+
+**Account availability invariant:** the admin account-status route no longer
+accepts an `adminOverride` escape hatch to mark an account `AVAILABLE` while
+an active assignment exists. The route returns HTTP 409 for that conflict.
+A database-free contract test protects the invariant. The override is removed
+from this route; a similarly named field in the separate release flow is
+unrelated and remains unchanged.
+
+**Coupon redemption integrity:** order creation now atomically reserves a
+coupon use inside the same transaction as creating the order. The conditional
+update rechecks active state, expiry, discount percentage, and the usage cap;
+if a concurrent redemption consumes the last use, order creation returns
+HTTP 409 and creates no order. Transaction rollback releases the reservation
+if order or usage creation fails. Database-free tests cover the generated
+predicates; a database-backed concurrent redemption test remains unrun.
+
+**Latest verification:** `pnpm test:unit` passed **36/36** database-free
+suites; `pnpm test:safety` passed **7/7 guard checks and 5/5 destructive
+entry-point/subprocess checks**; `pnpm exec tsc --noEmit --incremental false`
+passed; full `pnpm lint` exited with **0 errors and 94 warnings**;
+`git diff --check` passed. Database-backed tests and all database/provider
+operations remain intentionally unrun. The catalog/ruleset target mismatch
+remains blocked pending private target verification and authorization.
+
+**Campaign checkpoint:** the guarded payment-confirmation route remains
+disabled with HTTP 503 until a real provider callback is implemented and
+verified; no simulated client-declared payment success was enabled. The local
+catalog/ruleset APIs remain blocked on a privately verified database target
+and its migration state. Password-reset proofs are hashed, expire, and are
+consumed with a conditional single-use update, but existing JWT sessions are
+not individually revoked by logout/password changes; durable revocation
+requires a coordinated schema/session-store change and compatible deployment.
+The process-local authentication rate limiter is not sufficient for a
+multi-instance deployment. No real payment, payout, broker/MT5 ingestion, or
+funded-account operation has been verified. These limits mean this work is
+not a production-readiness sign-off.
+
+**Auth notification failure visibility (2026-10-15):** thrown registration
+verification, verification-resend, welcome, login-alert, password-reset, and
+password-changed email dispatch failures are now recorded through the
+structured logger with fixed error codes/messages and correlation IDs. Raw
+exception details are not included, and successful account/password
+operations are not converted into failures solely because notification
+delivery could not complete. Database-free source-contract coverage protects
+each dispatch boundary.
+
+**Historical abuse-control findings rechecked (2026-10-15):** the current
+forgot-password handler no longer clears its account rate-limit counter and
+retains an independent resend cooldown. The order creation handler now
+returns a conflict rather than an existing order when an idempotency key is
+owned by another trader. Database-free contract coverage now protects both
+behaviors. The limiter remains process-local; distributed throttling across
+serverless instances remains a production blocker.
+
+**Account status/allocation serialization (2026-10-15):** the admin account
+status transition now locks the inventory row inside a transaction, checks
+the active assignment while holding that lock, uses a conditional status
+update, and writes its audit record in the same transaction. This serializes
+the transition with the evaluation allocators, which also lock the inventory
+row before assignment. The API now rejects non-object status bodies as
+client errors. Database-free contract coverage verifies the lock/check/update
+ordering; live concurrency behavior remains unverified without a verified
+test database.
+
+**Trader dashboard data and summary cards (2026-10-15):** the dashboard now
+requires successful, correctly shaped orders, evaluations, and account
+collections before treating them as loaded. It no longer presents permanently
+unavailable balance/equity cards; the top summary instead shows recorded order
+and active-evaluation counts, with explicit pending-payment qualification.
+Database-free contract coverage protects the response checks and avoids
+unsupported balance/equity claims.
+## Account-inventory status integrity follow-up (2026-10-15)
+
+A focused status-writer review found two unsafe API paths and one dormant repair path. The admin MT5 account PATCH previously changed status without serializing against account allocation or checking assignment consistency. The account inventory POST accepted `IN_USE` without an assignment and committed account creation separately from its audit row. The reconciliation helper repaired `AVAILABLE` accounts from a previously loaded snapshot without rechecking that state.
+
+The account status endpoints now use a shared transition policy. Both admin status mutation routes lock the `MT5Account` row, inspect the active assignment while holding the lock, conditionally update the prior status, and record status audit data in the same transaction. Account creation rejects `IN_USE`; account creation and its audit entry now share one transaction, and a concurrent duplicate account number maps the existing Prisma unique constraint (`MT5Account.accountNumber @unique`) to HTTP 409. The reconciliation repair now locks and re-reads the account and active assignments before applying a conditional update and transactional audit. A source search found no in-repository route or script invoking `reconcile()`; external invocation is not verifiable here.
+
+`tests/account-status-safety.unit.test.ts` now covers the shared state policy, status-route locking and transaction boundaries, the invalid account-creation state, and reconciliation revalidation. `tests/mt5-accounts.test.ts` now exercises the shared implementation instead of copied transition tables and corrects an assertion title that did not match its assertion.
+
+**Validation (database-free):** `pnpm test:unit` passed all 39/39 registered suites; the focused status safety file passed 6/6 tests. `pnpm exec tsc --noEmit --incremental false` passed. Targeted ESLint passed with zero warnings on the changed TypeScript files. `pnpm lint` exited successfully with 88 repository warning entries and zero errors; the changed files have no targeted warnings. A direct whitespace scan found no trailing whitespace and confirmed final newlines. The regular Git status/diff checks remain blocked by Git's existing dubious-ownership safeguard, which was not bypassed.
+
+No database connection, query, migration, seed, cleanup, application server, payment, email, or MT5 action was performed. No environment files were read. The target database and migration state remain unverified, so database-backed validation and launch readiness remain NO-GO. Existing payment, payout, live MT5 monitoring, and operational/session durability blockers documented above remain unresolved.
+
+**Source anchors:** `app/api/accounts/[id]/status/route.ts:66-103`; `app/api/admin/mt5-accounts/[id]/route.ts:180-239`; `app/api/accounts/route.ts:123-214`; `lib/mt5-account-status-policy.ts:1-28`; `lib/reconciliation.ts:76-130`; regression contracts in `tests/account-status-safety.unit.test.ts:1-90` and policy-backed tests in `tests/mt5-accounts.test.ts:222-285`.
+
+## Read-only Neon target verification (2026-10-15)
+
+After the development server log showed `SCHEMA_TABLE_MISSING`, the local `.env.local` target was inspected without displaying credentials or query parameters. A read-only PostgreSQL transaction reported database `neondb`, schema `public`, `transaction_read_only=on`, and no `public.ProductStage`. The target's `_prisma_migrations` table has 12 completed migrations, ending with `20260927000000_evaluation_starting_balance`; neither `20261013000000_product_domain_foundation` nor `20261014000000_evaluation_integrity` is recorded. This confirms the schema gap on the target currently configured for local development.
+
+The ignored `.env.test.local` also points to a remote Neon endpoint and database name `neondb`, with a different host from `.env.local`. This does not establish that it is disposable. `docs/test-environment.md` requires local, isolated development and disposable test databases; the current remote targets do not meet those documented prerequisites. No test database was contacted.
+
+The Neon Console could not be inspected in this session: the computer-use helper stopped because it could not confidently identify the active browser URL. The relationship between the configured development endpoint and the previously inspected Neon `production` branch therefore remains unverified. No migration was run. Do not apply the two pending migrations until the owner identifies the intended development branch and confirms it is approved for schema changes; the migration chain also backfills existing `Rule` rows and adds uniqueness constraints, so it must be rehearsed against an isolated copy first if the target may contain retained data.
+
+**Database-free validation rerun:** `pnpm test:unit` passed 39/39 suites; `pnpm exec tsc --noEmit --incremental false` passed; `pnpm lint` exited 0 with 88 warning entries and no errors. The live catalog remains blocked on the unverified database target and unapplied product-domain migration.

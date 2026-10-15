@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
+import { checkOrderActivationRateLimit } from "@/lib/order-activation-rate-limit";
 import { prismaActivationRepository } from "@/lib/evaluation-activation";
 import { handlePaidOrderActivation } from "@/lib/evaluation-activation-response";
 
@@ -26,6 +27,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   try {
+    const rateLimit = checkOrderActivationRateLimit(trader.id);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many attempts" },
+        { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } },
+      );
+    }
+
     const response = await handlePaidOrderActivation(prismaActivationRepository(prisma), { orderId: id, traderId: trader.id });
     if (!response.ok) logger.warn("ACTIVATION", "Paid order activation rejected", { correlationId, actor: { type: "trader", id: trader.id }, entity: { type: "Order", id } });
     return response;

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/components/header";
 import NotificationsPanel from "@/components/notifications-panel";
+import TraderWorkspaceNav from "@/components/trader-workspace-nav";
 import {
   Badge,
   Card,
@@ -27,6 +28,7 @@ import {
   CalendarDays,
   CircleHelp,
   Clock3,
+  ListOrdered,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
@@ -268,9 +270,11 @@ export default function DashboardPage() {
       setOrdersError("");
       try {
         const response = await fetch("/api/orders");
-        const body = (await response.json()) as { orders?: Order[]; error?: string };
-        if (!response.ok) throw new Error(body.error || "Failed to load recent orders.");
-        if (!cancelled) setOrders(body.orders ?? []);
+        const body = (await response.json()) as { success?: boolean; orders?: Order[]; error?: string };
+        if (!response.ok || !body.success || !Array.isArray(body.orders)) {
+          throw new Error(body.error || "Failed to load recent orders.");
+        }
+        if (!cancelled) setOrders(body.orders);
       } catch (error) {
         if (!cancelled) {
           setOrdersError(error instanceof Error ? error.message : "Failed to load recent orders.");
@@ -285,9 +289,11 @@ export default function DashboardPage() {
       setEvaluationsError("");
       try {
         const response = await fetch(evaluationUrl);
-        const body = (await response.json()) as { evaluations?: Evaluation[]; error?: string };
-        if (!response.ok) throw new Error(body.error || "Failed to load evaluations.");
-        if (!cancelled) setEvaluations(body.evaluations ?? []);
+        const body = (await response.json()) as { success?: boolean; evaluations?: Evaluation[]; error?: string };
+        if (!response.ok || !body.success || !Array.isArray(body.evaluations)) {
+          throw new Error(body.error || "Failed to load evaluations.");
+        }
+        if (!cancelled) setEvaluations(body.evaluations);
       } catch (error) {
         if (!cancelled) {
           setEvaluationsError(error instanceof Error ? error.message : "Failed to load evaluations.");
@@ -302,9 +308,11 @@ export default function DashboardPage() {
       setFundedAccountsError("");
       try {
         const response = await fetch(fundedAccountsUrl);
-        const body = (await response.json()) as { accounts?: FundedAccount[]; error?: string };
-        if (!response.ok) throw new Error(body.error || "Failed to load funded accounts.");
-        if (!cancelled) setFundedAccounts(body.accounts ?? []);
+        const body = (await response.json()) as { success?: boolean; accounts?: FundedAccount[]; error?: string };
+        if (!response.ok || !body.success || !Array.isArray(body.accounts)) {
+          throw new Error(body.error || "Failed to load funded accounts.");
+        }
+        if (!cancelled) setFundedAccounts(body.accounts);
       } catch (error) {
         if (!cancelled) {
           setFundedAccountsError(error instanceof Error ? error.message : "Failed to load funded accounts.");
@@ -369,6 +377,7 @@ export default function DashboardPage() {
   const displayName =
     `${trader.firstName ?? ""} ${trader.lastName ?? ""}`.trim() || trader.email;
   const activeEvaluations = evaluations.filter((evaluation) => evaluation.status === "IN_PROGRESS");
+  const pendingOrders = orders.filter((order) => order.status === "PENDING_PAYMENT");
   const pnlAccounts = fundedAccounts
     .filter((account) => account.status === "ACTIVE")
     .map((account) => ({ account, totalPnl: toFiniteNumber(account.totalPnl) }))
@@ -427,7 +436,8 @@ export default function DashboardPage() {
     <div className="flex min-h-screen flex-col">
       <Header currentPath="/dashboard" />
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-7 sm:px-6 sm:py-10">
-        <div className="mb-7 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
+        <TraderWorkspaceNav currentPath="/dashboard" />
+        <div className="mb-7 flex flex-col gap-4 rounded-2xl border border-border bg-card/60 p-5 shadow-sm sm:mb-8 sm:flex-row sm:items-end sm:justify-between sm:p-6">
           <PageHeader
             title="Your dashboard"
             description={`Welcome back, ${displayName}. Here's your account overview.`}
@@ -448,18 +458,40 @@ export default function DashboardPage() {
         <section className="mb-8" aria-label="Account metrics">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard
-              label="Balance"
-              value="Unavailable"
-              detail="A verified live balance is not exposed by the available account feed."
-              icon={<Banknote className="h-5 w-5" />}
-              tone="unavailable"
+              label="Orders recorded"
+              value={
+                ordersLoading === "loading"
+                  ? "Loading…"
+                  : ordersError
+                    ? "Unavailable"
+                    : String(orders.length)
+              }
+              detail={
+                ordersError
+                  ? "Order history could not be loaded."
+                  : pendingOrders.length > 0
+                    ? `${pendingOrders.length} pending; order status alone does not confirm payment.`
+                    : "Recorded order history from your account."
+              }
+              icon={<ListOrdered className="h-5 w-5" />}
+              tone={ordersError ? "unavailable" : "default"}
             />
             <MetricCard
-              label="Equity"
-              value="Unavailable"
-              detail="Live equity data is not available for display yet."
-              icon={<Wallet className="h-5 w-5" />}
-              tone="unavailable"
+              label="Active evaluations"
+              value={
+                evaluationsLoading === "loading"
+                  ? "Loading…"
+                  : evaluationsError
+                    ? "Unavailable"
+                    : String(activeEvaluations.length)
+              }
+              detail={
+                evaluationsError
+                  ? "Evaluation data could not be loaded."
+                  : `${evaluations.length} recorded evaluation${evaluations.length === 1 ? "" : "s"}; objective checks appear below.`
+              }
+              icon={<ShieldCheck className="h-5 w-5" />}
+              tone={evaluationsError ? "unavailable" : "default"}
             />
             <MetricCard
               label="Funded account P&L"

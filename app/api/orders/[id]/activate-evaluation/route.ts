@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
+import { checkOrderActivationRateLimit } from "@/lib/order-activation-rate-limit";
 import { prismaActivationRepository } from "@/lib/evaluation-activation";
 import { handlePaidOrderActivation } from "@/lib/evaluation-activation-response";
 
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!trader) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
   try {
-    const rateLimit = checkRateLimit(`order:activate:${trader.id}:${id}`);
+    const rateLimit = checkOrderActivationRateLimit(trader.id);
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { success: false, error: "Too many attempts" },

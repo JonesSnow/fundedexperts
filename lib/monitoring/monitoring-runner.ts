@@ -1,7 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { Worker } from "./worker";
 import { Scheduler } from "./scheduler";
-import { normalizeSnapshot } from "./normalize";
+import { hasValidNormalizedSnapshot, normalizeSnapshot } from "./normalize";
 import { evaluateEligibility } from "./eligibility";
 import { Logger } from "./logger";
 import { MT5Adapter } from "./adapter";
@@ -77,6 +77,20 @@ export interface ProcessSnapshotState {
   ruleEventsCreated: number;
   passed?: boolean;
   failed?: boolean;
+}
+
+export function monitoringRunnerEligibleAccountFilter(): Prisma.MT5AccountWhereInput {
+  return {
+    OR: [
+      { currentMonitoringStatus: null },
+      { currentMonitoringStatus: { in: ["HEALTHY", "ERROR", "UNKNOWN"] } },
+    ],
+    evaluations: {
+      some: {
+        status: "IN_PROGRESS",
+      },
+    },
+  };
 }
 
 export class MonitoringRunner {
@@ -220,7 +234,7 @@ export class MonitoringRunner {
         providerSnapshot as unknown as Parameters<typeof normalizeSnapshot>[3]
       );
 
-      if (!normalizationResult.snapshot) {
+      if (!hasValidNormalizedSnapshot(normalizationResult)) {
         await failJob(
           this.prisma,
           job.id,
@@ -303,34 +317,29 @@ export class MonitoringRunner {
     this.isRunning = true;
     this.scheduler.start();
 
-    this.logger.info("RUN_ALL", "Starting batch monitoring run");
+    try {
+      this.logger.info("RUN_ALL", "Starting batch monitoring run");
 
-    const eligibleAccounts = await this.prisma.mT5Account.findMany({
-      where: {
-        currentMonitoringStatus: { in: ["HEALTHY", "ERROR", "UNKNOWN"] },
-        evaluations: {
-          some: {
-            status: "IN_PROGRESS",
-          },
-        },
-      },
-      select: { id: true },
-    });
+      const eligibleAccounts = await this.prisma.mT5Account.findMany({
+        where: monitoringRunnerEligibleAccountFilter(),
+        select: { id: true },
+      });
 
-    this.logger.info("RUN_ALL", `Found ${eligibleAccounts.length} eligible accounts`);
+      this.logger.info("RUN_ALL", `Found ${eligibleAccounts.length} eligible accounts`);
 
-    const results: RunAccountResult[] = [];
-    for (const account of eligibleAccounts) {
-      const result = await this.runAccount(account.id, "system", true);
-      results.push(result);
+      const results: RunAccountResult[] = [];
+      for (const account of eligibleAccounts) {
+        const result = await this.runAccount(account.id, "system", true);
+        results.push(result);
+      }
+
+      this.logger.info("RUN_ALL", `Completed batch monitoring run: ${results.length} accounts processed`);
+
+      return results;
+    } finally {
+      this.isRunning = false;
+      this.scheduler.stop();
     }
-
-    this.isRunning = false;
-    this.scheduler.stop();
-
-    this.logger.info("RUN_ALL", `Completed batch monitoring run: ${results.length} accounts processed`);
-
-    return results;
   }
 
   getProcessedCount(): number {

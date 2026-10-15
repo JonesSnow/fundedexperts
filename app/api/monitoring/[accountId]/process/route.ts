@@ -3,11 +3,12 @@ import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { MockMT5Adapter } from "@/lib/monitoring/mock-adapter";
-import { normalizeSnapshot } from "@/lib/monitoring/normalize";
+import { hasValidNormalizedSnapshot, normalizeSnapshot } from "@/lib/monitoring/normalize";
 import { processMonitoringSnapshot, type ProcessSnapshotInput } from "@/lib/monitoring-pipeline";
 import { evaluateEligibility } from "@/lib/monitoring/eligibility";
 import type { MonitoringSnapshot } from "@/lib/monitoring/types";
 import { prisma } from "@/lib/db";
+import { adminSnapshotIngestionEnabled } from "@/lib/monitoring/ingestion-policy";
 
 const logger = createLogger({
   environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
@@ -47,6 +48,13 @@ export async function POST(
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
+    );
+  }
+
+  if (!adminSnapshotIngestionEnabled(process.env.NODE_ENV)) {
+    return NextResponse.json(
+      { success: false, error: "Trusted monitoring ingestion is not configured" },
+      { status: 503 },
     );
   }
 
@@ -156,7 +164,7 @@ export async function POST(
         providerSnapshot
       );
 
-      if (!normalizeResult.snapshot) {
+      if (!hasValidNormalizedSnapshot(normalizeResult)) {
         return NextResponse.json(
           { success: false, error: "Failed to normalize monitoring data" },
           { status: 400 }

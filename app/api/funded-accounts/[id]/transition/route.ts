@@ -65,9 +65,18 @@ export async function POST(
     const result = await transitionFundedAccountStatus(prisma, { id, status, reason, performedBy: admin.id });
 
     if (!result.success) {
+      const status = result.errorCategory === "NOT_FOUND"
+        ? 404
+        : result.errorCategory === "INVALID_TRANSITION"
+          ? 400
+          : result.errorCategory === "REASON_REQUIRED"
+            ? 400
+          : result.errorCategory === "TERMS_REVIEW_REQUIRED"
+            ? 409
+            : 500;
       return NextResponse.json(
         { success: false, error: result.error, errorCategory: result.errorCategory },
-        { status: result.errorCategory === "NOT_FOUND" ? 404 : 400 },
+        { status },
       );
     }
 

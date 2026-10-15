@@ -5,7 +5,7 @@ export default function SimulatedChartPreview() {
     <figure className="site-terminal-scene relative mx-auto w-full max-w-xl" aria-labelledby="demo-chart-caption">
       <div className="site-hero-panel site-terminal-device relative p-4 sm:p-6">
         <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]" aria-hidden="true">
-          <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-[radial-gradient(circle,rgba(59,10,107,.46),transparent_70%)]" />
+          <div className="site-terminal-light absolute -right-20 -top-24 h-64 w-64 rounded-full" />
         </div>
         <div className="relative">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
@@ -14,7 +14,7 @@ export default function SimulatedChartPreview() {
               <p className="mt-1 text-lg font-semibold tracking-tight">Evaluation overview</p>
             </div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary-light px-2.5 py-1 text-[0.65rem] font-bold tracking-wide text-primary">
-              <Activity className="h-3.5 w-3.5" aria-hidden="true" /> DEMO VIEW
+              <Activity className="h-3.5 w-3.5" aria-hidden="true" /> Illustrative
             </span>
           </div>
 
@@ -26,7 +26,7 @@ export default function SimulatedChartPreview() {
             <svg viewBox="0 0 520 190" className="h-auto w-full" role="img" aria-label="Decorative example chart with no live account or trading data">
               <defs>
                 <linearGradient id="demo-chart-line" x1="0" x2="1" y1="0" y2="0">
-                  <stop offset="0%" stopColor="var(--amethyst)" />
+                  <stop offset="0%" stopColor="var(--primary)" />
                   <stop offset="100%" stopColor="var(--primary)" />
                 </linearGradient>
                 <linearGradient id="demo-chart-fill" x1="0" x2="0" y1="0" y2="1">

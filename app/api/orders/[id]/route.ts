@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { cancellableOrderWhere } from "@/lib/order-cancellation";
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -128,10 +129,20 @@ export async function PATCH(
       );
     }
 
-    const cancelledOrder = await prisma.order.update({
-      where: { id },
-      data: { status: "CANCELLED" },
+    const cancelledOrder = await prisma.$transaction(async (tx) => {
+      const result = await tx.order.updateMany({
+        where: cancellableOrderWhere(id, trader.id, trader.role),
+        data: { status: "CANCELLED" },
+      });
+      if (result.count !== 1) return null;
+      return tx.order.findUnique({ where: { id } });
     });
+    if (!cancelledOrder) {
+      return NextResponse.json(
+        { success: false, error: "Order status changed; reload before trying again." },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json(
       { success: true, order: cancelledOrder, message: "Order cancelled" },

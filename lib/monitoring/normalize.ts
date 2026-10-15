@@ -27,6 +27,12 @@ export interface NormalizeError {
   context?: Record<string, unknown>;
 }
 
+export function hasValidNormalizedSnapshot(
+  result: NormalizeResult
+): result is NormalizeResult & { snapshot: MonitoringSnapshot } {
+  return result.success && result.snapshot !== null;
+}
+
 function maskLogin(login?: number | null): string {
   if (login === undefined || login === null) return "[MASKED]";
   const str = String(login);
@@ -44,14 +50,34 @@ function normalizeDirection(type: number | null | undefined): "BUY" | "SELL" | n
 function normalizeOrderState(state: number | null | undefined): string | null {
   if (state === undefined || state === null) return null;
   const states: Record<number, string> = {
-    0: "PENDING",
+    0: "STARTED",
     1: "PLACED",
-    2: "PARTIAL",
-    3: "FILLED",
-    4: "CANCELED",
-    5: "EXPIRED",
+    2: "CANCELED",
+    3: "PARTIAL",
+    4: "FILLED",
+    5: "REJECTED",
+    6: "EXPIRED",
+    7: "REQUEST_ADD",
+    8: "REQUEST_MODIFY",
+    9: "REQUEST_CANCEL",
   };
   return states[state] ?? null;
+}
+
+function normalizeOrderType(type: number | null | undefined): string | null {
+  if (type === undefined || type === null) return null;
+  const types: Record<number, string> = {
+    0: "BUY",
+    1: "SELL",
+    2: "BUY_LIMIT",
+    3: "SELL_LIMIT",
+    4: "BUY_STOP",
+    5: "SELL_STOP",
+    6: "BUY_STOP_LIMIT",
+    7: "SELL_STOP_LIMIT",
+    8: "CLOSE_BY",
+  };
+  return types[type] ?? null;
 }
 
 export function normalizeSnapshot(
@@ -106,8 +132,8 @@ export function normalizeSnapshot(
     equityHistoryComplete: raw.equityHistoryComplete === true,
     dailyPnl: raw.dailyPnl ?? null,
     dataQuality: {
-      positionsAvailable: Array.isArray(raw.positions),
-      ordersAvailable: Array.isArray(raw.orders),
+      positionsAvailable: Array.isArray(raw.positions) && positions.length === raw.positions.length,
+      ordersAvailable: Array.isArray(raw.orders) && orders.length === raw.orders.length,
       historyAvailable: Array.isArray(raw.history),
     },
   };
@@ -213,7 +239,7 @@ function normalizeOrders(rawOrders: ProviderOrder[] | null | undefined, errors: 
     }
     orders.push({
       symbol: o.symbol ?? null,
-      type: normalizeOrderState(o.type),
+      type: normalizeOrderType(o.type),
       volume: o.volume ?? null,
       price: o.price ?? null,
       state: normalizeOrderState(o.state),

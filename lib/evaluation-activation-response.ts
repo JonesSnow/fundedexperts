@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { activatePaidOrder, type ActivationRepository, type ActivationResult } from "./evaluation-activation";
-import type { ProductRuleType } from "./product-domain";
 
 export function evaluationActivationResponse(result: ActivationResult): NextResponse {
   if (!result.success) {
@@ -39,9 +38,8 @@ export function evaluationActivationResponse(result: ActivationResult): NextResp
 export async function handlePaidOrderActivation(
   repository: ActivationRepository,
   input: { orderId: string; traderId: string | null },
-  evaluatorVerifiedRuleTypes: readonly ProductRuleType[] = [],
 ): Promise<NextResponse> {
   if (!input.traderId) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  const result = await activatePaidOrder(repository, { orderId: input.orderId, traderId: input.traderId }, evaluatorVerifiedRuleTypes);
+  const result = await activatePaidOrder(repository, { orderId: input.orderId, traderId: input.traderId });
   return evaluationActivationResponse(result);
 }

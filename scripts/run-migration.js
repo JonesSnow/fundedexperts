@@ -14,9 +14,10 @@
     DIRECT_URL: TEST_DATABASE_URL,
   };
   delete migrationEnv.PHASE33_ALLOW_PRODUCTION_DB;
+  delete migrationEnv.TEST_DATABASE_CLEANUP_CONFIRMATION;
 
   try {
-    childProcess.execSync('npx prisma migrate dev --name phase20-business-readiness', {
+    childProcess.execSync('pnpm exec prisma migrate deploy', {
       stdio: 'inherit',
       env: migrationEnv,
       shell: true,
@@ -25,6 +26,6 @@
     process.exitCode = 1;
   }
 })().catch(() => {
-  console.error('Migration stopped: dedicated test database validation failed.');
+  console.error('Migration stopped before completion. Check the dedicated test database configuration and migration status.');
   process.exitCode = 1;
 });

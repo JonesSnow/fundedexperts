@@ -10,6 +10,7 @@ import {
   type DailyLossDefinition,
 } from "../lib/evaluation-calculations";
 import { normalizeSnapshot } from "../lib/monitoring/normalize";
+import { RULE_CAPABILITY_REGISTRY } from "../lib/rule-capabilities";
 import { resolveOrderTerms } from "../lib/order-domain";
 import { handlePaidOrderActivation } from "../lib/evaluation-activation-response";
 import {
@@ -306,6 +307,61 @@ test("other rules require explicit definitions and complete source fields", () =
   assert.equal(missingLeverage.state, "UNAVAILABLE");
 });
 
+test("runtime capability gate enforces every published rule method and treats missing data as unavailable", () => {
+  const drawdown = rule("DRAWDOWN_LIMIT", { maxDrawdown: 100 }, {
+    schemaVersion: 1,
+    method: "STATIC_STARTING_EQUITY",
+    maxSnapshotAgeMs: 120_000,
+    breachComparison: "STRICTLY_GREATER_THAN",
+  });
+  const maxOpen = rule("MAX_OPEN_TRADES", { maxTrades: 2 }, {
+    schemaVersion: 1,
+    method: "COUNT_OPEN_POSITIONS_AND_PENDING_ORDERS",
+    maxSnapshotAgeMs: 120_000,
+    breachComparison: "GREATER_THAN",
+  });
+  const maxLeverage = rule("MAX_LEVERAGE", { maxLeverage: 30 }, {
+    schemaVersion: 1,
+    method: "SNAPSHOT_ACCOUNT_LEVERAGE",
+    maxSnapshotAgeMs: 120_000,
+    breachComparison: "GREATER_THAN",
+  });
+  const actual = evaluateAllRules([drawdown, maxOpen, maxLeverage], snapshot({
+    equity: 24_899,
+    positions: [{ profit: 1 }],
+    orders: [{ state: "PLACED" }, { state: "PARTIAL" }, { state: "CANCELED" }],
+    leverage: 31,
+  }), { startingBalance: 25_000 });
+  assert.deepEqual(actual.map((outcome) => outcome.state), ["FAIL", "FAIL", "FAIL"]);
+
+  const missingOrders = evaluateAllRules([maxOpen], snapshot({ orders: [{ state: null }] }));
+  const unavailableTrailing = evaluateAllRules([rule("DRAWDOWN_LIMIT", { maxDrawdown: 100 }, {
+    schemaVersion: 1,
+    method: "TRAILING_PEAK_EQUITY",
+    maxSnapshotAgeMs: 120_000,
+    breachComparison: "STRICTLY_GREATER_THAN",
+  })], snapshot());
+  const unsupportedProfit = evaluateAllRules([rule("PROFIT_TARGET", { target: 100 }, {
+    schemaVersion: 1,
+    method: "REALIZED_PLUS_FLOATING_PNL",
+    maxSnapshotAgeMs: 120_000,
+    breachComparison: "GREATER_THAN_OR_EQUAL",
+  })], snapshot());
+  assert.equal(missingOrders[0]?.state, "UNAVAILABLE");
+  assert.equal(unavailableTrailing[0]?.state, "UNAVAILABLE");
+  assert.equal(unsupportedProfit[0]?.state, "UNAVAILABLE");
+});
+
+test("runtime enforcement leaves every unsupported required rule unavailable", () => {
+  const unsupportedRules = Object.entries(RULE_CAPABILITY_REGISTRY)
+    .filter(([, capability]) => capability.status === "UNSUPPORTED")
+    .map(([ruleType]) => rule(ruleType, {}, {}));
+  const outcomes = evaluateAllRules(unsupportedRules, snapshot());
+  assert.equal(outcomes.length, unsupportedRules.length);
+  assert.ok(outcomes.every((outcome) => outcome.state === "UNAVAILABLE" && outcome.result === "WARNING"));
+  assert.equal(getOverallResult(outcomes), "WARNING");
+});
+
 test("unresolved, unsupported, and empty rulesets cannot produce a pass", () => {
   const unresolved = { ...rule("PROFIT_TARGET", { target: 100 }, {}), disposition: "UNRESOLVED" } as unknown as Rule;
   const unknown = rule("UNKNOWN_RULE", {}, {});
@@ -321,11 +377,11 @@ test("monitoring breach audit identity is stable across retries", () => {
 });
 
 function productFixture() {
-  const profitCalculation = { schemaVersion: 1, method: "REALIZED_PLUS_FLOATING_PNL", metric: "net PnL", reference: "explicit rule target", breachComparison: "GREATER_THAN_OR_EQUAL", evaluationTiming: "CONTINUOUS", requiredInputs: ["realized PnL", "floating PnL"], maxSnapshotAgeMs: 120_000 };
-  const drawdownCalculation = { schemaVersion: 1, method: "STATIC_STARTING_EQUITY", metric: "equity drawdown", reference: "starting account balance", breachComparison: "STRICTLY_GREATER_THAN", evaluationTiming: "CONTINUOUS", requiredInputs: ["starting balance", "current equity"], maxSnapshotAgeMs: 120_000 };
+  const leverageCalculation = { schemaVersion: 1, method: "SNAPSHOT_ACCOUNT_LEVERAGE", metric: "account leverage", reference: "latest account snapshot", breachComparison: "GREATER_THAN", evaluationTiming: "fresh snapshot", requiredInputs: ["leverage", "dataTimestamp"], maxSnapshotAgeMs: 120_000 };
+  const openTradesCalculation = { schemaVersion: 1, method: "COUNT_OPEN_POSITIONS_AND_PENDING_ORDERS", metric: "open positions and pending orders", reference: "latest account snapshot", breachComparison: "GREATER_THAN", evaluationTiming: "fresh snapshot", requiredInputs: ["positions", "orders", "dataTimestamp"], maxSnapshotAgeMs: 120_000 };
   const rules: ActivationRule[] = [
-    { id: "profit-rule", name: "Profit target", ruleType: "PROFIT_TARGET", disposition: "REQUIRED", value: { target: 500 }, calculation: profitCalculation },
-    { id: "drawdown-rule", name: "Max loss", ruleType: "DRAWDOWN_LIMIT", disposition: "REQUIRED", value: { maxDrawdown: 100 }, calculation: drawdownCalculation },
+    { id: "leverage-rule", name: "Maximum leverage", ruleType: "MAX_LEVERAGE", disposition: "REQUIRED", value: { maxLeverage: 30 }, calculation: leverageCalculation },
+    { id: "open-trades-rule", name: "Maximum open trades", ruleType: "MAX_OPEN_TRADES", disposition: "REQUIRED", value: { maxTrades: 5 }, calculation: openTradesCalculation },
   ];
   const version: ActivationRulesetVersion = { id: "version-1", version: "1.0.0", status: "PUBLISHED", rules };
   const product = {
@@ -345,23 +401,22 @@ function productFixture() {
   return { product, version, rules };
 }
 
-test("order terms are server resolved, versioned, and blocked by default evaluator policy", () => {
+test("order terms are server resolved, versioned, and require centrally supported rules", () => {
   const { product } = productFixture();
-  const blocked = resolveOrderTerms(product as never, asOf);
-  const allowedInIsolatedFixture = resolveOrderTerms(product as never, asOf, ["PROFIT_TARGET", "DRAWDOWN_LIMIT"]);
-  assert.equal(blocked.valid, false);
-  assert.equal(allowedInIsolatedFixture.valid, true);
-  if (allowedInIsolatedFixture.valid) {
-    assert.equal(allowedInIsolatedFixture.price, "79.00");
-    assert.equal(allowedInIsolatedFixture.accountSize, "25000.00");
-    assert.equal(allowedInIsolatedFixture.rulesetVersionId, "version-1");
-    assert.equal(allowedInIsolatedFixture.productSnapshot.schemaVersion, 1);
+  const terms = resolveOrderTerms(product as never, asOf);
+  assert.equal(terms.valid, true);
+  if (terms.valid) {
+    assert.equal(terms.price, "79.00");
+    assert.equal(terms.accountSize, "25000.00");
+    assert.equal(terms.productSnapshot.denominationCurrency, "USD");
+    assert.equal(terms.rulesetVersionId, "version-1");
+    assert.equal(terms.productSnapshot.schemaVersion, 1);
   }
 });
 
 test("browser-supplied order money and rules cannot override server terms", () => {
   const { product } = productFixture();
-  const terms = resolveOrderTerms(product as never, asOf, ["PROFIT_TARGET", "DRAWDOWN_LIMIT"]);
+  const terms = resolveOrderTerms(product as never, asOf);
   assert.equal(terms.valid, true);
   if (terms.valid) {
     assert.equal(terms.price, "79.00");
@@ -400,7 +455,7 @@ class MemoryActivationRepository implements ActivationRepository {
       getAssignment: async (traderId, accountId) => staged.assignment?.traderId === traderId && staged.assignment.accountId === accountId ? staged.assignment : null,
       lockTraderActivation: async () => undefined,
       hasActiveAssignment: async (traderId) => staged.assignment?.traderId === traderId && staged.assignment.status === "ASSIGNED",
-      reserveMatchingAccount: async (accountSize) => staged.account?.status === "AVAILABLE" && Number(staged.account.accountSize) === accountSize ? staged.account : null,
+      reserveMatchingAccount: async (accountSize, denominationCurrency) => staged.account?.status === "AVAILABLE" && Number(staged.account.accountSize) === accountSize && staged.account.currency === denominationCurrency ? staged.account : null,
       createEvaluation: async (data) => {
         const evaluation = { ...data, id: "evaluation-1" };
         staged.evaluation = evaluation;
@@ -434,7 +489,7 @@ class MemoryActivationRepository implements ActivationRepository {
 
 function activationFixture(overrides: Partial<MemoryState> = {}) {
   const { product, version, rules } = productFixture();
-  const terms = resolveOrderTerms(product as never, asOf, ["PROFIT_TARGET", "DRAWDOWN_LIMIT"]);
+  const terms = resolveOrderTerms(product as never, asOf);
   assert.equal(terms.valid, true);
   if (!terms.valid) throw new Error("Invalid test product fixture");
   const order: ActivationOrder = {
@@ -459,11 +514,9 @@ function activationFixture(overrides: Partial<MemoryState> = {}) {
   return { repository: new MemoryActivationRepository(state), state, rules };
 }
 
-const verifiedFixtureRuleTypes = ["PROFIT_TARGET", "DRAWDOWN_LIMIT"] as const;
-
 test("activation creates evaluation, exact rule records, inventory assignment, and audit in one service transaction", async () => {
   const { repository, state } = activationFixture();
-  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(result.success, true);
   assert.equal(state.evaluation?.rulesetVersionId, "version-1");
   assert.equal(state.evaluation?.productStageId, "stage-1");
@@ -477,7 +530,7 @@ test("activation creates evaluation, exact rule records, inventory assignment, a
 
 test("missing inventory leaves no evaluation, assignment, or success audit", async () => {
   const { repository, state } = activationFixture({ account: null });
-  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(result.success, false);
   assert.equal(result.code, "NO_MATCHING_INVENTORY");
   assert.equal(state.evaluation, null);
@@ -485,10 +538,38 @@ test("missing inventory leaves no evaluation, assignment, or success audit", asy
   assert.equal(state.auditEvents.length, 0);
 });
 
+test("activation does not assign an equal-size account denominated in a different currency", async () => {
+  const { repository, state } = activationFixture({
+    account: { id: "account-1", accountNumber: "DEMO-1", accountSize: "25000.00", currency: "EUR", status: "AVAILABLE", purpose: "EVALUATION" },
+  });
+  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
+  assert.equal(result.success, false);
+  assert.equal(result.code, "NO_MATCHING_INVENTORY");
+  assert.equal(state.evaluation, null);
+  assert.equal(state.assignment, null);
+  assert.equal(state.account?.status, "AVAILABLE");
+  assert.equal(state.auditEvents.length, 0);
+});
+
+test("activation requires denomination currency from the immutable order snapshot", async () => {
+  const { repository, state } = activationFixture();
+  const productSnapshot = state.order.orderItems[0]!.productSnapshot as Record<string, unknown>;
+  delete productSnapshot.denominationCurrency;
+
+  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
+
+  assert.equal(result.success, false);
+  assert.equal(result.code, "TERMS_REVIEW_REQUIRED");
+  assert.equal(state.evaluation, null);
+  assert.equal(state.assignment, null);
+  assert.equal(state.account?.status, "AVAILABLE");
+  assert.equal(state.auditEvents[0]?.type, "REVIEW_REQUIRED");
+});
+
 test("activation retries return the same evaluation and do not allocate twice", async () => {
   const { repository, state } = activationFixture();
-  const first = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
-  const second = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const first = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
+  const second = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(first.success, true);
   assert.equal(second.success, true);
   if (first.success && second.success) {
@@ -499,21 +580,27 @@ test("activation retries return the same evaluation and do not allocate twice", 
   assert.equal(state.auditEvents.length, 1);
 });
 
-test("mocked activation route contract enforces authentication, ownership, payment, and review states", async () => {
+test("mocked activation route contract enforces authentication, ownership, and payment states", async () => {
   const unauthenticated = activationFixture();
-  const unauthenticatedResponse = await handlePaidOrderActivation(unauthenticated.repository, { orderId: "order-1", traderId: null }, verifiedFixtureRuleTypes);
+  const unauthenticatedResponse = await handlePaidOrderActivation(unauthenticated.repository, { orderId: "order-1", traderId: null });
   assert.equal(unauthenticatedResponse.status, 401);
 
   const forbidden = activationFixture();
-  const forbiddenResponse = await handlePaidOrderActivation(forbidden.repository, { orderId: "order-1", traderId: "trader-2" }, verifiedFixtureRuleTypes);
+  const forbiddenResponse = await handlePaidOrderActivation(forbidden.repository, { orderId: "order-1", traderId: "trader-2" });
   assert.equal(forbiddenResponse.status, 403);
 
   const unpaid = activationFixture();
   unpaid.state.order.status = "PENDING_PAYMENT";
-  const unpaidResponse = await handlePaidOrderActivation(unpaid.repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const unpaidResponse = await handlePaidOrderActivation(unpaid.repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(unpaidResponse.status, 400);
 
+});
+
+test("activation holds an unsupported purchased rule for administrator review", async () => {
   const unverified = activationFixture();
+  unverified.state.version.rules[0]!.ruleType = "PROFIT_TARGET";
+  const snapshotValue = unverified.state.order.orderItems[0]!.productSnapshot as { stages: Array<{ rules: Array<{ type: string }> }> };
+  snapshotValue.stages[0]!.rules[0]!.type = "PROFIT_TARGET";
   const unverifiedResponse = await handlePaidOrderActivation(unverified.repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(unverifiedResponse.status, 409);
   const body = await unverifiedResponse.json() as { reviewRequired?: boolean };
@@ -522,7 +609,7 @@ test("mocked activation route contract enforces authentication, ownership, payme
 
 test("mocked activation route returns a safe successful response after the service commits", async () => {
   const { repository } = activationFixture();
-  const response = await handlePaidOrderActivation(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const response = await handlePaidOrderActivation(repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(response.status, 201);
   const body = await response.json() as { success: boolean; evaluation: { status: string; account: { status: string } } };
   assert.equal(body.success, true);
@@ -533,8 +620,8 @@ test("mocked activation route returns a safe successful response after the servi
 test("concurrent activation requests serialize to one account allocation", async () => {
   const { repository, state } = activationFixture();
   const results = await Promise.all([
-    activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes),
-    activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes),
+    activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }),
+    activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }),
   ]);
   assert.ok(results.every((result) => result.success));
   assert.equal(results.filter((result) => result.success && result.duplicate).length, 1);
@@ -544,7 +631,7 @@ test("concurrent activation requests serialize to one account allocation", async
 
 test("rule initialization failure rolls back evaluation and assignment state", async () => {
   const { repository, state } = activationFixture({ failRuleInitialization: true });
-  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(result.success, false);
   assert.equal(state.evaluation, null);
   assert.equal(state.account?.status, "AVAILABLE");
@@ -554,11 +641,11 @@ test("rule initialization failure rolls back evaluation and assignment state", a
 test("unpaid orders and another customer's order are rejected before allocation", async () => {
   const unpaid = activationFixture();
   unpaid.state.order.status = "PENDING_PAYMENT";
-  const unpaidResult = await activatePaidOrder(unpaid.repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const unpaidResult = await activatePaidOrder(unpaid.repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(unpaidResult.success, false);
   assert.equal(unpaidResult.code, "ORDER_NOT_PAID");
   const owned = activationFixture();
-  const forbidden = await activatePaidOrder(owned.repository, { orderId: "order-1", traderId: "trader-2" }, verifiedFixtureRuleTypes);
+  const forbidden = await activatePaidOrder(owned.repository, { orderId: "order-1", traderId: "trader-2" });
   assert.equal(forbidden.success, false);
   assert.equal(forbidden.code, "FORBIDDEN");
   assert.equal(owned.state.evaluation, null);
@@ -568,7 +655,7 @@ test("mismatched order snapshot ruleset is audited and rejected", async () => {
   const { repository, state } = activationFixture();
   const snapshotValue = state.order.orderItems[0].productSnapshot as { stages: Array<Record<string, unknown>> };
   snapshotValue.stages[0].rulesetVersionId = "attacker-version";
-  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" }, verifiedFixtureRuleTypes);
+  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(result.success, false);
   assert.equal(result.code, "TERMS_REVIEW_REQUIRED");
   assert.equal(state.evaluation, null);
@@ -577,7 +664,7 @@ test("mismatched order snapshot ruleset is audited and rejected", async () => {
 
 test("historical order terms remain authoritative when the current catalog changes", () => {
   const { product, version, rules } = productFixture();
-  const terms = resolveOrderTerms(product as never, asOf, verifiedFixtureRuleTypes);
+  const terms = resolveOrderTerms(product as never, asOf);
   assert.equal(terms.valid, true);
   if (!terms.valid) return;
   const historicalOrder: ActivationOrder = { id: "historical", traderId: "trader-1", status: "PAID", rulesetVersionId: version.id, orderItems: [{ productId: "product-1", unitPrice: terms.price, currency: terms.currency, productSnapshot: terms.productSnapshot }] };

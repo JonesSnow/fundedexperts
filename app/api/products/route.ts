@@ -1,12 +1,27 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
-import { hasDuplicateProductCode, validateProductDraftInput, validateProductForPublication } from "@/lib/product-domain";
+import { hasDuplicateProductCode, validateProductDraftInput } from "@/lib/product-domain";
+import {
+  approvedPublicProducts,
+  publicApiStatus,
+  PUBLIC_PRODUCT_SELECT,
+  PUBLIC_PRODUCT_WHERE,
+  publicApiFailure,
+  safePrismaErrorCode,
+  safePrismaErrorTable,
+  serializePublicProduct,
+} from "@/lib/public-catalog";
+import type { PublicProductsResponse } from "@/lib/product-experience";
 
+const logger = createLogger({
+  environment: process.env.NODE_ENV as "development" | "production" | "test",
+});
 
 async function getAuthenticatedUser(request: NextRequest) {
+  const { getSessionCookie, getSession } = await import("@/lib/auth/session");
   const token = getSessionCookie(request);
   if (!token) return null;
   const session = await getSession(token);
@@ -22,93 +37,35 @@ async function getAuthenticatedUser(request: NextRequest) {
 }
 
 export async function GET() {
+  const correlationId = generateCorrelationId();
   const rateLimit = checkRateLimit("products:list");
   if (!rateLimit.allowed) {
     return NextResponse.json(
-      { success: false, error: "Too many attempts" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+      publicApiFailure("RATE_LIMITED", "Too many attempts. Please try again later.", correlationId),
+      { status: publicApiStatus("RATE_LIMITED"), headers: { "Retry-After": String(rateLimit.retryAfter) } }
     );
   }
 
-  const products = await prisma.product.findMany({
-    where: {
-      isActive: true,
-      status: "ACTIVE",
-      code: { not: null },
-      category: { not: null },
-      evaluationStructure: { not: null },
-      denominationCurrency: { not: null },
-      accountSize: { not: null },
-      price: { not: null },
-    },
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      description: true,
-      category: true,
-      evaluationStructure: true,
-      status: true,
-      accountSize: true,
-      denominationCurrency: true,
-      price: true,
-      currency: true,
-      displayOrder: true,
-      isActive: true,
-      ruleset: { select: { name: true } },
-      stages: {
-        orderBy: { stageOrder: "asc" },
-        select: {
-          id: true,
-          stageKey: true,
-          displayName: true,
-          stageOrder: true,
-          rulesetVersion: {
-            select: {
-              id: true,
-              version: true,
-              status: true,
-              ruleset: { select: { id: true, name: true } },
-              rules: {
-                select: {
-                  id: true,
-                  name: true,
-                  ruleType: true,
-                  value: true,
-                  isRequired: true,
-                  disposition: true,
-                  calculation: true,
-                },
-              },
-            },
-          },
-        },
-      },
-      operatingRulesetVersion: {
-        select: {
-          id: true,
-          version: true,
-          status: true,
-          ruleset: { select: { id: true, name: true } },
-          rules: {
-            select: {
-              id: true,
-              name: true,
-              ruleType: true,
-              value: true,
-              isRequired: true,
-              disposition: true,
-              calculation: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: { displayOrder: "asc" },
-  });
-  const verifiedProducts = products.filter((product) => validateProductForPublication(product).length === 0);
-
-  return NextResponse.json({ success: true, products: verifiedProducts }, { status: 200 });
+  try {
+    const records = await prisma.product.findMany({
+      where: PUBLIC_PRODUCT_WHERE,
+      select: PUBLIC_PRODUCT_SELECT,
+      orderBy: [{ displayOrder: "asc" }, { id: "asc" }],
+    });
+    const products = approvedPublicProducts(records).map(serializePublicProduct);
+    const response: PublicProductsResponse = { success: true, products };
+    return NextResponse.json(response, { status: 200 });
+  } catch (error) {
+    logger.error("PRODUCT", "Public product catalog retrieval failed", {
+      correlationId,
+      metadata: { table: safePrismaErrorTable(error) },
+      error: { code: safePrismaErrorCode(error), message: "Unable to query or serialize approved products" },
+    });
+    return NextResponse.json(
+      publicApiFailure("SERVICE_UNAVAILABLE", "The plan catalog is temporarily unavailable. Please try again.", correlationId),
+      { status: publicApiStatus("SERVICE_UNAVAILABLE") },
+    );
+  }
 }
 
 export async function POST(request: NextRequest) {

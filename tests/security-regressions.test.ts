@@ -216,7 +216,7 @@ async function makeFundedAccount(traderId: string) {
 }
 
 function sessionRequest(traderId: string, role: string, path: string): Promise<NextRequest> {
-  return createSession(traderId, role).then(
+  return createSession(traderId, role, true).then(
     (token) =>
       new NextRequest(`https://fundedexperts.test${path}`, {
         headers: { cookie: `${SESSION_COOKIE}=${token}` },

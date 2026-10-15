@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { PUBLIC_RULESET_WHERE, PUBLIC_RULESET_VERSION_WHERE } from "@/lib/ruleset-visibility";
 
 export async function GET(
   _request: NextRequest,
@@ -9,8 +10,7 @@ export async function GET(
   const ruleset = await prisma.ruleset.findUnique({
     where: {
       id,
-      isActive: true,
-      versions: { some: { status: "PUBLISHED" } },
+      ...PUBLIC_RULESET_WHERE,
     },
     select: {
       id: true,
@@ -22,9 +22,7 @@ export async function GET(
           version: true,
           status: true,
         },
-        where: {
-          status: "PUBLISHED",
-        },
+        where: PUBLIC_RULESET_VERSION_WHERE,
         orderBy: { version: "desc" },
       },
     },

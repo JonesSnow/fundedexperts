@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import TraderPageShell from "@/components/trader-page-shell";
 import TraderLoadError from "@/components/trader-load-error";
+import TraderStatusOverview from "@/components/trader-status-overview";
 import { ButtonLink, Card, EmptyState, LoadingState, StatusBadge } from "@/components/ui";
 import { formatAmount, formatDate } from "@/components/trader-format";
 
@@ -84,6 +85,16 @@ export default function OrdersPage() {
 
   return (
     <TraderPageShell currentPath="/orders" title="Orders" description="Review order totals and the latest recorded status from your order history." actions={<><ButtonLink href="/catalog" variant="outline">Browse products</ButtonLink><ButtonLink href="/dashboard" variant="outline">Dashboard</ButtonLink></>}>
+      <TraderStatusOverview
+        title="Order status"
+        total={orders.length}
+        statuses={statuses.map((status) => ({
+          status,
+          count: orders.filter((order) => order.status === status).length,
+        }))}
+        loading={loading}
+        unavailable={Boolean(error)}
+      />
       <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground" aria-live="polite">{loading ? "Loading orders…" : `${visibleOrders.length} ${visibleOrders.length === 1 ? "order" : "orders"}`}</p>
         <div className="flex flex-wrap items-end gap-3">

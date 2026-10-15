@@ -219,18 +219,20 @@ describe("Verification Flow - Unverified Access Protection", () => {
     await prisma.$disconnect();
   });
 
-  it("should create session for unverified user (session is valid, access is restricted at middleware level)", async () => {
+  it("should not create a session for an unverified user", async () => {
     const trader = await createUnverifiedTrader("unverified-session-test@example.com");
-    const token = await createSession(trader.id, trader.role);
 
-    assert.ok(token, "Session token should be created");
     assert.equal(trader.emailVerified, false, "Trader should be unverified");
     assert.equal(trader.status, "ACTIVE", "Trader status should not block login");
+    await assert.rejects(
+      createSession(trader.id, trader.role, trader.emailVerified),
+      /unverified email address/
+    );
   });
 
   it("should create session for verified user", async () => {
     const trader = await createVerifiedTrader("verified-session-test@example.com");
-    const token = await createSession(trader.id, trader.role);
+    const token = await createSession(trader.id, trader.role, trader.emailVerified);
 
     assert.ok(token, "Session token should be created");
     assert.equal(trader.emailVerified, true, "Trader should be verified");

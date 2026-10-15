@@ -2,7 +2,6 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { createMockPaymentProvider } from "../lib/mock-payment-provider";
 import type {
-  PaymentProvider,
   PaymentRequest,
   RefundRequest,
 } from "../lib/payment";
@@ -29,6 +28,7 @@ describe("Payment Abstraction", () => {
   it("should define PaymentProvider interface methods", () => {
     assert.equal(typeof provider.processPayment, "function");
     assert.equal(typeof provider.getPaymentStatus, "function");
+    assert.equal(typeof provider.getPaymentRecord, "function");
     assert.equal(typeof provider.refundPayment, "function");
     check("Interface methods present", true, "");
   });
@@ -71,6 +71,29 @@ describe("Payment Abstraction", () => {
       result1.status === result2.status,
       "",
     );
+  });
+
+  it("rejects reuse of an idempotency key with different payment terms", async () => {
+    const idempotencyKey = `idem-conflict-${Date.now()}`;
+    const first = await provider.processPayment({
+      orderId: "order-original",
+      amount: 50,
+      currency: "USD",
+      provider: "MOCK",
+      idempotencyKey,
+    });
+    const conflicting = await provider.processPayment({
+      orderId: "order-different",
+      amount: 75,
+      currency: "EUR",
+      provider: "MOCK",
+      idempotencyKey,
+    });
+
+    assert.equal(first.success, true);
+    assert.equal(conflicting.success, false);
+    assert.equal(conflicting.status, "FAILED");
+    assert.equal(conflicting.paymentId, undefined);
   });
 
   it("should return null for unknown payment status", async () => {

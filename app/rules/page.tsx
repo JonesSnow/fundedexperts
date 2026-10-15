@@ -8,10 +8,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/ui/button";
 import { ArrowRight, RotateCw } from "lucide-react";
-import { formatRuleCalculation, formatRuleValue, ruleGroup, type ConfiguredRule, type PublicRuleset } from "@/lib/product-experience";
+import {
+  formatRuleCalculation,
+  formatRuleValue,
+  isPublicRulesResponse,
+  ruleGroup,
+  type ConfiguredRule,
+  type PublicRuleset,
+  type PublicRulesetsResponse,
+} from "@/lib/product-experience";
 
-interface RulesetsResponse { success?: boolean; rulesets?: PublicRuleset[] }
-interface RulesResponse { success?: boolean; rules?: ConfiguredRule[] }
 interface DisplayRuleset extends PublicRuleset { publishedVersion: string | null; rules: ConfiguredRule[]; loadError: boolean }
 
 const topics = [
@@ -50,7 +56,7 @@ export default function RulesPage() {
       setError("");
       try {
         const response = await fetch("/api/rulesets", { signal: controller.signal });
-        const data = (await response.json()) as RulesetsResponse;
+        const data = (await response.json()) as Partial<PublicRulesetsResponse>;
         if (!response.ok || !data.success || !Array.isArray(data.rulesets)) throw new Error("Rulesets unavailable");
         const loaded = await Promise.all(data.rulesets.map(async (ruleset): Promise<DisplayRuleset> => {
           const version = ruleset.versions.find((item) => item.status === "PUBLISHED");
@@ -58,8 +64,8 @@ export default function RulesPage() {
           try {
             const path = `/api/rulesets/${encodeURIComponent(ruleset.id)}/versions/${encodeURIComponent(version.version)}/rules`;
             const ruleResponse = await fetch(path, { signal: controller.signal });
-            const ruleData = (await ruleResponse.json()) as RulesResponse;
-            if (!ruleResponse.ok || !ruleData.success || !Array.isArray(ruleData.rules)) throw new Error("Rules unavailable");
+            const ruleData: unknown = await ruleResponse.json();
+            if (!ruleResponse.ok || !isPublicRulesResponse(ruleData)) throw new Error("Rules unavailable");
             return { ...ruleset, publishedVersion: version.version, rules: ruleData.rules, loadError: false };
           } catch {
             return { ...ruleset, publishedVersion: version.version, rules: [], loadError: !controller.signal.aborted };
@@ -129,13 +135,13 @@ export default function RulesPage() {
               {!loading && !error && visibleRulesets.length === 0 && <p className="mt-5 rounded-xl border border-border p-4 text-sm text-muted-foreground">No published rules match this filter.</p>}
               {!loading && !error && visibleRulesets.length > 0 && <div className="mt-6 divide-y divide-border border-y border-border">{visibleRulesets.map((ruleset) => <article key={ruleset.id} id={`ruleset-${ruleset.id}`} className="scroll-mt-28 py-5">
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="break-words text-lg font-semibold">{ruleset.name}</h3>{ruleset.description && <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{ruleset.description}</p>}</div>{ruleset.publishedVersion ? <Badge variant="outline">Rules published</Badge> : <Badge variant="warning">Not published</Badge>}</div>
-                {ruleset.loadError ? <p className="mt-3 text-sm text-danger" role="alert">The published rules could not be loaded.</p> : ruleset.rules.length ? <ul className="mt-4 grid gap-3 sm:grid-cols-2">{ruleset.rules.map((rule) => <li key={rule.id} className="min-w-0 rounded-xl border border-border bg-background p-4"><div className="flex flex-wrap items-start justify-between gap-2"><h4 className="break-words text-sm font-semibold">{rule.name}</h4><Badge variant={rule.disposition === "UNRESOLVED" ? "warning" : "outline"}>{rule.disposition === "UNRESOLVED" ? "Details incomplete" : rule.disposition === "OPTIONAL" ? "Optional" : "Required"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{ruleGroup(rule.ruleType)}</p><p className="mt-3 break-words rounded-lg bg-muted/60 p-3 font-mono text-xs">{formatRuleValue(rule.value)}</p>{rule.calculation !== null && rule.calculation !== undefined && <p className="mt-3 break-words text-xs leading-5 text-muted-foreground"><span className="font-semibold text-foreground">How it is measured:</span> {formatRuleCalculation(rule.calculation)}</p>}</li>)}</ul> : <p className="mt-3 text-sm text-warning-foreground">No rules are available for this plan yet.</p>}
+                {ruleset.loadError ? <p className="mt-3 text-sm text-danger" role="alert">The published rules could not be loaded.</p> : ruleset.rules.length ? <ul className="mt-4 grid gap-3 sm:grid-cols-2">{ruleset.rules.map((rule) => <li key={rule.id} className="min-w-0 rounded-xl border border-border bg-background p-4"><div className="flex flex-wrap items-start justify-between gap-2"><h4 className="break-words text-sm font-semibold">{rule.name}</h4><div className="flex flex-wrap gap-2"><Badge variant={rule.disposition === "UNRESOLVED" ? "warning" : "outline"}>{rule.disposition === "UNRESOLVED" ? "Details incomplete" : rule.disposition === "OPTIONAL" ? "Optional" : "Required"}</Badge><Badge variant={rule.enforcement.status === "UNSUPPORTED" ? "warning" : "outline"}>{rule.enforcement.status === "UNSUPPORTED" ? "Not verified" : rule.enforcement.status === "LIMITED" ? "Limited calculation" : "Supported calculation"}</Badge></div></div><p className="mt-1 text-xs text-muted-foreground">{ruleGroup(rule.ruleType)}</p><p className="mt-3 break-words rounded-lg bg-muted/60 p-3 font-mono text-xs">{formatRuleValue(rule.value)}</p>{rule.calculation !== null && rule.calculation !== undefined && <p className="mt-3 break-words text-xs leading-5 text-muted-foreground"><span className="font-semibold text-foreground">How it is measured:</span> {formatRuleCalculation(rule.calculation)}</p>}<p className="mt-3 break-words text-xs leading-5 text-muted-foreground"><span className="font-semibold text-foreground">{rule.enforcement.status === "UNSUPPORTED" ? "Not approved for enforcement:" : rule.enforcement.status === "LIMITED" ? "Limited enforcement:" : "Monitoring conditions:"}</span> {rule.enforcement.details}</p></li>)}</ul> : <p className="mt-3 text-sm text-warning-foreground">No rules are available for this plan yet.</p>}
               </article>)}</div>}
             </section>
 
             <section className="mt-10" aria-labelledby="topic-guide-title"><p className="site-kicker">Rule guide</p><h2 id="topic-guide-title" className="mt-3 text-2xl font-semibold">What each policy must make clear</h2><div className="mt-5 space-y-4">{topics.map((topic) => {
               const matching = visibleRulesets.flatMap((ruleset) => ruleset.rules.filter((rule) => ruleMatches(rule, topic)).map((rule) => ({ ruleset, rule })));
-              return <article id={topic.id} key={topic.id} className="scroll-mt-28 rounded-2xl border border-border bg-card p-5 sm:p-6"><div className="grid gap-3 sm:grid-cols-[0.65fr_1.35fr]"><h3 className="text-lg font-semibold">{topic.title}</h3><p className="text-sm leading-6 text-muted-foreground">{topic.description}</p></div>{topic.id !== "overview" && topic.id !== "glossary" && topic.id !== "applicability" && <div className="mt-4 border-t border-border pt-4">{matching.length ? <ul className="grid gap-3 sm:grid-cols-2">{matching.map(({ ruleset, rule }) => <li key={`${ruleset.id}-${rule.id}`} className="min-w-0 rounded-lg bg-muted/50 p-3"><p className="text-xs font-semibold">{ruleset.name}</p><p className="mt-1 text-sm">{rule.name}</p><p className="mt-1 break-words font-mono text-xs">{formatRuleValue(rule.value)}</p></li>)}</ul> : <p className="text-xs leading-5 text-warning-foreground">No rule has been published for this topic yet.</p>}</div>}</article>;
+              return <article id={topic.id} key={topic.id} className="scroll-mt-28 rounded-2xl border border-border bg-card p-5 sm:p-6"><div className="grid gap-3 sm:grid-cols-[0.65fr_1.35fr]"><h3 className="text-lg font-semibold">{topic.title}</h3><p className="text-sm leading-6 text-muted-foreground">{topic.description}</p></div>{topic.id !== "overview" && topic.id !== "glossary" && topic.id !== "applicability" && <div className="mt-4 border-t border-border pt-4">{matching.length ? <ul className="grid gap-3 sm:grid-cols-2">{matching.map(({ ruleset, rule }) => <li key={`${ruleset.id}-${rule.id}`} className="min-w-0 rounded-lg bg-muted/50 p-3"><p className="text-xs font-semibold">{ruleset.name}</p><p className="mt-1 text-sm">{rule.name}</p><p className="mt-1 break-words font-mono text-xs">{formatRuleValue(rule.value)}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{rule.enforcement.details}</p></li>)}</ul> : <p className="text-xs leading-5 text-warning-foreground">No rule has been published for this topic yet.</p>}</div>}</article>;
             })}</div></section>
 
             <section className="mt-10 rounded-xl border border-border bg-card p-6 sm:p-8"><p className="site-kicker text-primary">Choose with confidence</p><h2 className="mt-3 text-2xl font-semibold">Review each plan&apos;s published rules.</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">Missing terms are clearly marked and are not assumed.</p><div className="mt-5 flex flex-wrap gap-3"><ButtonLink href="/catalog">Browse plans <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink><ButtonLink href="/faq" variant="outline">Common questions</ButtonLink><Link href="/how-it-works" className="inline-flex min-h-10 items-center px-3 text-sm font-semibold text-primary underline underline-offset-4">How the process works</Link></div></section>

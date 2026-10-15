@@ -27,8 +27,8 @@ export default function CatalogPage() {
                 Compare account sizes, prices, evaluation stages, and published rules before you choose a plan.
               </p>
               <div className="mt-7 flex flex-wrap items-center gap-3">
-                <Link href="/pricing" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                  Plans and pricing <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                <Link href="#configured-products" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                  Compare plans <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </Link>
                 <Link href="/rules" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                   Read the rules
@@ -47,7 +47,7 @@ export default function CatalogPage() {
           </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-5 pb-16 sm:px-8 md:pb-20" aria-label="Configured products">
+        <section id="configured-products" className="mx-auto max-w-7xl scroll-mt-24 px-5 pb-16 sm:px-8 md:pb-20" aria-label="Available plans">
           <ProductShowcase purchaseUnavailable />
         </section>
       </main>

@@ -5,9 +5,15 @@ import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { sendLoginSecurityAlertEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
+import { invalidLoginResponse } from "@/lib/auth/login-policy";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
 
+const logger = createLogger({
+  environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
+});
 
 export async function POST(request: NextRequest) {
+  const correlationId = generateCorrelationId();
   try {
     const body = await request.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -67,27 +73,21 @@ const trader = await prisma.trader.findUnique({
     // are registered. Status codes and bodies are unchanged from before.
     if (!trader) {
       await performDummyPasswordVerification(body.password);
-      return NextResponse.json(
-        { success: false, error: "Invalid credentials" },
-        { status: 401 }
-      );
+      const failure = invalidLoginResponse();
+      return NextResponse.json(failure.body, { status: failure.status });
     }
 
     if (trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
       await performDummyPasswordVerification(body.password);
-      return NextResponse.json(
-        { success: false, error: "Account suspended" },
-        { status: 403 }
-      );
+      const failure = invalidLoginResponse();
+      return NextResponse.json(failure.body, { status: failure.status });
     }
 
     const isValid = await verifyPassword(body.password, trader.password);
 
     if (!isValid) {
-      return NextResponse.json(
-        { success: false, error: "Invalid credentials" },
-        { status: 401 }
-      );
+      const failure = invalidLoginResponse();
+      return NextResponse.json(failure.body, { status: failure.status });
     }
 
     resetRateLimit(`login:${email}`);
@@ -99,13 +99,22 @@ const trader = await prisma.trader.findUnique({
       );
     }
 
-    const token = await createSession(trader.id, trader.role);
+    const token = await createSession(trader.id, trader.role, trader.emailVerified);
 
     sendLoginSecurityAlertEmail(
       { id: trader.id, email: trader.email, firstName: trader.firstName ?? undefined },
       new Date().toISOString(),
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip") ?? "unknown",
-    ).catch(() => {});
+    ).catch(() => {
+      logger.error("AUTH", "Login security alert dispatch failed", {
+        correlationId,
+        entity: { type: "Trader", id: trader.id },
+        error: {
+          code: "LOGIN_ALERT_DISPATCH_FAILED",
+          message: "Email delivery did not return a result",
+        },
+      });
+    });
 
     const response = NextResponse.json(
       {

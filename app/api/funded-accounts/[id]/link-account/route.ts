@@ -64,9 +64,16 @@ export async function POST(
     const result = await linkAccount(prisma, { fundedAccountId: id, accountId, performedBy: admin.id });
 
     if (!result.success) {
+      const status = result.errorCategory === "NOT_FOUND"
+        ? 404
+        : result.errorCategory === "INVALID_STATE"
+          ? 400
+          : result.errorCategory === "LINK_FAILED"
+            ? 500
+            : 409;
       return NextResponse.json(
         { success: false, error: result.error, errorCategory: result.errorCategory },
-        { status: result.errorCategory === "NOT_FOUND" ? 404 : 400 },
+        { status },
       );
     }
 

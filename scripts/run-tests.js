@@ -50,6 +50,7 @@
   const childEnv = { ...process.env, TEST_DATABASE_URL };
   delete childEnv.DATABASE_URL;
   delete childEnv.DIRECT_URL;
+  delete childEnv.TEST_DATABASE_CLEANUP_CONFIRMATION;
   delete childEnv.PHASE33_ALLOW_PRODUCTION_DB;
 
   try {
