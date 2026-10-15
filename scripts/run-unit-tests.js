@@ -38,6 +38,7 @@
     'tests/public-catalog.test.ts',
     'tests/rule-capabilities.test.ts',
     'tests/ruleset-visibility.unit.test.ts',
+    'tests/ruleset-mutation-safety.unit.test.ts',
     'tests/test-db-safety.test.ts',
     'tests/monitoring/credential-boundary.test.ts',
     'tests/monitoring/eligibility.test.ts',
