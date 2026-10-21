@@ -157,9 +157,27 @@ database identities, and rejects production mode. It never falls back to
 `DATABASE_URL` or `DIRECT_URL`.
 
 The confirmation is an operator attestation, not technical proof of
-ownership. Host allowlists and names such as `test` are not proof either.
-Tests are sequential; parallel execution and cross-process isolation have not
-been established.
+ownership. The bootstrap additionally connects read-only and checks the
+server-reported database name (`fundedexperts_test`), role
+(`fundedexperts_test_user`), server address, PostgreSQL version, and port
+before any migration or suite runs. Local targets must report a loopback
+server address. The CI-only exception permits a private service-container
+address because the workflow provisions a fresh PostgreSQL service for that
+single GitHub-hosted job and discards it when the job ends. Tests are
+sequential; parallel execution and cross-process isolation have not been
+established.
+
+The CI database job starts that empty service, replays checked-in migrations
+twice, checks migration status, then runs the database-backed suite. A full
+Prisma schema diff is not a CI gate because the checked-in migrations
+intentionally create the manually maintained partial unique index
+`MonitoringJob_active_job_per_account`, which Prisma does not represent in the
+schema model. Review any generated diff against that documented exception
+before acting on it. The cleanup-only confirmation is set only on that suite step because
+its target is the disposable service created by the same job. Local CI secrets
+and the development Neon target are not required or passed into this job. This
+workflow is configured in `.github/workflows/ci.yml`; it is not considered
+verified until a GitHub Actions run completes successfully.
 
 ## 6. Destructive cleanup
 
@@ -170,10 +188,10 @@ cascade. Some legacy database test suites also contain whole-table deletes or
 The database test runners inspect selected suites and refuse to launch any
 suite containing global cleanup unless the invoking process supplies the
 cleanup-only confirmation below. Each such test module checks the same
-confirmation before constructing a Prisma client. Unit tests and CI do not
-receive this confirmation.
+confirmation before constructing a Prisma client. Unit tests and all other
+jobs do not receive this confirmation.
 
-Before explicitly choosing to erase all data in the disposable test database:
+Before explicitly choosing to erase all data in a local disposable test database:
 
 1. Re-verify its server, port, database name, owner, and disposable status.
 2. Confirm the target is distinct from development, shared, staging, and
@@ -184,8 +202,8 @@ Before explicitly choosing to erase all data in the disposable test database:
    cleanup-only confirmation. The suite may erase all data in the disposable
    test database before running.
 
-The cleanup-only confirmation must be set in the invoking PowerShell process,
-not saved in either environment file:
+For local runs, the cleanup-only confirmation must be set in the invoking
+PowerShell process, not saved in either environment file:
 
 ```powershell
 $env:TEST_DATABASE_CLEANUP_CONFIRMATION = "I_UNDERSTAND_THIS_DELETES_ALL_DATA_IN_THE_TEST_DATABASE"
@@ -196,8 +214,9 @@ Remove-Item Env:TEST_DATABASE_CLEANUP_CONFIRMATION
 The standalone cleanup script checks this confirmation before loading the test
 environment or Prisma. Database test modules additionally check it before
 creating a Prisma client, and the guarded test runners preflight global
-cleanup before launching children. The common test-target guard still applies.
-Do not automate the cleanup confirmation or add it to CI.
+cleanup before launching children. The common test-target and connected
+identity checks still apply. CI sets the confirmation only for its isolated
+service job; do not add it to general workflows or local environment files.
 
 ## 7. Diagnose common failures
 
@@ -223,9 +242,9 @@ Do not automate the cleanup confirmation or add it to CI.
 
 ## 8. Current limits
 
-The local machine had no PostgreSQL installation or server, no PostgreSQL
-utilities, no Docker/Podman runtime, and no WSL distribution at the time of
-the readiness check. No migration, database-backed test, database connection,
-service change, or configuration change was performed. Fresh-database runtime
-validation remains blocked until PostgreSQL is installed with approval and
-the separate local development and disposable test databases are verified.
+The local machine currently has no PostgreSQL installation or client, no
+Docker/Podman runtime, and no available local database service. Consequently,
+no migration or database-backed suite was run locally. The GitHub Actions job
+provides a separate ephemeral database path for verification; its status is
+unverified until CI completes. Browser automation remains blocked because
+Playwright and a browser automation runtime are not installed in this project.

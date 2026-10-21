@@ -25,17 +25,15 @@ import { publicApiCorrelationId } from "@/lib/public-api-error";
 
 interface Props {
   compact?: boolean;
-
-  purchaseUnavailable?: boolean;
 }
 
 const UNAVAILABLE_TERMS = [
-  "Daily loss reset time and calculation method",
-  "Drawdown reference point and treatment of open trades and fees",
-  "Minimum trading days and inactivity policy",
+  "Daily loss calculation and reset time",
+  "Maximum drawdown reference point and treatment of open positions and trading costs",
+  "Minimum trading days and inactivity conditions",
   "News, weekend, and strategy restrictions",
-  "Trading instruments, platform, and execution terms",
-  "Refund, reset, retry, and payout terms",
+  "Eligible instruments, platform, and execution conditions",
+  "Refund, reset, retry, and reward eligibility terms",
 ];
 
 function StageRules({ stageName, rulesetId, rules }: {
@@ -74,7 +72,7 @@ function summarizeStageRules(match: ProductRules | undefined, ruleType: string):
   return values.length > 0 ? values.join(" · ") : "Not published";
 }
 
-export default function ProductShowcase({ compact = false, purchaseUnavailable = false }: Props) {
+export default function ProductShowcase({ compact = false }: Props) {
   const publishHomeCatalog = useHomeCatalogPublisher();
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [productRules, setProductRules] = useState<Record<string, ProductRules>>({});
@@ -129,7 +127,7 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
         }
       } catch {
         if (!controller.signal.aborted) {
-          setError("We couldn't load plan details. Please try again.");
+          setError("Evaluation programs could not be loaded. Please try again.");
           setErrorReference(responseReference);
           publishHomeCatalog({
             products: [],
@@ -182,7 +180,7 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
     return (
       <div className="grid gap-4 sm:grid-cols-2" aria-busy="true">
         {[0, 1].slice(0, compact ? 2 : 2).map((item) => <div key={item} className="h-44 animate-pulse rounded-2xl border border-border bg-card" />)}
-        <span className="sr-only" role="status" aria-live="polite">Loading plans…</span>
+        <span className="sr-only" role="status" aria-live="polite">Loading evaluation programs…</span>
       </div>
     );
   }
@@ -200,8 +198,8 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
   if (products.length === 0) {
     return (
       <div className="rounded-2xl border border-border bg-card p-6">
-        <p className="text-sm font-medium text-card-foreground">No plans are available right now.</p>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">Published plan details will appear here when they are available.</p>
+        <p className="text-sm font-medium text-card-foreground">No evaluation programs are currently published.</p>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">Approved offer details will appear here when publication is enabled.</p>
       </div>
     );
   }
@@ -216,7 +214,7 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
             <div>
               <label htmlFor="catalog-category" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Account pathway</label>
               <select id="catalog-category" value={category} onChange={(event) => setCategory(event.target.value as typeof category)} className="w-full rounded-lg border border-input-border bg-input px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <option value="all">All configured products</option>
+                <option value="all">All available programs</option>
                 {ACCOUNT_PATHWAYS.map((pathway) => <option key={pathway.id} value={pathway.id}>{pathway.name}</option>)}
                 <option value="other">Other or unclassified</option>
               </select>
@@ -264,7 +262,7 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
               </select>
             </div>
           </div>
-          <p className="mt-4 text-xs text-muted-foreground" role="status">Showing {visibleProducts.length} of {products.length} plans. Price filters compare one currency at a time.</p>
+          <p className="mt-4 text-xs text-muted-foreground" role="status">Showing {visibleProducts.length} of {products.length} programs. Fee filters compare one currency at a time.</p>
         </div>
       )}
 
@@ -274,14 +272,14 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
           return (
             <article id={`product-${product.id}`} key={product.id} className="flex min-w-0 flex-col rounded-xl border border-card-border bg-card p-5 text-card-foreground shadow-sm transition-shadow duration-200 hover:shadow-md sm:p-6">
               <div className="flex items-start justify-between gap-3">
-                <div><p className="text-[0.65rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">Plan details</p><p className="mt-1 text-xs text-muted-foreground">{getProductCategoryName(product)}</p></div>
+                <div><p className="text-[0.65rem] font-bold uppercase tracking-[0.16em] text-muted-foreground">Evaluation program</p><p className="mt-1 text-xs text-muted-foreground">{getProductCategoryName(product)}</p></div>
                 <Badge variant="outline">{String(index + 1).padStart(2, "0")}</Badge>
               </div>
               <h3 className="mt-5 break-words text-xl font-semibold leading-tight tracking-tight">{product.name}</h3>
-              <p className="mt-2 min-h-10 break-words text-sm leading-5 text-muted-foreground">{product.description || "Plan details will be published here."}</p>
+              <p className="mt-2 min-h-10 break-words text-sm leading-5 text-muted-foreground">{product.description || "A program description has not been published."}</p>
               <dl className="mt-5 grid grid-cols-2 gap-3 border-y border-border py-4 text-sm">
-                <div className="min-w-0"><dt className="text-xs text-muted-foreground">Account size · {product.denominationCurrency}</dt><dd className="mt-1 break-words font-semibold">{formatAccountSize(product.accountSize)} {product.denominationCurrency}</dd></div>
-                <div className="min-w-0"><dt className="text-xs text-muted-foreground">Price{product.currency ? ` · ${product.currency}` : ""}</dt><dd className="mt-1 break-words font-semibold">{formatMoney(product.price, product.currency)}</dd></div>
+                <div className="min-w-0"><dt className="text-xs text-muted-foreground">Simulated balance · {product.denominationCurrency}</dt><dd className="mt-1 break-words font-semibold">{formatAccountSize(product.accountSize)} {product.denominationCurrency}</dd></div>
+                <div className="min-w-0"><dt className="text-xs text-muted-foreground">Enrollment fee{product.currency ? ` · ${product.currency}` : ""}</dt><dd className="mt-1 break-words font-semibold">{formatMoney(product.price, product.currency)}</dd></div>
                 <div className="col-span-2 min-w-0"><dt className="text-xs text-muted-foreground">Evaluation structure</dt><dd className="mt-1 break-words font-medium">{structureLabel(product.evaluationStructure)}</dd></div>
                 <div className="col-span-2 min-w-0"><dt className="text-xs text-muted-foreground">Evaluation stages</dt><dd className="mt-1 break-words font-medium">{product.stages.map((stage) => stage.displayName).join(" · ") || "No stages published"}</dd></div>
               </dl>
@@ -298,37 +296,38 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
                   </div>
                 ))}
               </dl>
-              {match?.unavailable && <p className="mt-3 text-xs leading-5 text-warning-foreground">One or more published rule details are unavailable for this plan.</p>}
+              {match?.unavailable && <p className="mt-3 text-xs leading-5 text-warning-foreground">One or more program rules are unavailable.</p>}
 
               {!compact && (
                 <details className="mt-4 rounded-xl border border-border bg-background p-4">
                   <summary className="cursor-pointer rounded-sm text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Full product terms and rule values</summary>
                   <div className="mt-4 space-y-5 text-sm">
-                    <p className="text-xs leading-5 text-muted-foreground">Published rules and stage details for this plan.</p>
-                    {match?.unavailable ? <p className="text-warning-foreground" role="status">Some rule details are missing. Review the published terms before relying on this plan.</p> : match ? (
+                    <p className="text-xs leading-5 text-muted-foreground">Published program rules and stage details.</p>
+                    {match?.unavailable ? <p className="text-warning-foreground" role="status">Some rule details are unavailable. Do not treat this program as available for enrollment.</p> : match ? (
                       <div className="space-y-5">
                         {match.stages.map((stage) => <StageRules key={stage.id} stageName={stage.displayName} rulesetId={stage.rulesetVersion.ruleset.id} rules={stage.rulesetVersion.rules} />)}
                         {match.operatingRulesetVersion && <StageRules stageName="Ongoing rules" rulesetId={match.operatingRulesetVersion.ruleset.id} rules={match.operatingRulesetVersion.rules} />}
                         <p className="text-xs leading-5 text-warning-foreground">Some rule calculations are still under review. Do not use this page as a final pass or fail decision.</p>
                       </div>
-                    ) : <p className="text-warning-foreground">Plan rules are not available yet.</p>}
-                    <div><h4 className="font-semibold">Other plan terms</h4><p className="mt-2 text-xs leading-5 text-muted-foreground">These details have not been published yet:</p><ul className="mt-1 list-disc space-y-1 pl-5 text-xs leading-5 text-muted-foreground">{UNAVAILABLE_TERMS.map((term) => <li key={term}>{term}</li>)}</ul></div>
+                    ) : <p className="text-warning-foreground">Program rules are not available.</p>}
+                    <div><h4 className="font-semibold">Additional program conditions</h4><p className="mt-2 text-xs leading-5 text-muted-foreground">These conditions have not been published:</p><ul className="mt-1 list-disc space-y-1 pl-5 text-xs leading-5 text-muted-foreground">{UNAVAILABLE_TERMS.map((term) => <li key={term}>{term}</li>)}</ul></div>
                   </div>
                 </details>
               )}
 
-              {!purchaseUnavailable && !compact && (
-                <ButtonLink href={"/catalog#product-" + encodeURIComponent(product.id)} variant="outline" fullWidth className="mt-auto mt-5 justify-between">
-                  View product terms <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              {!compact && (
+                <ButtonLink href={"/programs/" + encodeURIComponent(product.id)} variant="outline" fullWidth className="mt-auto mt-5 justify-between">
+                  View program details <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </ButtonLink>
               )}
-              {compact && <Link href="/catalog" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-info hover:underline">See all configured offers <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>}
+              {compact && <Link href={`/programs/${encodeURIComponent(product.id)}`} className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-info hover:underline">View program details <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>}
             </article>
           );
         })}
       </div>
       {!compact && visibleProducts.length === 0 && <p className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground">No active products match these filters. Adjust the category, size, structure, price, or search terms.</p>}
-      {compact && products.length > shownProducts.length && <p className="mt-4 text-xs text-muted-foreground">Showing the first {shownProducts.length} configured entries. View the catalog for all active plans.</p>}
+      {compact && products.length > shownProducts.length && <p className="mt-4 text-xs text-muted-foreground">Showing {shownProducts.length} configured offers. View the catalog for all active programs.</p>}
+      {compact && <Link href="/catalog" className="mt-5 inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-primary underline-offset-4 hover:underline">Browse all programs <ArrowUpRight className="h-4 w-4" aria-hidden="true" /></Link>}
     </div>
   );
 }

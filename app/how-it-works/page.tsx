@@ -5,31 +5,31 @@ import { ButtonLink } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "How It Works",
-  description: "See how to compare simulated trading plans and review their rules.",
-  openGraph: { title: "How It Works | Funded Experts", description: "Compare plans, understand their rules, and view recorded progress." },
+  title: "Evaluation Process",
+  description: "Understand how evaluation programs, stage objectives, and published rules are presented.",
+  openGraph: { title: "Evaluation Process | Funded Experts", description: "Review evaluation programs, requirements, and recorded account status." },
 };
 
 const steps = [
   {
-    title: "Choose a plan",
-    status: "Explore plans",
-    description: "Compare account size, price, stages, and published rules.",
+    title: "Select a program",
+    status: "Compare programs",
+    description: "Compare simulated balance, enrollment fee, evaluation stages, and published terms.",
   },
   {
-    title: "Understand the rules",
+    title: "Review the rule set",
     status: "Read the rules",
-    description: "Review the published targets, loss limits, and conditions for your plan.",
+    description: "Confirm each stage objective, daily loss limit, maximum drawdown, and applicable condition.",
   },
   {
-    title: "Complete an evaluation",
-    status: "Not available yet",
-    description: "Purchases and evaluation access are not open yet.",
+    title: "Trade the evaluation",
+    status: "Not available",
+    description: "Enrollment and simulated trading access are not currently available.",
   },
   {
-    title: "Review your progress",
-    status: "Sign in",
-    description: "View the status recorded for your accounts and evaluations.",
+    title: "Review recorded status",
+    status: "Trader workspace",
+    description: "When available, review account status and evaluation progress in your workspace.",
   },
 ] as const;
 
@@ -48,12 +48,12 @@ export default function HowItWorksPage() {
           <div className="relative mx-auto max-w-7xl px-5 py-14 sm:px-8 md:py-20">
             <div className="relative z-10 max-w-3xl">
               <p className="site-kicker text-primary">How it works</p>
-              <h1 className="site-display mt-5 text-foreground">A Clear Path to Evaluate Your Skills</h1>
+              <h1 className="site-display mt-5 text-foreground">A clear, rules-led evaluation process.</h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-                Compare a plan, understand its published rules, and review the status recorded for your account.
+                Review the program terms first. Each evaluation should be measured against a defined, versioned rule set.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
-                <ButtonLink href="/catalog" size="lg">Browse plans <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink>
+                <ButtonLink href="/catalog" size="lg">Compare programs <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink>
                 <ButtonLink href="/rules" variant="outline" size="lg">Read the rules</ButtonLink>
               </div>
             </div>
@@ -63,7 +63,7 @@ export default function HowItWorksPage() {
         <section className="mx-auto max-w-7xl px-5 py-14 sm:px-8 md:py-20">
           <div className="max-w-2xl">
             <p className="site-kicker">The process</p>
-            <h2 className="site-section-title mt-4">Four simple steps</h2>
+            <h2 className="site-section-title mt-4">The evaluation lifecycle</h2>
           </div>
           <ol className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {steps.map((step, index) => (
@@ -78,19 +78,19 @@ export default function HowItWorksPage() {
             ))}
           </ol>
           <div className="mt-8 rounded-xl border border-warning/30 bg-warning-light p-4 sm:p-5" role="status">
-            <p className="text-sm font-semibold text-warning-foreground">Purchases and simulated trading access are not available yet.</p>
+            <p className="text-sm font-semibold text-warning-foreground">Enrollment and simulated trading access are not currently available.</p>
           </div>
         </section>
 
         <section className="bg-primary-light">
           <div className="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-14 sm:px-8 md:flex-row md:items-center md:justify-between md:py-18">
             <div>
-              <p className="site-kicker">Explore plans</p>
-              <h2 className="mt-3 text-2xl font-semibold tracking-tight">Compare plans and their rules.</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">See account sizes, prices, stages, and published requirements.</p>
+              <p className="site-kicker">Program specifications</p>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight">Compare published program terms.</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Review simulated balance, enrollment fee, stages, and applicable rules where published.</p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <ButtonLink href="/catalog">Open catalog</ButtonLink>
+              <ButtonLink href="/catalog">View programs</ButtonLink>
               <ButtonLink href="/faq" variant="outline">Read FAQ <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink>
             </div>
           </div>

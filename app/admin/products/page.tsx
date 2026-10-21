@@ -1,6 +1,9 @@
 'use client';
 
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import Header from "@/components/header";
+import SiteFooter from "@/components/site-footer";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 type ProductStage = { id: string; stageKey: string; displayName: string; stageOrder: number; rulesetVersion: { id: string; version: string; status: string; ruleset: { id: string; name: string } } };
@@ -167,11 +170,26 @@ export default function AdminProductsPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <main className="mx-auto max-w-6xl p-6 sm:p-8">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-info">Admin · product configuration</p><h1 className="mt-2 text-3xl font-bold">Product catalog</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Offers remain drafts until their terms, stage rules, and enforcement readiness pass server validation.</p></div><Link href="/admin/products/new" className="rounded bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">New product draft</Link></div>
-      <p className="mt-4"><Link href="/admin" className="text-sm text-info underline">Admin home</Link> · <Link href="/admin/rulesets" className="text-sm text-info underline">Manage rulesets</Link></p>
-      {state.error && <p role="alert" className="mt-5 rounded bg-danger-light p-4 text-sm text-danger">{state.error}</p>}
-      {state.loading ? <p role="status" className="mt-8 text-sm text-muted-foreground">Loading products…</p> : state.products.length === 0 ? <p className="mt-8 rounded border p-5 text-sm text-muted-foreground">No product records are available.</p> : <div className="mt-6 space-y-4">{state.products.map((product) => <DraftProductCard key={product.id} product={product} rulesets={state.rulesets} onRefresh={() => void load()} />)}</div>}
-    </main>
+    <div className="min-h-screen flex flex-col">
+      <Header currentPath="/admin/products" />
+      <main className="mx-auto max-w-7xl p-6 sm:p-8 flex-1">
+        <div className="mb-8 rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="site-kicker text-emerald-400">Admin · product configuration</p>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight">Product catalog</h1>
+              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Offers remain drafts until their terms, stage rules, and enforcement readiness pass server validation.</p>
+            </div>
+            <Link href="/admin/products/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2">
+              New product draft <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
+          <p className="mt-4 text-sm text-muted-foreground"><Link href="/admin" className="text-emerald-400 underline-offset-4 hover:underline">Admin home</Link> · <Link href="/admin/rulesets" className="text-emerald-400 underline-offset-4 hover:underline">Manage rulesets</Link></p>
+        </div>
+        {state.error && <p role="alert" className="mt-5 rounded-xl border border-danger/30 bg-danger-light p-4 text-sm text-danger">{state.error}</p>}
+        {state.loading ? <div className="mt-8 text-center"><p className="text-sm text-muted-foreground" role="status">Loading products…</p></div> : state.products.length === 0 ? <p className="mt-8 rounded-xl border border-border p-5 text-sm text-muted-foreground">No product records are available.</p> : <div className="mt-6 space-y-4">{state.products.map((product) => <DraftProductCard key={product.id} product={product} rulesets={state.rulesets} onRefresh={() => void load()} />)}</div>}
+      </main>
+      <SiteFooter />
+    </div>
   );
 }

@@ -1,7 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import Header from "@/components/header";
+import SiteFooter from "@/components/site-footer";
+import { useCallback, useEffect, useState } from "react";
 
 type RuleRecord = { id: string; name: string; ruleType: string; value: unknown; isRequired: boolean; disposition: string; calculation: unknown; effectiveDate: string | null };
 type RulesetVersion = { id: string; version: string; status: string; effectiveDate: string | null; rules: RuleRecord[] };
@@ -219,20 +222,35 @@ export default function AdminRulesetsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-6xl p-6 sm:p-8">
-      <div><p className="text-xs font-bold uppercase tracking-widest text-info">Admin · rules configuration</p><h1 className="mt-2 text-3xl font-bold">Ruleset versions</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">Published versions are read-only. Changes require a new draft. Publication validates required fields and evaluator readiness; no customer terms are supplied by default.</p></div>
-      <p className="mt-4"><Link href="/admin" className="text-sm text-info underline">Admin home</Link> · <Link href="/admin/products" className="text-sm text-info underline">Product catalog</Link></p>
-      {error && <p role="alert" className="mt-5 rounded bg-danger-light p-4 text-sm text-danger">{error}</p>}
-      <form onSubmit={(event) => { event.preventDefault(); void submit("/api/rulesets", { name, description: description || null }).then((saved) => { if (saved) { setName(""); setDescription(""); } }); }} className="mt-6 grid gap-3 rounded-lg border bg-card p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-        <label className="text-xs font-medium">New ruleset name<input required value={name} onChange={(event) => setName(event.target.value)} maxLength={100} className="mt-1 w-full rounded border px-3 py-2 text-sm" /></label>
-        <label className="text-xs font-medium">Description<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1000} className="mt-1 w-full rounded border px-3 py-2 text-sm" /></label>
-        <button disabled={busy} className="rounded bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Create ruleset</button>
-      </form>
-      {message && <p role="status" className="mt-4 whitespace-pre-wrap rounded bg-warning-light p-3 text-sm text-warning-foreground">{message}</p>}
-      {loading ? <p role="status" className="mt-8 text-sm text-muted-foreground">Loading rulesets…</p> : rulesets.length === 0 ? <p className="mt-8 rounded border p-5 text-sm text-muted-foreground">No rulesets configured.</p> : <div className="mt-6 space-y-5">{rulesets.map((ruleset) => <article key={ruleset.id} className="rounded-xl border bg-background p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">{ruleset.name}</h2><p className="mt-1 text-xs text-muted-foreground">Ruleset ID: {ruleset.id}</p></div><form onSubmit={(event) => { event.preventDefault(); const version = newVersion[ruleset.id]?.trim(); if (version) void submit(`/api/rulesets/${ruleset.id}/versions`, { version }); }} className="flex flex-wrap gap-2"><label className="sr-only" htmlFor={`new-version-${ruleset.id}`}>New version identifier</label><input id={`new-version-${ruleset.id}`} required value={newVersion[ruleset.id] ?? ""} onChange={(event) => setNewVersion((current) => ({ ...current, [ruleset.id]: event.target.value }))} placeholder="New version ID" className="rounded border px-3 py-2 text-sm" /><button disabled={busy} className="rounded border px-3 py-2 text-xs font-semibold">Create draft version</button></form></div>
-        {ruleset.versions.length === 0 && <p className="mt-4 text-sm text-muted-foreground">No versions created.</p>}
-        {ruleset.versions.map((version) => <VersionEditor key={version.id} ruleset={ruleset} version={version} onRefresh={() => void load()} />)}
-      </article>)}</div>}
-    </main>
+    <div className="min-h-screen flex flex-col">
+      <Header currentPath="/admin/rulesets" />
+      <main className="mx-auto max-w-7xl p-6 sm:p-8 flex-1">
+        <div className="mb-8 rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="site-kicker text-emerald-400">Admin · rules configuration</p>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight">Ruleset versions</h1>
+              <p className="mt-2 max-w-3xl text-sm text-muted-foreground">Published versions are read-only. Changes require a new draft. Publication validates required fields and evaluator readiness; no customer terms are supplied by default.</p>
+            </div>
+            <Link href="/admin/rulesets/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2">
+              Create ruleset <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
+          <p className="mt-4 text-sm text-muted-foreground"><Link href="/admin" className="text-emerald-400 underline-offset-4 hover:underline">Admin home</Link> · <Link href="/admin/products" className="text-emerald-400 underline-offset-4 hover:underline">Product catalog</Link></p>
+        </div>
+        {error && <p role="alert" className="mt-5 rounded-xl border border-danger/30 bg-danger-light p-4 text-sm text-danger">{error}</p>}
+        <form onSubmit={(event) => { event.preventDefault(); void submit("/api/rulesets", { name, description: description || null }).then((saved) => { if (saved) { setName(""); setDescription(""); } }); }} className="mt-6 grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <label className="text-xs font-medium">New ruleset name<input required value={name} onChange={(event) => setName(event.target.value)} maxLength={100} className="mt-1 w-full rounded-xl border border-input-border bg-input px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
+          <label className="text-xs font-medium">Description<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1000} className="mt-1 w-full rounded-xl border border-input-border bg-input px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>
+          <button disabled={busy} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 disabled:opacity-60">Create ruleset</button>
+        </form>
+        {message && <p role="status" className="mt-4 whitespace-pre-wrap rounded-xl bg-warning-light p-3 text-sm text-warning-foreground">{message}</p>}
+        {loading ? <p role="status" className="mt-8 text-center text-sm text-muted-foreground">Loading rulesets…</p> : rulesets.length === 0 ? <p className="mt-8 rounded-xl border border-border p-5 text-sm text-muted-foreground">No rulesets configured.</p> : <div className="mt-6 space-y-5">{rulesets.map((ruleset) => <article key={ruleset.id} className="rounded-2xl border border-border bg-card p-5 sm:p-7"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold tracking-tight">{ruleset.name}</h2><p className="mt-1 text-xs font-mono text-muted-foreground">Ruleset ID: {ruleset.id}</p></div><form onSubmit={(event) => { event.preventDefault(); const version = newVersion[ruleset.id]?.trim(); if (version) void submit(`/api/rulesets/${ruleset.id}/versions`, { version }); }} className="flex flex-wrap gap-2 mt-3"><label className="sr-only" htmlFor={`new-version-${ruleset.id}`}>New version identifier</label><input id={`new-version-${ruleset.id}`} required value={newVersion[ruleset.id] ?? ""} onChange={(event) => setNewVersion((current) => ({ ...current, [ruleset.id]: event.target.value }))} placeholder="New version ID" className="rounded-lg border border-input-border bg-input px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /><button disabled={busy} className="inline-flex min-h-10 items-center justify-center rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-60">Create draft version</button></form></div>
+          {ruleset.versions.length === 0 && <p className="mt-4 text-sm text-muted-foreground">No versions created.</p>}
+          {ruleset.versions.map((version) => <VersionEditor key={version.id} ruleset={ruleset} version={version} onRefresh={() => void load()} />)}
+        </article>)}</div>}
+      </main>
+      <SiteFooter />
+    </div>
   );
 }

@@ -1,39 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { PUBLIC_RULESET_WHERE, PUBLIC_RULESET_VERSION_WHERE } from "@/lib/ruleset-visibility";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
+import {
+  approvedPublicProducts,
+  publicApiFailure,
+  publicApiStatus,
+  publicRulesetsForProducts,
+  PUBLIC_PRODUCT_SELECT,
+  PUBLIC_PRODUCT_WHERE,
+  safePrismaErrorCode,
+} from "@/lib/public-catalog";
+
+const logger = createLogger({
+  environment: process.env.NODE_ENV as "development" | "production" | "test",
+});
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ruleset = await prisma.ruleset.findUnique({
-    where: {
-      id,
-      ...PUBLIC_RULESET_WHERE,
-    },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      versions: {
-        select: {
-          id: true,
-          version: true,
-          status: true,
-        },
-        where: PUBLIC_RULESET_VERSION_WHERE,
-        orderBy: { version: "desc" },
-      },
-    },
-  });
+  const correlationId = generateCorrelationId();
+  try {
+    const products = await prisma.product.findMany({
+      where: PUBLIC_PRODUCT_WHERE,
+      select: PUBLIC_PRODUCT_SELECT,
+      orderBy: [{ displayOrder: "asc" }, { id: "asc" }],
+    });
+    const publicRuleset = publicRulesetsForProducts(approvedPublicProducts(products))
+      .find((candidate) => candidate.id === id);
+    const ruleset = publicRuleset
+      ? { ...publicRuleset, versions: [...publicRuleset.versions].sort((left, right) => right.version.localeCompare(left.version)) }
+      : null;
 
-  if (!ruleset) {
+    if (!ruleset) {
+      return NextResponse.json(
+        { success: false, error: "Ruleset not found" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true, ruleset }, { status: 200 });
+  } catch (error) {
+    logger.error("RULESET", "Public ruleset detail retrieval failed", {
+      correlationId,
+      error: { code: safePrismaErrorCode(error), message: "Unable to query approved product rules" },
+    });
     return NextResponse.json(
-      { success: false, error: "Ruleset not found" },
-      { status: 404 }
+      publicApiFailure("SERVICE_UNAVAILABLE", "Published plan rules are temporarily unavailable. Please try again.", correlationId),
+      { status: publicApiStatus("SERVICE_UNAVAILABLE") },
     );
   }
-
-  return NextResponse.json({ success: true, ruleset }, { status: 200 });
 }

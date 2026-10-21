@@ -1,4 +1,4 @@
-(async () => {
+﻿(async () => {
   const { default: path } = await import('node:path');
   const { createRequire } = await import('node:module');
   const { default: childProcess } = await import('node:child_process');
@@ -37,11 +37,17 @@
     'tests/mt5-accounts.test.ts',
     'tests/payment-abstraction.test.ts',
     'tests/payment-verification.unit.test.ts',
+    'tests/nowpayments-provider.unit.test.ts',
+    'tests/payment-initiation-retry.unit.test.ts',
+    'tests/payment-webhook-security.unit.test.ts',
     'tests/crypto-payment-verification.unit.test.ts',
     'tests/payment-endpoint-safety.test.ts',
+    'tests/payment-state-machine.unit.test.ts',
     'tests/legacy-activation-disabled.unit.test.ts',
     'tests/phase33-db-guard.test.ts',
+    'tests/test-db-identity.unit.test.ts',
     'tests/development-migration-command.unit.test.ts',
+    'tests/development-catalog-seed.test.ts',
     'tests/product-domain.test.ts',
     'tests/product-experience-contract.test.ts',
     'tests/product-experience-display.test.ts',
@@ -129,3 +135,4 @@
   console.error('Database-free test runner failed before completing; details are redacted.');
   process.exitCode = 1;
 });
+\n\n

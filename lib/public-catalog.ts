@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getRuleCapability } from "@/lib/rule-capabilities";
 import {
   validateProductForPublication,
+  validateRulesetForPublication,
 } from "@/lib/product-domain";
 import type {
   CatalogProduct,
@@ -91,25 +92,37 @@ export const PUBLIC_PRODUCT_WHERE: Prisma.ProductWhereInput = {
   price: { not: null },
 };
 
-// Phase 33 creates published rulesets with reserved test markers (for example,
-// "RS-p33-e2e-<run-id>"). Keep those rulesets out of every customer-facing
-// catalog path, even if a test or manual configuration accidentally activates
-// a product that references them.
-const TEST_ONLY_RULESET_MARKER = /(?:^|[^a-z0-9])(?:e2e|test|fixture|mock)(?=$|[^a-z0-9])/i;
+// Phase 33 reserves markers for test-only products and rulesets. Keep them out
+// of every customer-facing catalog path even if a test or manual configuration
+// accidentally activates a product or one of its linked ruleset versions.
+const TEST_ONLY_CATALOG_MARKER = /(?:^|[^a-z0-9])(?:e2e|test|fixture|mock)(?=$|[^a-z0-9])/i;
+
+function isPublicRulesetVersion(
+  version: NonNullable<PublicProductRecord["operatingRulesetVersion"]>,
+): boolean {
+  return version.status === "PUBLISHED"
+    && version.isActive
+    && version.ruleset.isActive
+    && !TEST_ONLY_CATALOG_MARKER.test(version.ruleset.name)
+    && validateRulesetForPublication(version.rules).length === 0;
+}
 
 export function approvedPublicProducts(products: readonly PublicProductRecord[]): PublicProductRecord[] {
   return products.filter((product) => (
     product.isActive
     && product.status === "ACTIVE"
     && product.code !== null
+    && !TEST_ONLY_CATALOG_MARKER.test(product.code)
+    && !TEST_ONLY_CATALOG_MARKER.test(product.name)
     && product.category !== null
     && product.evaluationStructure !== null
     && product.denominationCurrency !== null
     && product.accountSize !== null
     && product.price !== null
     && product.evaluationStructure !== "DIRECT_FUNDED"
+    && (!product.operatingRulesetVersion || isPublicRulesetVersion(product.operatingRulesetVersion))
     && product.stages.every((stage) => (
-      !TEST_ONLY_RULESET_MARKER.test(stage.rulesetVersion.ruleset.name)
+      !TEST_ONLY_CATALOG_MARKER.test(stage.rulesetVersion.ruleset.name)
       && stage.rulesetVersion.status === "PUBLISHED"
       && stage.rulesetVersion.isActive
       && stage.rulesetVersion.ruleset.isActive

@@ -56,3 +56,60 @@ jobs:
         run: pnpm exec next build --webpack
         env:
           DATABASE_URL: postgresql://127.0.0.1:5432/schema-validation
+
+  database-integration:
+    name: Disposable PostgreSQL migration and integration checks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: fundedexperts_test
+          POSTGRES_USER: fundedexperts_test_user
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fundedexperts_test_user -d fundedexperts_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://fundedexperts_test_user@127.0.0.1:5432/fundedexperts_test
+      TEST_DATABASE_DISPOSABLE: "true"
+      TEST_DATABASE_DISPOSABLE_CONFIRMATION: I_HAVE_VERIFIED_THIS_IS_A_DISPOSABLE_TEST_DATABASE
+      NODE_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm exec prisma generate
+
+      - name: Apply checked-in migrations from a clean database
+        run: pnpm db:test:migrate
+
+      - name: Verify migration replay is idempotent
+        run: pnpm db:test:migrate
+
+      - name: Verify migration status
+        run: pnpm exec tsx scripts/prisma-status.ts
+
+      - name: Run guarded database-backed suites
+        run: pnpm test:db
+        env:
+          TEST_DATABASE_CLEANUP_CONFIRMATION: I_UNDERSTAND_THIS_DELETES_ALL_DATA_IN_THE_TEST_DATABASE

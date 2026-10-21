@@ -18,7 +18,7 @@ export type PaymentVerificationResult =
   | { valid: true; payment: PaymentRecord }
   | { valid: false; reason: PaymentVerificationFailure };
 
-function canonicalAmount(value: unknown): string | null {
+export function canonicalAmount(value: unknown): string | null {
   let text: string;
   if (typeof value === "number") {
     if (!Number.isFinite(value) || value < 0) return null;
@@ -39,10 +39,39 @@ function canonicalAmount(value: unknown): string | null {
   return `${whole}.${fraction.slice(0, 2).padEnd(2, "0")}`;
 }
 
-function canonicalCurrency(value: unknown): string | null {
+export function canonicalCurrency(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const currency = value.trim().toUpperCase();
   return /^[A-Z]{3}$/.test(currency) ? currency : null;
+}
+
+export interface StoredPaymentEventIdentity {
+  orderId: string;
+  providerStatus: string;
+  amount: unknown;
+  currency: string | null;
+  transactionId: string | null;
+  verified: boolean;
+}
+
+export interface IncomingPaymentEventIdentity {
+  orderId: string;
+  providerStatus: string;
+  amount: unknown;
+  currency: string | null;
+  transactionId: string | null;
+}
+
+export function isSameVerifiedPaymentEvent(
+  stored: StoredPaymentEventIdentity,
+  incoming: IncomingPaymentEventIdentity,
+): boolean {
+  return stored.verified
+    && stored.orderId === incoming.orderId
+    && stored.providerStatus.trim().toUpperCase() === incoming.providerStatus.trim().toUpperCase()
+    && canonicalAmount(stored.amount) === canonicalAmount(incoming.amount)
+    && canonicalCurrency(stored.currency) === canonicalCurrency(incoming.currency)
+    && stored.transactionId === incoming.transactionId;
 }
 
 export function verifyPaymentForOrder(

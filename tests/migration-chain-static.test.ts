@@ -14,6 +14,10 @@ function migrationSql(name: string): string {
   return readFileSync(join(migrationsRoot, name, "migration.sql"), "utf8");
 }
 
+function withoutSqlComments(sql: string): string {
+  return sql.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
+}
+
 describe("Prisma migration chain static checks", () => {
   it("has an ordered, complete PostgreSQL migration directory structure", () => {
     assert.ok(migrationNames.length > 0);
@@ -82,6 +86,51 @@ describe("Prisma migration chain static checks", () => {
     assert.match(createSql, /MonitoringJob_active_job_per_account/);
     assert.doesNotMatch(alignmentSql, /CREATE TABLE "MonitoringJob"\s*\(/);
     assert.match(alignmentSql, /ALTER TABLE "MonitoringJob"/);
+  });
+
+  it("keeps broad table/data deletion out of every migration", () => {
+    for (const name of migrationNames) {
+      const sql = withoutSqlComments(migrationSql(name));
+      assert.doesNotMatch(
+        sql,
+        /\b(?:DROP\s+TABLE|DROP\s+COLUMN|TRUNCATE(?:\s+TABLE)?|DELETE\s+FROM)\b/i,
+        `${name} contains a destructive table or row operation that needs separate review.`,
+      );
+    }
+  });
+
+  it("limits historical row updates to the two documented migration backfills", () => {
+    const updates = migrationNames.flatMap((name) => {
+      const sql = withoutSqlComments(migrationSql(name));
+      return [...sql.matchAll(/\bUPDATE\s+"([^"]+)"/gi)].map((match) => [name, match[1]]);
+    });
+
+    assert.deepEqual(updates, [
+      ["20260927000000_evaluation_starting_balance", "Evaluation"],
+      ["20261013000000_product_domain_foundation", "Rule"],
+    ]);
+
+    const startingBalanceSql = withoutSqlComments(migrationSql("20260927000000_evaluation_starting_balance"));
+    assert.match(startingBalanceSql, /WHERE\s+e\."accountId"\s*=\s*a\."id"[\s\S]*e\."startingBalance"\s+IS\s+NULL[\s\S]*a\."accountSize"\s+IS\s+NOT\s+NULL/i);
+
+    const dispositionSql = withoutSqlComments(migrationSql("20261013000000_product_domain_foundation"));
+    assert.match(dispositionSql, /ADD COLUMN "disposition" "RuleDisposition" NOT NULL DEFAULT 'UNRESOLVED'/i);
+    assert.match(dispositionSql, /UPDATE "Rule"\s+SET "disposition"\s*=\s*CASE WHEN "isRequired" THEN 'REQUIRED'::"RuleDisposition" ELSE 'OPTIONAL'::"RuleDisposition" END/i);
+  });
+
+  it("adds the optional evaluation product link after product tables exist and matches the timezone-aware column", () => {
+    const integrityMigration = "20261014000000_evaluation_integrity";
+    const productLinkMigration = "20261021000000_evaluation_product_link";
+    const integritySql = migrationSql(integrityMigration);
+    const productLinkSql = migrationSql(productLinkMigration);
+    const schema = readFileSync(join(projectRoot, "prisma", "schema.prisma"), "utf8");
+
+    assert.ok(migrationNames.indexOf(integrityMigration) < migrationNames.indexOf(productLinkMigration));
+    assert.match(integritySql, /ADD COLUMN "sourceDataTimestamp" TIMESTAMPTZ/);
+    assert.match(schema, /sourceDataTimestamp\s+DateTime\?\s+@db\.Timestamptz\(6\)/);
+    assert.match(productLinkSql, /ALTER TABLE "Evaluation"\s+ADD COLUMN "productId" TEXT/);
+    assert.match(productLinkSql, /ADD CONSTRAINT "Evaluation_productId_fkey"[\s\S]*REFERENCES "Product"\("id"\)[\s\S]*ON DELETE SET NULL ON UPDATE CASCADE/);
+    assert.doesNotMatch(productLinkSql, /^\s*(?:DROP\b|DELETE\s+FROM\b|TRUNCATE\b|UPDATE\s+)/im);
   });
 });
 

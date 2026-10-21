@@ -6,10 +6,14 @@ import { isPublicProductsResponse } from "../lib/product-experience";
 
 let findProducts: () => Promise<unknown[]> = async () => [];
 let findProduct: () => Promise<unknown | null> = async () => null;
+const findRulesetVersions: () => Promise<unknown[]> = async () => [];
 const fakePrisma = {
   product: {
     findMany: () => findProducts(),
     findFirst: () => findProduct(),
+  },
+  rulesetVersion: {
+    findMany: () => findRulesetVersions(),
   },
 };
 const previousPrisma = Reflect.get(globalThis, "__fundedExpertsPrisma");
@@ -20,10 +24,20 @@ let getProduct: ((
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) => Promise<Response>) | undefined;
+let getRuleset: ((
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) => Promise<Response>) | undefined;
+let getRulesetVersions: ((
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) => Promise<Response>) | undefined;
 
 before(async () => {
   getProducts = (await import("../app/api/products/route")).GET;
   getProduct = (await import("../app/api/products/[id]/route")).GET;
+  getRuleset = (await import("../app/api/rulesets/[id]/route")).GET;
+  getRulesetVersions = (await import("../app/api/rulesets/[id]/versions/route")).GET;
 });
 
 function callGetProducts(): Promise<Response> {
@@ -36,6 +50,22 @@ function callGetProduct(): Promise<Response> {
   return getProduct(
     new NextRequest("http://localhost/api/products/product-detail-test"),
     { params: Promise.resolve({ id: "product-detail-test" }) },
+  );
+}
+
+function callGetRuleset(): Promise<Response> {
+  if (!getRuleset) throw new Error("Ruleset route was not initialized");
+  return getRuleset(
+    new NextRequest("http://localhost/api/rulesets/ruleset-1"),
+    { params: Promise.resolve({ id: "ruleset-1" }) },
+  );
+}
+
+function callGetRulesetVersions(): Promise<Response> {
+  if (!getRulesetVersions) throw new Error("Ruleset versions route was not initialized");
+  return getRulesetVersions(
+    new NextRequest("http://localhost/api/rulesets/ruleset-1/versions"),
+    { params: Promise.resolve({ id: "ruleset-1" }) },
   );
 }
 
@@ -100,7 +130,7 @@ function configuredProductFixture() {
       rulesetVersion: version,
     })),
     operatingRulesetVersionId: null,
-    operatingRulesetVersion: null,
+    operatingRulesetVersion: null as typeof version | null,
   };
 }
 
@@ -133,6 +163,28 @@ test("public products route serializes only approved configured offers and their
   }
 });
 
+test("public list and detail endpoints hide products attached to an unpublished ongoing ruleset", async () => {
+  const product = configuredProductFixture();
+  product.operatingRulesetVersion = {
+    ...product.stages[0]!.rulesetVersion,
+    status: "DRAFT",
+  };
+  findProducts = async () => [product];
+  findProduct = async () => product;
+
+  const listResponse = await callGetProducts();
+  assert.equal(listResponse.status, 200);
+  assert.deepEqual(await listResponse.json(), { success: true, products: [] });
+
+  const detailResponse = await callGetProduct();
+  assert.equal(detailResponse.status, 404);
+  assert.deepEqual(await detailResponse.json(), { success: false, error: "Product not found" });
+
+  const rulesetResponse = await callGetRuleset();
+  assert.equal(rulesetResponse.status, 404);
+  assert.deepEqual(await rulesetResponse.json(), { success: false, error: "Ruleset not found" });
+});
+
 test("public products route hides an offer with an unsupported required rule", async () => {
   const product = configuredProductFixture();
   product.stages[0]!.rulesetVersion.rules[0]!.ruleType = "PROFIT_TARGET";
@@ -143,6 +195,77 @@ test("public products route hides an offer with an unsupported required rule", a
 
   assert.equal(response.status, 200);
   assert.deepEqual(body, { success: true, products: [] });
+});
+
+test("public product detail returns the same safe product contract as the catalog list", async () => {
+  findProduct = async () => configuredProductFixture();
+
+  const response = await callGetProduct();
+  const body: unknown = await response.json();
+
+  assert.equal(response.status, 200);
+  const product = (body as { product?: unknown }).product;
+  const productResponse = { success: true, products: [product] };
+  if (!isPublicProductsResponse(productResponse)) throw new Error("Product detail did not match the public catalog contract");
+  assert.equal(productResponse.products[0]?.price, "79.50");
+  assert.equal(productResponse.products[0]?.stages.length, 2);
+});
+
+test("public product detail hides drafts, missing stages, unpublished rulesets, and Phase 33 fixtures", async () => {
+  const draft = configuredProductFixture();
+  draft.status = "DRAFT";
+  draft.isActive = false;
+
+  const missingStages = configuredProductFixture();
+  missingStages.stages = [];
+
+  const unpublishedRuleset = configuredProductFixture();
+  unpublishedRuleset.stages[0]!.rulesetVersion.status = "DRAFT";
+
+  const inactiveVersion = configuredProductFixture();
+  inactiveVersion.stages[0]!.rulesetVersion.isActive = false;
+
+  const inactiveRuleset = configuredProductFixture();
+  inactiveRuleset.stages[0]!.rulesetVersion.ruleset.isActive = false;
+
+  const e2eFixture = configuredProductFixture();
+  e2eFixture.stages[0]!.rulesetVersion.ruleset.name = "RS-p33-e2e-run-123";
+
+  for (const product of [draft, missingStages, unpublishedRuleset, inactiveVersion, inactiveRuleset, e2eFixture]) {
+    findProduct = async () => product;
+    const response = await callGetProduct();
+    const body: unknown = await response.json();
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(body, { success: false, error: "Product not found" });
+  }
+});
+
+test("public ruleset detail and version lists only expose terms linked to approved products", async () => {
+  findProducts = async () => [configuredProductFixture()];
+
+  const detailResponse = await callGetRuleset();
+  const detailBody = await detailResponse.json() as { success: boolean; ruleset?: { name: string; versions: Array<{ version: string }> } };
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailBody.ruleset?.name, "Pro evaluation");
+  assert.deepEqual(detailBody.ruleset?.versions.map((version) => version.version), ["1.0.0"]);
+
+  const versionsResponse = await callGetRulesetVersions();
+  const versionsBody = await versionsResponse.json() as { success: boolean; versions: Array<{ id: string; version: string; status: string }> };
+  assert.equal(versionsResponse.status, 200);
+  assert.deepEqual(versionsBody.versions, [{ id: "version-1", version: "1.0.0", status: "PUBLISHED" }]);
+
+  const e2eFixture = configuredProductFixture();
+  e2eFixture.stages[0]!.rulesetVersion.ruleset.name = "RS-p33-e2e-run-123";
+  findProducts = async () => [e2eFixture];
+
+  const hiddenDetail = await callGetRuleset();
+  assert.equal(hiddenDetail.status, 404);
+  assert.deepEqual(await hiddenDetail.json(), { success: false, error: "Ruleset not found" });
+
+  const hiddenVersions = await callGetRulesetVersions();
+  assert.equal(hiddenVersions.status, 200);
+  assert.deepEqual(await hiddenVersions.json(), { success: true, versions: [] });
 });
 
 test("public products route maps Prisma schema errors to a safe service response", async () => {

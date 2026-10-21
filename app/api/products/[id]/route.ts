@@ -5,12 +5,16 @@ import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkClientRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
-import { validateProductDraftInput, validateProductForPublication } from "@/lib/product-domain";
+import { validateProductDraftInput } from "@/lib/product-domain";
 import {
+  approvedPublicProducts,
   publicApiFailure,
   publicApiStatus,
+  PUBLIC_PRODUCT_SELECT,
+  PUBLIC_PRODUCT_WHERE,
   safePrismaErrorCode,
   safePrismaErrorTable,
+  serializePublicProduct,
 } from "@/lib/public-catalog";
 
 const logger = createLogger({
@@ -49,89 +53,20 @@ export async function GET(
   try {
     const product = await prisma.product.findFirst({
       where: {
+        ...PUBLIC_PRODUCT_WHERE,
         id,
-        isActive: true,
-        status: "ACTIVE",
-        code: { not: null },
-        category: { not: null },
-        evaluationStructure: { not: null },
-        denominationCurrency: { not: null },
-        accountSize: { not: null },
-        price: { not: null },
       },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        description: true,
-        category: true,
-        evaluationStructure: true,
-        status: true,
-        accountSize: true,
-        denominationCurrency: true,
-        price: true,
-        currency: true,
-        displayOrder: true,
-        isActive: true,
-        ruleset: { select: { name: true } },
-        stages: {
-          orderBy: { stageOrder: "asc" },
-          select: {
-            id: true,
-            stageKey: true,
-            displayName: true,
-            stageOrder: true,
-            rulesetVersion: {
-              select: {
-                id: true,
-                version: true,
-                status: true,
-                ruleset: { select: { id: true, name: true } },
-                rules: {
-                  select: {
-                    id: true,
-                    name: true,
-                    ruleType: true,
-                    value: true,
-                    isRequired: true,
-                    disposition: true,
-                    calculation: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        operatingRulesetVersion: {
-          select: {
-            id: true,
-            version: true,
-            status: true,
-            ruleset: { select: { id: true, name: true } },
-            rules: {
-              select: {
-                id: true,
-                name: true,
-                ruleType: true,
-                value: true,
-                isRequired: true,
-                disposition: true,
-                calculation: true,
-              },
-            },
-          },
-        },
-      },
+      select: PUBLIC_PRODUCT_SELECT,
     });
 
-    if (!product || validateProductForPublication(product).length > 0) {
+    if (!product || approvedPublicProducts([product]).length === 0) {
       return NextResponse.json(
         { success: false, error: "Product not found" },
         { status: 404 }
       );
     }
 
-    return NextResponse.json({ success: true, product }, { status: 200 });
+    return NextResponse.json({ success: true, product: serializePublicProduct(product) }, { status: 200 });
   } catch (error) {
     logger.error("PRODUCT", "Public product detail retrieval failed", {
       correlationId,

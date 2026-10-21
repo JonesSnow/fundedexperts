@@ -1,28 +1,25 @@
-import { Badge } from "@/components/ui/badge";
-
 export default function WorkingPlanPreview() {
   return (
     <section
       id="plan-availability"
       aria-labelledby="plan-availability-title"
-      className="mx-auto max-w-7xl px-5 py-8 sm:px-8 md:py-10"
+      className="mx-auto max-w-7xl px-5 py-5 sm:px-8 md:py-6"
     >
-      <div className="rounded-2xl border border-warning/30 bg-card p-5 sm:p-7" role="status">
-        <div className="flex flex-wrap items-center gap-3">
-          <Badge variant="outline">Published offers only</Badge>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Catalog publication standard
-          </p>
+      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5" role="status">
+        <div className="flex min-w-0 items-start gap-3">
+            <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+          <div className="min-w-0">
+            <h2 id="plan-availability-title" className="text-sm font-semibold tracking-tight text-foreground">
+              Enrollment is not currently available
+            </h2>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
+              Only approved offers and published terms appear below. Draft proposals are excluded.
+            </p>
+          </div>
         </div>
-        <h2 id="plan-availability-title" className="mt-3 text-2xl font-semibold tracking-tight">
-          Product terms come from approved catalog data
-        </h2>
-        <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
-          The catalog displays account sizes, prices, stages, and rules only when the product API
-          returns an approved active offer. Historical proposals remain unpublished. If live offer
-          data cannot be verified, the catalog shows a retryable error instead of substituting draft
-          values.
-        </p>
+        <span className="shrink-0 rounded-full border border-border px-3 py-1.5 font-mono text-[0.65rem] font-medium tracking-wide text-muted-foreground">
+          CATALOG · READ ONLY
+        </span>
       </div>
     </section>
   );

@@ -10,6 +10,8 @@
  */
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { mergeTestEnvironmentFileValues, withVerifiedTestDatabase } from "./test-db-guard";
 
 function loadEnvFile(filePath: string): Record<string, string> {
@@ -55,6 +57,35 @@ const verification = withVerifiedTestDatabase(
       .filter((value): value is string => Boolean(value?.trim())),
   }
 );
+
+// The URL and operator attestation are only the first safety layer. Before
+// allowing a caller to construct its own client or run a migration, launch a
+// separate guarded process that reads the actual server-reported identity.
+// This keeps the bootstrap synchronous for the project's CommonJS test mode.
+const projectRequire = createRequire(join(root, "package.json"));
+const identityCheckEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  TEST_DATABASE_URL: verification.resolved.url,
+};
+if (localFileEnv.DATABASE_URL?.trim()) identityCheckEnv.DATABASE_URL = localFileEnv.DATABASE_URL;
+if (localFileEnv.DIRECT_URL?.trim()) identityCheckEnv.DIRECT_URL = localFileEnv.DIRECT_URL;
+const identityCheck = spawnSync(
+  process.execPath,
+  [
+    projectRequire.resolve("tsx/cli"),
+    join(root, "scripts", "verify-test-database-identity.ts"),
+  ],
+  {
+    cwd: root,
+    env: identityCheckEnv,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15_000,
+  },
+);
+if (identityCheck.error || identityCheck.status !== 0) {
+  throw new Error("Refusing database-backed work because the connected test database identity could not be verified.");
+}
 
 // No Prisma client or query is created before the guard above succeeds.
 mutableEnv.DATABASE_URL = verification.resolved.url;

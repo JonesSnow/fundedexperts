@@ -1,0 +1,7 @@
+# Non-public Development Catalog Fixture
+
+The repository provides `pnpm db:dev:seed` for an optional, non-public fixture used to exercise the admin product and ruleset screens. It creates one draft product, one inactive draft ruleset version, and one stage association. The fixture has no account size, price, denomination, evaluation structure, or rule values. Its `E2E` marker and draft/inactive states keep it out of the customer catalog.
+
+The command reads only the development and production database configuration keys from `.env.local`; it never prints their values. The default command validates the existing development-target guard and makes no database connection. `-- --apply` is required to connect and seed. Before writing, the command verifies the connected database name, port, public schema, application tables, and exact successful migration history against the checked-in migration directories. It refuses a missing, incomplete, rolled-back, or extra migration record. Fixture rows are created inside one transaction; existing stable identifiers are left unchanged and checked to ensure they remain non-public and contain no commercial terms.
+
+Do not run the apply mode until the isolated development branch is reachable, its recovery procedure is confirmed, and the guarded migration chain has been reconciled. The fixture has not been seeded or tested against a live database. It does not create a customer offer or approve commercial terms.

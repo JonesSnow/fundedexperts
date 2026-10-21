@@ -2,7 +2,20 @@ import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-import { PUBLIC_RULESET_VERSION_WHERE } from "@/lib/ruleset-visibility";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
+import {
+  approvedPublicProducts,
+  publicApiFailure,
+  publicApiStatus,
+  publicRulesetsForProducts,
+  PUBLIC_PRODUCT_SELECT,
+  PUBLIC_PRODUCT_WHERE,
+  safePrismaErrorCode,
+} from "@/lib/public-catalog";
+
+const logger = createLogger({
+  environment: process.env.NODE_ENV as "development" | "production" | "test",
+});
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -25,19 +38,36 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const trader = await getAuthenticatedUser(request);
-  const versions = await prisma.rulesetVersion.findMany({
-    where: {
-      rulesetId: id,
-      ...(isActiveAdministrator(trader) ? {} : PUBLIC_RULESET_VERSION_WHERE),
-    },
-    orderBy: { version: "desc" },
-  });
+  const correlationId = generateCorrelationId();
+  try {
+    const trader = await getAuthenticatedUser(request);
+    const versions = isActiveAdministrator(trader)
+      ? await prisma.rulesetVersion.findMany({
+        where: { rulesetId: id },
+        orderBy: { version: "desc" },
+      })
+      : await (async () => {
+        const products = await prisma.product.findMany({
+          where: PUBLIC_PRODUCT_WHERE,
+          select: PUBLIC_PRODUCT_SELECT,
+          orderBy: [{ displayOrder: "asc" }, { id: "asc" }],
+        });
+        const publicVersions = publicRulesetsForProducts(approvedPublicProducts(products))
+          .find((ruleset) => ruleset.id === id)?.versions ?? [];
+        return [...publicVersions].sort((left, right) => right.version.localeCompare(left.version));
+      })();
 
-  return NextResponse.json(
-    { success: true, versions },
-    { status: 200 }
-  );
+    return NextResponse.json({ success: true, versions }, { status: 200 });
+  } catch (error) {
+    logger.error("RULESET", "Ruleset version retrieval failed", {
+      correlationId,
+      error: { code: safePrismaErrorCode(error), message: "Unable to query approved product rules" },
+    });
+    return NextResponse.json(
+      publicApiFailure("SERVICE_UNAVAILABLE", "Published plan rules are temporarily unavailable. Please try again.", correlationId),
+      { status: publicApiStatus("SERVICE_UNAVAILABLE") },
+    );
+  }
 }
 
 export async function POST(

@@ -52,7 +52,7 @@ CREATE TABLE "EmailDelivery" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "EmailDelivery_idempotencyKey_key" ON "EmailDelivery"("idempotencyKey") WHERE "idempotencyKey" IS NOT NULL;
+CREATE UNIQUE INDEX "EmailDelivery_idempotencyKey_key" ON "EmailDelivery"("idempotencyKey");
 
 -- CreateIndex
 CREATE INDEX "EmailDelivery_traderId_fkey" ON "EmailDelivery"("traderId");

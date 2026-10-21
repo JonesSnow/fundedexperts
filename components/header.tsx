@@ -103,21 +103,22 @@ export default function Header({ currentPath }: HeaderProps) {
     : "";
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border/80 bg-background/95 backdrop-blur-xl">
-      <div className="mx-auto flex h-[4.75rem] max-w-7xl items-center justify-between gap-5 px-5 sm:px-8">
-        <Brand />
+    <header className="sticky top-0 z-50 border-b border-border/20 bg-ink-950/90 backdrop-blur-xl">
+      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between gap-5 px-5 sm:px-8">
+        <Brand surface="dark" />
 
         <nav aria-label="Primary navigation" className="hidden items-center gap-1 lg:flex">
-          <NavLink href="/catalog" currentPath={currentPath}>Plans</NavLink>
-          <NavLink href="/rules" currentPath={currentPath}>Rules</NavLink>
-          <NavLink href="/how-it-works" currentPath={currentPath}>How it works</NavLink>
-          <NavLink href="/faq" currentPath={currentPath}>FAQ</NavLink>
-          {trader && <NavLink href="/dashboard" currentPath={currentPath}>Dashboard</NavLink>}
-          {trader?.role === "ADMIN" && <NavLink href="/admin" currentPath={currentPath}>Admin</NavLink>}
+          <NavLink href="/catalog" currentPath={currentPath} tone="dark">Programs</NavLink>
+          <NavLink href="/rules" currentPath={currentPath} tone="dark">Rules</NavLink>
+          <NavLink href="/how-it-works" currentPath={currentPath} tone="dark">How it works</NavLink>
+          <NavLink href="/platforms" currentPath={currentPath} tone="dark">Platforms</NavLink>
+          <NavLink href="/faq" currentPath={currentPath} tone="dark">FAQ</NavLink>
+          {trader && <NavLink href="/dashboard" currentPath={currentPath} tone="dark">Dashboard</NavLink>}
+          {trader?.role === "ADMIN" && <NavLink href="/admin" currentPath={currentPath} tone="dark">Admin</NavLink>}
         </nav>
 
         <div className="hidden items-center gap-3 lg:flex">
-          <ButtonLink href="/catalog#configured-products" size="sm">Compare Plans</ButtonLink>
+          <ButtonLink href="/catalog#configured-products" size="sm">Explore programs</ButtonLink>
           {loading ? (
             <span className="h-9 w-36 animate-pulse rounded-lg bg-muted" aria-hidden="true" />
           ) : trader ? (
@@ -193,7 +194,7 @@ export default function Header({ currentPath }: HeaderProps) {
               )}
             </div>
           ) : (
-            <ButtonLink href="/login" variant="outline" size="sm">Login</ButtonLink>
+            <ButtonLink href="/login" variant="outline" size="sm" className="border-white/25 text-paper-50 hover:bg-white/10">Sign in</ButtonLink>
           )}
         </div>
 
@@ -218,9 +219,10 @@ export default function Header({ currentPath }: HeaderProps) {
         <div id="mobile-navigation" ref={mobileNavRef} className="border-t border-border bg-background px-5 pb-6 pt-4 sm:px-8 lg:hidden">
           <nav aria-label="Mobile navigation" className="mx-auto flex max-w-7xl flex-col gap-1">
             <NavLink href="/" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Home</NavLink>
-            <NavLink href="/catalog" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Plans</NavLink>
+            <NavLink href="/catalog" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Programs</NavLink>
             <NavLink href="/rules" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Trading rules</NavLink>
             <NavLink href="/how-it-works" currentPath={currentPath} onClick={() => setMobileOpen(false)}>How it works</NavLink>
+            <NavLink href="/platforms" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Platforms</NavLink>
             <NavLink href="/faq" currentPath={currentPath} onClick={() => setMobileOpen(false)}>FAQ</NavLink>
             {trader && <NavLink href="/dashboard" currentPath={currentPath} onClick={() => setMobileOpen(false)}>Dashboard</NavLink>}
             {trader?.role === "TRADER" && (
@@ -237,7 +239,7 @@ export default function Header({ currentPath }: HeaderProps) {
           </nav>
           <div className="mx-auto mt-4 max-w-7xl border-t border-border pt-4">
             {logoutError && <p className="mb-3 text-sm text-danger" role="alert">{logoutError}</p>}
-            <ButtonLink href="/catalog#configured-products" fullWidth onClick={() => setMobileOpen(false)}>Explore plans</ButtonLink>
+            <ButtonLink href="/catalog#configured-products" fullWidth onClick={() => setMobileOpen(false)}>Compare programs</ButtonLink>
             {loading ? (
               <span className="block h-10 w-full animate-pulse rounded-lg bg-muted" aria-hidden="true" />
             ) : trader ? (
@@ -267,11 +269,13 @@ function NavLink({
   children,
   currentPath,
   onClick,
+          tone,
 }: {
   href: string;
   children: React.ReactNode;
   currentPath?: string;
   onClick?: () => void;
+  tone?: "light" | "dark";
 }) {
   const isActive = currentPath === href || (href !== "/" && currentPath?.startsWith(href));
 
@@ -282,9 +286,13 @@ function NavLink({
       aria-current={isActive ? "page" : undefined}
       className={
         "rounded-full px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 " +
-        (isActive
-          ? "bg-primary-light text-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground")
+        (tone === "dark"
+          ? isActive
+            ? "bg-white/10 text-paper-50"
+            : "text-paper-50/65 hover:bg-white/5 hover:text-paper-50"
+          : isActive
+            ? "bg-primary-light text-foreground"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground")
       }
     >
       {children}

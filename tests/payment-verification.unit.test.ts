@@ -1,7 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { PaymentRecord } from "../lib/payment";
-import { verifyPaymentForOrder, verifyProviderPaymentForOrder } from "../lib/payment-verification";
+import {
+  isSameVerifiedPaymentEvent,
+  verifyPaymentForOrder,
+  verifyProviderPaymentForOrder,
+} from "../lib/payment-verification";
 import { createMockPaymentProvider } from "../lib/mock-payment-provider";
 
 const terms = { orderId: "order-1", amount: "125.50", currency: "USD" };
@@ -104,5 +108,30 @@ describe("payment-to-order verification", () => {
       terms,
       payment({ amount: 125.5001 }),
     ), { valid: false, reason: "AMOUNT_MISMATCH" });
+  });
+});
+
+describe("payment webhook event idempotency", () => {
+  const stored = {
+    orderId: "order-1",
+    providerStatus: "COMPLETED",
+    amount: "125.50",
+    currency: "USD",
+    transactionId: "provider-tx-1",
+    verified: true,
+  };
+  const incoming = { ...stored, amount: 125.5, currency: "usd" };
+
+  it("recognizes an exact verified event replay despite equivalent amount and currency formatting", () => {
+    assert.equal(isSameVerifiedPaymentEvent(stored, incoming), true);
+  });
+
+  it("does not treat a reused event id with different order, status, amount, currency, transaction, or verification as a duplicate", () => {
+    assert.equal(isSameVerifiedPaymentEvent(stored, { ...incoming, orderId: "order-2" }), false);
+    assert.equal(isSameVerifiedPaymentEvent(stored, { ...incoming, providerStatus: "FAILED" }), false);
+    assert.equal(isSameVerifiedPaymentEvent(stored, { ...incoming, amount: 1 }), false);
+    assert.equal(isSameVerifiedPaymentEvent(stored, { ...incoming, currency: "EUR" }), false);
+    assert.equal(isSameVerifiedPaymentEvent(stored, { ...incoming, transactionId: "other-tx" }), false);
+    assert.equal(isSameVerifiedPaymentEvent({ ...stored, verified: false }, incoming), false);
   });
 });

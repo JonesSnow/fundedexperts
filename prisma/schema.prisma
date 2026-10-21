@@ -217,7 +217,7 @@ model Evaluation {
   account          MT5Account?      @relation(fields: [accountId], references: [id])
   rulesetVersion   RulesetVersion   @relation(fields: [rulesetVersionId], references: [id])
   trader           Trader           @relation(fields: [traderId], references: [id])
-  order            Order?           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  order            Order?           @relation("OrderEvaluation", fields: [orderId], references: [id], onDelete: Restrict)
   fundedAccounts   FundedAccount[]
   ruleEvaluations  RuleEvaluation[]
   productStage     ProductStage?    @relation(fields: [productStageId], references: [id], onDelete: Restrict)
@@ -240,7 +240,7 @@ model FundedAccount {
   updatedAt        DateTime            @updatedAt
   evaluationId     String?            @unique
   account          MT5Account?         @relation(fields: [accountId], references: [id])
-  evaluation       Evaluation?         @relation(fields: [evaluationId], references: [id])
+  evaluation       Evaluation?     @relation(fields: [evaluationId], references: [id])
   rulesetVersion   RulesetVersion?     @relation(fields: [rulesetVersionId], references: [id])
   trader           Trader              @relation(fields: [traderId], references: [id])
   auditLogs        AuditLog[]          @relation("AuditLogToFundedAccount")
@@ -272,7 +272,7 @@ model RuleEvaluation {
   expectedValue Json?
   details       String?
   evaluatedAt   DateTime   @default(now())
-  sourceDataTimestamp DateTime?
+  sourceDataTimestamp DateTime? @db.Timestamptz(6)
   evaluation    Evaluation @relation(fields: [evaluationId], references: [id])
   rule          Rule       @relation(fields: [ruleId], references: [id])
 
@@ -291,6 +291,23 @@ model RuleEvent {
   account      MT5Account @relation(fields: [accountId], references: [id])
 }
 
+
+model PaymentEvent {
+  id              String   @id @default(uuid())
+  orderId         String
+  providerEventId String   @unique
+  providerStatus  String
+  amount          Decimal? @db.Decimal(18, 2)
+  currency        String?
+  transactionId   String?
+  verified        Boolean  @default(false)
+  processedAt     DateTime @default(now())
+  metadata        Json?
+  order           Order    @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([processedAt])
+}
 model Order {
   id               String          @id @default(uuid())
   orderNumber      String          @unique
@@ -309,7 +326,8 @@ model Order {
   rulesetVersion   RulesetVersion? @relation(fields: [rulesetVersionId], references: [id])
   trader           Trader          @relation(fields: [traderId], references: [id])
   orderItems       OrderItem[]
-  evaluation       Evaluation?
+  evaluation       Evaluation?     @relation("OrderEvaluation")
+  paymentEvents    PaymentEvent[]
 
   @@index([traderId, status])
 }

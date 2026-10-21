@@ -128,6 +128,55 @@ test("Phase 33 E2E rulesets cannot be exposed through an otherwise active produc
   assert.equal(publicRulesForVersion(approved, rulesetId, "1.0"), null);
 });
 
+test("explicit E2E product identifiers are excluded even with ordinary published rules", () => {
+  const fixture = productRecord({ code: "DEV-E2E-NONPUBLIC" });
+
+  assert.deepEqual(approvedPublicProducts([fixture]), []);
+});
+
+test("evaluation products cannot expose draft, inactive, or test-only ongoing rulesets", () => {
+  const draft = productRecord();
+  draft.operatingRulesetVersion = {
+    ...draft.stages[0]!.rulesetVersion,
+    status: "DRAFT",
+  };
+
+  const inactiveVersion = productRecord();
+  inactiveVersion.operatingRulesetVersion = {
+    ...inactiveVersion.stages[0]!.rulesetVersion,
+    isActive: false,
+  };
+
+  const inactiveRuleset = productRecord();
+  inactiveRuleset.operatingRulesetVersion = {
+    ...inactiveRuleset.stages[0]!.rulesetVersion,
+    ruleset: {
+      ...inactiveRuleset.stages[0]!.rulesetVersion.ruleset,
+      isActive: false,
+    },
+  };
+
+  const testRuleset = productRecord();
+  testRuleset.operatingRulesetVersion = {
+    ...testRuleset.stages[0]!.rulesetVersion,
+    ruleset: {
+      ...testRuleset.stages[0]!.rulesetVersion.ruleset,
+      name: "E2E development fixture rules",
+    },
+  };
+
+  const published = productRecord();
+  published.operatingRulesetVersion = {
+    ...published.stages[0]!.rulesetVersion,
+  };
+
+  for (const product of [draft, inactiveVersion, inactiveRuleset, testRuleset]) {
+    assert.deepEqual(approvedPublicProducts([product]), []);
+  }
+  assert.deepEqual(approvedPublicProducts([published]), [published]);
+  assert.equal(serializePublicProduct(published).operatingRulesetVersion?.status, "PUBLISHED");
+});
+
 test("optional unsupported terms remain visible as explicitly not enforced", () => {
   const product = productRecord();
   product.stages[0]!.rulesetVersion.rules.push({
