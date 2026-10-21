@@ -9,36 +9,22 @@ import { completeJob, failJob, updateMonitoringState } from "./monitoring-job";
 import { generateCorrelationId } from "../logger";
 import { processMonitoringSnapshot, scheduleMonitoringJob } from "../monitoring-pipeline";
 import type { ProviderCredentials } from "./credential-boundary";
-import { isEncryptionAvailable } from "../encryption";
 
 function resolveCredentials(account: {
   accountNumber: string;
   login: string | null;
   server: string | null;
   credentials: string | null;
-}): ProviderCredentials {
-  if (account.credentials && isEncryptionAvailable()) {
-    return {
-      providerType: "mt5",
-      server: account.server ?? "default-server",
-      login: Number(account.login ?? account.accountNumber),
-      password: account.credentials,
-      connectionTimeoutMs: 5000,
-    };
-  }
-
-  let loginNum: number;
-  try {
-    loginNum = Number(account.login ?? account.accountNumber);
-  } catch {
-    loginNum = 0;
-  }
+}): ProviderCredentials | null {
+  const server = account.server?.trim();
+  const login = Number(account.login ?? account.accountNumber);
+  if (!account.credentials || !server || !Number.isSafeInteger(login) || login <= 0) return null;
 
   return {
     providerType: "mt5",
-    server: account.server ?? "default-server",
-    login: loginNum,
-    password: process.env.MT5_MASTER_PASSWORD ?? "mock-password",
+    server,
+    login,
+    password: account.credentials,
     connectionTimeoutMs: 5000,
   };
 }
@@ -83,7 +69,7 @@ export function monitoringRunnerEligibleAccountFilter(): Prisma.MT5AccountWhereI
   return {
     OR: [
       { currentMonitoringStatus: null },
-      { currentMonitoringStatus: { in: ["HEALTHY", "ERROR", "UNKNOWN"] } },
+      { currentMonitoringStatus: { in: ["HEALTHY", "DEGRADED", "ERROR", "UNKNOWN"] } },
     ],
     evaluations: {
       some: {
@@ -203,7 +189,20 @@ export class MonitoringRunner {
     });
 
     const account = job.account;
-    const credentials: ProviderCredentials = resolveCredentials(account);
+    const credentials = resolveCredentials(account);
+    if (!credentials) {
+      const error = "Encrypted MT5 account credentials are unavailable.";
+      this.logger.error(`RUN-${accountId}`, error, "CREDENTIALS_UNAVAILABLE", { correlationId, jobId });
+      await failJob(this.prisma, job.id, "CREDENTIALS_UNAVAILABLE", error, false);
+      await updateMonitoringState(this.prisma, accountId, "FAILED", new Date());
+      return {
+        accountId,
+        success: false,
+        jobId,
+        error,
+        errorCategory: "CREDENTIALS_UNAVAILABLE",
+      };
+    }
 
     try {
       const result = await this.worker.execute(accountId, { credentials });
@@ -252,8 +251,6 @@ export class MonitoringRunner {
         };
       }
 
-      await completeJob(this.prisma, job.id);
-
       const pipelineResult = await processMonitoringSnapshot(this.prisma, {
         accountId,
         snapshot: normalizationResult.snapshot,
@@ -262,6 +259,13 @@ export class MonitoringRunner {
       });
 
       if (!pipelineResult.success) {
+        await failJob(
+          this.prisma,
+          job.id,
+          pipelineResult.errorCategory,
+          pipelineResult.error,
+          false,
+        );
         await updateMonitoringState(this.prisma, accountId, "FAILED", new Date());
         return {
           accountId,
@@ -271,6 +275,8 @@ export class MonitoringRunner {
           errorCategory: pipelineResult.errorCategory,
         };
       }
+
+      await completeJob(this.prisma, job.id);
 
       const monitoringState: ProcessSnapshotState = {
         evaluationId: pipelineResult.evaluationId,

@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { AccountAssignmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const where: Record<string, unknown> = {};
-    if (trader.role === "TRADER") {
+    if (!isActiveAdministrator(trader)) {
       where.traderId = trader.id;
     }
 

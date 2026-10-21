@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkCooldown, checkRateLimit } from "@/lib/auth/rate-limit";
+import { checkAuthClientRateLimit, checkCooldown, checkRateLimit } from "@/lib/auth/rate-limit";
 import { generateOtp, hashOtp, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS } from "@/lib/auth/otp";
 import { validateEmail } from "@/lib/auth/validation";
 import { sendPasswordResetEmail } from "@/lib/email/templates";
@@ -25,6 +25,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
+    const clientRateLimit = checkAuthClientRateLimit(request, "forgot-password", 20);
+    if (!clientRateLimit.allowed) {
+      return NextResponse.json(GENERIC_RESPONSE, {
+        status: 200,
+        headers: { "Retry-After": String(clientRateLimit.retryAfter) },
+      });
+    }
     const rateLimit = checkRateLimit(`forgot-password:${email}`);
     const cooldown = checkCooldown(`forgot-password-request:${email}`, OTP_RESEND_COOLDOWN_MS);
     if (!rateLimit.allowed || !cooldown.allowed) {

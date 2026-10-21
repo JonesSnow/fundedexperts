@@ -713,6 +713,7 @@ async function main() {
       const snapshot = await adapter.fetchSnapshot({
         accountId: "p33-xm-demo",
         accountNumber: "346266128",
+        expectedServer: "XMGlobal-MT5 10",
         provider: "MT5",
         credentials: encryptedCreds,
       });

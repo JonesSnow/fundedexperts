@@ -352,6 +352,7 @@ export async function linkAccount(
               traderId: true,
               status: true,
               startingBalance: true,
+              account: { select: { accountSize: true, currency: true, purpose: true } },
               order: { select: { orderItems: { select: { productId: true, productSnapshot: true } } } },
             },
           },
@@ -359,8 +360,9 @@ export async function linkAccount(
       });
       if (!fundedAccount) return { kind: "missing-funded" as const };
 
-      const accountLocks = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT "id" FROM "MT5Account" WHERE "id" = ${accountId} FOR UPDATE
+      const accountLocks = await tx.$queryRaw<Array<{ id: string; credentialsConfigured: boolean }>>`
+        SELECT "id", ("credentials" IS NOT NULL AND BTRIM("credentials") <> '') AS "credentialsConfigured"
+        FROM "MT5Account" WHERE "id" = ${accountId} FOR UPDATE
       `;
       if (accountLocks.length === 0) return { kind: "missing-account" as const };
 
@@ -385,6 +387,12 @@ export async function linkAccount(
       const expectedAccountCurrency = getEvaluationDenominationCurrency(
         fundedAccount.evaluation?.order?.orderItems,
         fundedAccount.evaluation?.productId,
+        fundedAccount.evaluation?.account ? {
+          accountSize: fundedAccount.evaluation.account.accountSize,
+          currency: fundedAccount.evaluation.account.currency,
+          purpose: fundedAccount.evaluation.account.purpose,
+          startingBalance: fundedAccount.evaluation.startingBalance,
+        } : undefined,
       );
       const decision = evaluateFundedAccountLink({
         fundedStatus: fundedAccount.status,
@@ -399,6 +407,7 @@ export async function linkAccount(
         accountPurpose: account.purpose,
         accountSize: account.accountSize,
         accountCurrency: account.currency,
+        credentialsConfigured: accountLocks[0]?.credentialsConfigured === true,
         activeAssignmentTraderId: activeAssignments[0]?.traderId ?? null,
         activeAssignmentCount: activeAssignments.length,
         linkedToAnotherFundedAccount: otherFundedLink !== null,
@@ -421,6 +430,7 @@ export async function linkAccount(
           purpose: "FUNDED",
           accountSize: fundedAccount.evaluation!.startingBalance!,
           currency: expectedAccountCurrency,
+          credentials: { not: "" },
         },
         data: { status: "IN_USE", updatedAt: new Date() },
       });
@@ -562,6 +572,7 @@ export async function transitionFundedAccountStatus(
               traderId: true,
               status: true,
               startingBalance: true,
+              account: { select: { accountSize: true, currency: true, purpose: true } },
               order: { select: { orderItems: { select: { productId: true, productSnapshot: true } } } },
             },
           },
@@ -593,8 +604,9 @@ export async function transitionFundedAccountStatus(
         if (!current.accountId) {
           return { kind: "failure", error: "A consistent MT5 assignment is required to reactivate this funded account", errorCategory: "TERMS_REVIEW_REQUIRED" };
         }
-        const accountLocks = await tx.$queryRaw<Array<{ id: string }>>`
-          SELECT "id" FROM "MT5Account" WHERE "id" = ${current.accountId} FOR UPDATE
+        const accountLocks = await tx.$queryRaw<Array<{ id: string; credentialsConfigured: boolean }>>`
+          SELECT "id", ("credentials" IS NOT NULL AND BTRIM("credentials") <> '') AS "credentialsConfigured"
+          FROM "MT5Account" WHERE "id" = ${current.accountId} FOR UPDATE
         `;
         if (accountLocks.length === 0) {
           return { kind: "failure", error: "The linked MT5 account is missing and requires review", errorCategory: "TERMS_REVIEW_REQUIRED" };
@@ -628,11 +640,18 @@ export async function transitionFundedAccountStatus(
           expectedAccountCurrency: getEvaluationDenominationCurrency(
             current.evaluation?.order?.orderItems,
             current.evaluation?.productId,
+            current.evaluation?.account ? {
+              accountSize: current.evaluation.account.accountSize,
+              currency: current.evaluation.account.currency,
+              purpose: current.evaluation.account.purpose,
+              startingBalance: current.evaluation.startingBalance,
+            } : undefined,
           ),
           accountStatus: mt5Account.status,
           accountPurpose: mt5Account.purpose,
           accountSize: mt5Account.accountSize,
           accountCurrency: mt5Account.currency,
+          credentialsConfigured: accountLocks[0]?.credentialsConfigured === true,
           activeAssignmentTraderId: assignments[0]?.traderId ?? null,
           activeAssignmentCount: assignments.length,
           linkedToAnotherFundedAccount: anotherFundedAccount !== null,

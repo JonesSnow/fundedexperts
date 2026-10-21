@@ -132,9 +132,12 @@ export function normalizeSnapshot(
     equityHistoryComplete: raw.equityHistoryComplete === true,
     dailyPnl: raw.dailyPnl ?? null,
     dataQuality: {
-      positionsAvailable: Array.isArray(raw.positions) && positions.length === raw.positions.length,
-      ordersAvailable: Array.isArray(raw.orders) && orders.length === raw.orders.length,
-      historyAvailable: Array.isArray(raw.history),
+      positionsAvailable: Array.isArray(raw.positions) && positions.length === raw.positions.length &&
+        (raw.dataQuality?.positionsAvailable === undefined || raw.dataQuality.positionsAvailable === true),
+      ordersAvailable: Array.isArray(raw.orders) && orders.length === raw.orders.length &&
+        (raw.dataQuality?.ordersAvailable === undefined || raw.dataQuality.ordersAvailable === true),
+      historyAvailable: Array.isArray(raw.history) &&
+        (raw.dataQuality?.historyAvailable === undefined || raw.dataQuality.historyAvailable === true),
     },
   };
 

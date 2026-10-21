@@ -1,7 +1,8 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { MT5Account } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
-import { encryptIfEnabled } from "@/lib/encryption";
+import { buildMt5CredentialUpdateData, prepareMt5Credentials } from "@/lib/mt5-credential-storage";
 import { prisma } from "@/lib/db";
 
 
@@ -21,8 +22,8 @@ async function getAuthenticatedUser(request: NextRequest) {
 }
 
 function omitCredentials(account: MT5Account) {
-  const { credentials: _credentials, ...rest } = account;
-  return rest;
+  const { credentials, ...rest } = account;
+  return { ...rest, credentialsConfigured: Boolean(credentials) };
 }
 
 export async function GET(
@@ -36,7 +37,7 @@ export async function GET(
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
@@ -80,7 +81,7 @@ export async function PUT(
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
@@ -146,16 +147,13 @@ export async function PUT(
 
     let encryptedCredentials: string | null = null;
     if (body.credentials !== undefined) {
-      if (body.credentials !== null && typeof body.credentials !== "string") {
-        errors.credentials = "Credentials must be a string";
-      } else if (body.credentials !== null) {
-        try {
-          encryptedCredentials = encryptIfEnabled(body.credentials);
-        } catch {
-          errors.credentials = "Encryption key not configured — cannot store credentials";
-        }
+      const prepared = prepareMt5Credentials(body.credentials);
+      if (!prepared.ok) {
+        errors.credentials = prepared.reason === "invalid"
+          ? "Credentials must include a positive login, password, and server."
+          : "Encryption key not configured — cannot store credentials";
       } else {
-        encryptedCredentials = null;
+        encryptedCredentials = prepared.value ?? null;
       }
     }
 
@@ -166,34 +164,41 @@ export async function PUT(
       );
     }
 
-    const account = await prisma.mT5Account.update({
-      where: { id },
-      data: {
-        accountNumber: body.accountNumber ?? existing.accountNumber,
-        broker: body.broker ?? existing.broker,
-        server: body.server ?? existing.server,
-        login: body.login ?? existing.login,
-        accountSize: body.accountSize ?? existing.accountSize,
-        currency: body.currency ?? existing.currency,
-        purpose: body.purpose ?? existing.purpose,
-        credentials: encryptedCredentials ?? existing.credentials,
-        notes: body.notes ?? existing.notes,
-        updatedAt: new Date(),
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_UPDATED",
-        entityType: "MT5Account",
-        entityId: account.id,
-        performedBy: trader.id,
-        details: {
-          accountNumber: account.accountNumber,
-          changes: Object.keys(body).filter((k) => k !== "credentials"),
-          credentialsChanged: body.credentials !== undefined,
+    const account = await prisma.$transaction(async (tx) => {
+      const updated = await tx.mT5Account.update({
+        where: { id },
+        data: {
+          accountNumber: body.accountNumber ?? existing.accountNumber,
+          broker: body.broker ?? existing.broker,
+          server: body.server ?? existing.server,
+          login: body.login ?? existing.login,
+          accountSize: body.accountSize ?? existing.accountSize,
+          currency: body.currency ?? existing.currency,
+          purpose: body.purpose ?? existing.purpose,
+          ...buildMt5CredentialUpdateData(
+            body.credentials !== undefined,
+            encryptedCredentials,
+          ),
+          notes: body.notes ?? existing.notes,
+          updatedAt: new Date(),
         },
-      },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_UPDATED",
+          entityType: "MT5Account",
+          entityId: updated.id,
+          performedBy: trader.id,
+          details: {
+            accountNumber: updated.accountNumber,
+            changes: Object.keys(body).filter((k) => k !== "credentials"),
+            credentialsChanged: body.credentials !== undefined,
+          },
+        },
+      });
+
+      return updated;
     });
 
     return NextResponse.json(
@@ -219,7 +224,7 @@ export async function DELETE(
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
@@ -229,50 +234,54 @@ export async function DELETE(
   const { id } = await params;
 
   try {
-    const account = await prisma.mT5Account.findUnique({
-      where: { id },
-    });
-    if (!account) {
-      return NextResponse.json(
-        { success: false, error: "Account not found" },
-        { status: 404 }
-      );
-    }
+    const deletion = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "MT5Account" WHERE "id" = ${id} FOR UPDATE
+      `;
+      if (locked.length === 0) return { kind: "missing" as const };
 
-    const dependencies = await prisma.$transaction(async (tx) => {
+      const account = await tx.mT5Account.findUnique({
+        where: { id },
+        select: { id: true, accountNumber: true },
+      });
+      if (!account) return { kind: "missing" as const };
+
       const [assignments, evaluations, fundedAccounts, ruleEvents] = await Promise.all([
         tx.accountAssignment.count({ where: { accountId: id } }),
         tx.evaluation.count({ where: { accountId: id } }),
         tx.fundedAccount.count({ where: { accountId: id } }),
         tx.ruleEvent.count({ where: { accountId: id } }),
       ]);
-      return { assignments, evaluations, fundedAccounts, ruleEvents };
+      const hasDependencies = assignments > 0 || evaluations > 0 || fundedAccounts > 0 || ruleEvents > 0;
+      if (hasDependencies) return { kind: "dependent" as const };
+
+      await tx.mT5Account.delete({ where: { id } });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_UPDATED",
+          entityType: "MT5Account",
+          entityId: account.id,
+          performedBy: trader.id,
+          details: {
+            accountNumber: account.accountNumber,
+            action: "DELETED",
+          },
+        },
+      });
+
+      return { kind: "deleted" as const };
     });
 
-    const hasDependencies = Object.values(dependencies).some((count) => count > 0);
-    if (hasDependencies) {
+    if (deletion.kind === "missing") {
+      return NextResponse.json({ success: false, error: "Account not found" }, { status: 404 });
+    }
+    if (deletion.kind === "dependent") {
       return NextResponse.json(
         { success: false, error: "Account has dependent records (assignments, evaluations, funded accounts, or events) and cannot be deleted" },
         { status: 409 }
       );
     }
-
-    await prisma.mT5Account.delete({
-      where: { id },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        action: "ACCOUNT_UPDATED",
-        entityType: "MT5Account",
-        entityId: account.id,
-        performedBy: trader.id,
-        details: {
-          accountNumber: account.accountNumber,
-          action: "DELETED",
-        },
-      },
-    });
 
     return NextResponse.json(
       { success: true },

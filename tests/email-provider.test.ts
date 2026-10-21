@@ -1,4 +1,5 @@
 import "./support/test-env";
+import "./support/test-cleanup-guard";
 import { describe, it, before, after, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";

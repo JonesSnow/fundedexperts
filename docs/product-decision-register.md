@@ -53,3 +53,73 @@ A proposal may move to a public “configured” label only after the product ow
 ## Block 2 implementation update — 2026-10-13
 
 Structured product fields, product stages, ruleset-version associations, explicit rule disposition/calculation metadata, public filtering, and order snapshots are implemented in code. No approved product, denomination, price, or rule matrix was supplied or seeded. The publication gate remains closed because evaluator readiness is not certified. Confirmed runtime gaps that block affected products include premature MIN_TRADES failure, incorrect MAX_DAILY_LOSS sign/basis handling, unconditional TRADING_SESSION pass, and incomplete TRADING_HOURS timezone/trade-time handling. Direct Funded remains unavailable until a separate operating policy and fulfillment flow are approved and implemented. See [docs/block-2-product-foundation.md](block-2-product-foundation.md) for the route/model map, test limits, and follow-up requirements. No database was queried or modified.
+
+## Master implementation specification alignment — 2026-10-20
+
+The owner-supplied **Funded Experts — Master Implementation Specification and Execution Prompt** is the current business and product requirements source for future work. It directs continued development of this existing application, requires existing work to be preserved, and prohibits treating pages or mocked tests as proof that a workflow is production-ready. This register remains the in-repository decision record. Where earlier business proposals conflict, retain the conflict as unresolved; do not infer approval from source-code values.
+
+The specification's project metadata names `D:\fundedexperts`, while the owner has designated the active project as `C:\FundedExperts\app`. This update applies to the active repository only.
+
+### Planned offer matrix and historical commercial proposals
+
+The specification lists these planned sizes:
+
+| Product variant | Planned account sizes | Offer count |
+|---|---|---:|
+| Beginner 3-Step | $5,000, $10,000, $25,000, $50,000, $60,000 | 5 |
+| Beginner 4-Step | $5,000, $10,000, $25,000, $50,000, $60,000 | 5 |
+| Pro 2-Step | $10,000, $25,000, $50,000, $60,000 | 4 |
+| Expert 1-Step | $10,000, $25,000, $50,000, $100,000 | 4 |
+| Instant / Direct | $10,000, $25,000, $50,000, $100,000 | 4 |
+| **Total if both Beginner variants are offered** |  | **22** |
+
+The same specification also calls this a planned 17-offer matrix. Its five listed variant counts sum to 22; 17 is the total only if one of the two Beginner variants is excluded. The owner must decide whether both Beginner variants are intended. Do not remove an offer or create records to force either count. The pricing proposal contains one Beginner ladder, so whether it applies to both Beginner variants or only one is also unresolved.
+
+Every value below is a **historical proposal, not an approved customer term**:
+
+| Category | Proposed price ladder (USD) | Proposed evaluation targets | Proposed risk baseline |
+|---|---|---|---|
+| Beginner 3-Step | $5,000: $7; $10,000: $12; $25,000: $19; $50,000: $29; $60,000: $35 | Stage 1: 5%; Stage 2: 4%; Stage 3: 3% | Daily loss 5%; maximum loss 10%, static |
+| Beginner 4-Step | Same ladder proposed for both Beginner variants; whether intended remains unresolved | Stage 1: 5%; Stage 2: 4%; Stage 3: 3%; Stage 4: 2% | Daily loss 5%; maximum loss 10%, static |
+| Pro 2-Step | $10,000: $19; $25,000: $35; $50,000: $55; $60,000: $65 | Stage 1: 8%; Stage 2: 5% | Daily loss 5%; maximum loss 10%, static |
+| Expert 1-Step | $10,000: $29; $25,000: $49; $50,000: $79; $100,000: $129 | Stage 1: 10% | Daily loss 4%; maximum loss 8%, trailing |
+| Instant / Direct | $10,000: $49; $25,000: $89; $50,000: $149; $100,000: $249 | No conventional evaluation target | Daily loss 3%; maximum loss 6%, trailing |
+
+The specification additionally records 1:100 leverage as a working baseline. These target and loss numbers do not define their calculation bases, trading-day boundaries, floating-PnL treatment, fees, commissions, swaps, breach comparisons, stale-data behavior or complete pass conditions. “Static” and “trailing” are not sufficiently precise formulas. Do not publish or enforce them as final commercial semantics until those definitions and evaluator behavior are approved and verified.
+
+### Profit share, payout and remaining commercial decisions
+
+The specification explicitly records conflicting historical profit-share proposals: Beginner 80%, Pro 85%, Expert 90%, Instant / Direct 80%; a general 80/20 arrangement; a 70% Instant share; and selected premium offers up to 100%. No option is approved by this register. A separate 14-calendar-day funded-stage waiting period and $50 minimum eligible net profit are also historical payout proposals only.
+
+The following remain unresolved or require independent technical/operational verification before publication or launch:
+
+- Whether the two Beginner variants are both offered and the final offer count.
+- Prices, currency, taxes/fees, and the product/variant mapping for every price.
+- Approved target bases and exact daily/static/trailing risk formulas.
+- Minimum trading days (three days per stage was proposed), its definition and outage/late-data treatment; no maximum evaluation duration was proposed.
+- Profit-share policy, eligible profit definition, payout eligibility, timing, minimum, and payout execution/reconciliation.
+- Supported crypto payment provider, assets/networks, confirmation thresholds, refunds and reconciliation.
+- Broker capability and actual MT5 demo-account connectivity; XM is only a candidate.
+- Customer eligibility, legal terms, refund/cancellation policy, support/appeals process, and deployment/database readiness.
+
+No database, product record, payment provider, broker, or production service was accessed or changed while aligning this register. All proposals remain draft-only; the existing publication gate remains closed.
+
+### Source-status verification — 2026-10-20
+
+The older 2026-10-13 implementation notes above are historical snapshots. A read-only check of the current schema, rule engine, capability registry, and database-free evaluator tests found these later changes:
+
+| Area | Current source evidence | Current limitation |
+|---|---|---|
+| Product and stage model | `Product` now has category, evaluation structure, separate price and account-denomination currencies, status, ordered `ProductStage` mappings, and versioned ruleset relations in `prisma/schema.prisma`. | Live products, prices, and stages remain unverified because the database target has not been approved for inspection; the reported missing `ProductStage` table remains an external schema/deployment blocker. |
+| Minimum-trade outcomes | `MIN_TRADES` and `MIN_TRADING_DAYS` are represented in the Prisma enum. The pure evaluator returns `INCOMPLETE` below a minimum, requires complete uniquely identified history, and has regression tests for duplicate snapshots and day-boundary counting. | The live MT5 adapter does not provide a complete, uniquely identified event history; both rule types remain unsupported by the publication capability registry. No customer offer is certified by the unit tests. |
+| Daily loss | The evaluator now consumes explicit PnL components, an IANA timezone and reset time, a matching period start, source freshness, and an explicit comparison policy. | The production adapter does not supply verified components and a verified daily period, and business owners have not approved the exact formula/reset terms. Publication capability remains disabled. |
+| Drawdown | The evaluator supports explicit static-starting-equity and trailing-peak methods, and fails closed when the reference history is unavailable. | The registry only permits static drawdown and the live product publication route has no approved evaluator allowlist. Trailing drawdown and customer-facing enforcement remain uncertified. |
+| Trading hours and session | Trading-hours calculation checks individual event timestamps in the configured IANA timezone. `TRADING_SESSION` checks configured allowed symbols; it is not a general market-session policy. | The live adapter does not establish a complete verified activity-event window. Both capabilities remain unsupported for publication; rules for sessions, instruments, and event windows still need owner approval. |
+| Profit target | The pure calculation combines realized and floating PnL only when complete history and position data are present. | Commission, swap, fee, lifecycle, and live-adapter semantics are not fully certified; this rule remains unsupported for product publication. |
+| Evaluation activation integrity | `activatePaidOrder` runs evaluation creation, matching-account reservation, assignment, account status, initial rule records, and audit writes inside one repository transaction; per-order and per-trader advisory locks and `FOR UPDATE SKIP LOCKED` protect competing activation requests. | Database-free mocked tests cover retries, concurrency, inventory failure, and rollback. This does not prove production database behavior, and activation remains dependent on verified payment evidence, a migrated schema, compatible inventory, and a verified database target. |
+
+This source review did not access a database, run a migration, verify live catalog records, or exercise the MT5 integration. The reported `ProductStage` availability and all customer-facing commercial terms therefore remain unresolved.
+
+### Read-only Neon branch check — 2026-10-20
+
+The Neon console view for the Funded Experts project showed the selected `production` branch marked as the default, with one row visible in the branch table. This view does not prove that no separate development branch exists, and it was not compared with the application's configured database target. No branch was switched, created, or modified; no database connection or query, migration, or write was performed. The exact development target and its isolation from production remain unverified.

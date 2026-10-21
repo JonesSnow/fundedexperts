@@ -74,10 +74,24 @@ export async function reconcile(prisma: PrismaClient, performedBy: string): Prom
 
       try {
         const repair = await prisma.$transaction(async (tx) => {
-          const locked = await tx.$queryRaw<Array<{ id: string }>>`
-            SELECT "id" FROM "MT5Account" WHERE "id" = ${account.id} FOR UPDATE
+          const locked = await tx.$queryRaw<Array<{ id: string; credentialsConfigured: boolean }>>`
+            SELECT "id", ("credentials" IS NOT NULL AND BTRIM("credentials") <> '') AS "credentialsConfigured"
+            FROM "MT5Account" WHERE "id" = ${account.id} FOR UPDATE
           `;
           if (locked.length === 0) return { repaired: false, reason: "Account no longer exists" };
+          if (locked[0]?.credentialsConfigured !== true) {
+            const reason = "Encrypted MT5 credentials are missing; IN_USE repair skipped";
+            await tx.auditLog.create({
+              data: {
+                action: AuditAction.RECONCILIATION_SKIPPED,
+                entityType: "MT5Account",
+                entityId: account.id,
+                performedBy,
+                details: { ...inconsistency.details, reason },
+              },
+            });
+            return { repaired: false, reason };
+          }
 
           const current = await tx.mT5Account.findUnique({
             where: { id: account.id },
@@ -116,6 +130,10 @@ export async function reconcile(prisma: PrismaClient, performedBy: string): Prom
           });
           return { repaired: true as const };
         });
+        if (!repair.repaired && repair.reason === "Encrypted MT5 credentials are missing; IN_USE repair skipped") {
+          inconsistency.repairable = false;
+          inconsistency.repairHint = "Configure encrypted MT5 credentials before retrying this repair";
+        }
         repairs.push(repair.repaired
           ? {
               inconsistencyId: account.id,

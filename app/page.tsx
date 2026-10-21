@@ -18,7 +18,7 @@ export const metadata: Metadata = {
 };
 
 const processSteps = [
-  { title: "Choose a Plan", description: "Compare account sizes, prices, and evaluation rules." },
+  { title: "Review Available Offers", description: "Compare account sizes, prices, and rules when approved offers are published." },
   { title: "Understand the Rules", description: "Review the published targets and loss limits for your plan." },
   { title: "Complete the Evaluation", description: "When evaluation access is available, trade in the simulated environment and follow the plan's rules." },
   { title: "Review Your Progress", description: "See the status and progress recorded for your account." },
@@ -94,11 +94,11 @@ export default function HomePage() {
             <div className="mx-auto max-w-7xl px-5 py-16 sm:px-8 md:py-20">
               <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
                 <div className="max-w-2xl">
-                  <p className="site-kicker">Configured plans</p>
-                  <h2 className="site-section-title mt-4">Find Your Trading Plan</h2>
-                  <p className="mt-4 text-sm leading-7 text-muted-foreground">Compare active plans by size, price, stages, and published rules.</p>
+                  <p className="site-kicker">Account plans</p>
+                  <h2 className="site-section-title mt-4">Approved offers and terms</h2>
+                  <p className="mt-4 text-sm leading-7 text-muted-foreground">Account sizes, prices, stages, and rules will be shown only when the catalog can verify approved product data.</p>
                 </div>
-                <ButtonLink href="/catalog#configured-products" variant="outline">Compare Plans <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink>
+                <ButtonLink href="/catalog#plan-availability" variant="outline">Check offer availability <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" /></ButtonLink>
               </div>
               <ProductShowcase compact purchaseUnavailable />
             </div>

@@ -6,6 +6,7 @@
 
   const { register } = await import('tsx/esm/api');
   register();
+  const { TEST_DATABASE_CLEANUP_CONFIRMATION_VALUE } = await import('../lib/test-cleanup-guard.ts');
   const { TEST_DATABASE_URL } = await import('../tests/support/test-env.ts');
   const { default: childProcess } = await import('node:child_process');
   const { createRequire } = await import('node:module');
@@ -47,10 +48,16 @@
     process.exit(1);
   }
 
+  const testSource = fs.readFileSync(realTestFile, 'utf8');
+  const hasGlobalCleanup = /\.deleteMany\s*\(\s*\{\s*\}\s*\)/.test(testSource)
+    || /\bTRUNCATE\b[\s\S]{0,160}\bCASCADE\b/i.test(testSource);
+  if (hasGlobalCleanup && process.env.TEST_DATABASE_CLEANUP_CONFIRMATION !== TEST_DATABASE_CLEANUP_CONFIRMATION_VALUE) {
+    throw new Error('Database test refused before launch: this suite uses global cleanup and requires TEST_DATABASE_CLEANUP_CONFIRMATION.');
+  }
+
   const childEnv = { ...process.env, TEST_DATABASE_URL };
   delete childEnv.DATABASE_URL;
   delete childEnv.DIRECT_URL;
-  delete childEnv.TEST_DATABASE_CLEANUP_CONFIRMATION;
   delete childEnv.PHASE33_ALLOW_PRODUCTION_DB;
 
   try {

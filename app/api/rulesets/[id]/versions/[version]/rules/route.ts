@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { Prisma } from "@prisma/client";
 import { getRuleCapability } from "@/lib/rule-capabilities";
 import { NextRequest, NextResponse } from "next/server";
@@ -62,7 +63,7 @@ export async function GET(
     }
 
     const trader = await getAuthenticatedUser(request);
-    if (trader?.role !== "ADMIN") {
+    if (!isActiveAdministrator(trader)) {
       return NextResponse.json(
         publicApiFailure("NOT_FOUND", "Published rules for this plan were not found.", correlationId),
         { status: publicApiStatus("NOT_FOUND") },
@@ -119,7 +120,7 @@ export async function POST(
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }

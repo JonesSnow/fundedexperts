@@ -15,9 +15,12 @@ import { RULE_CAPABILITY_REGISTRY, publicationReadyRuleTypes } from "../lib/rule
 
 function maxLeverageRule(): ProductRuleConfiguration {
   return {
+    id: "maximum-leverage-rule",
     name: "Maximum leverage",
     ruleType: "MAX_LEVERAGE",
     disposition: "REQUIRED",
+    isRequired: true,
+    effectiveDate: new Date("2026-10-01T00:00:00.000Z"),
     value: { maxLeverage: 30 },
     calculation: {
       schemaVersion: 1,
@@ -52,7 +55,15 @@ function profitTargetRule(): ProductRuleConfiguration {
 }
 
 function publishedVersion(id: string) {
-  return { id, version: "1.0.0", status: "PUBLISHED", rules: [maxLeverageRule()] };
+  return {
+    id,
+    version: "1.0.0",
+    status: "PUBLISHED",
+    effectiveDate: new Date("2026-10-01T00:00:00.000Z"),
+    rulesetId: `ruleset-${id}`,
+    ruleset: { id: `ruleset-${id}`, name: `Ruleset ${id}` },
+    rules: [maxLeverageRule()],
+  };
 }
 
 function twoStageProduct(): ProductConfiguration {
@@ -67,6 +78,7 @@ function twoStageProduct(): ProductConfiguration {
     id: "product-id",
     code: "pro-sample-25k",
     name: "Sample Pro",
+    description: "A sample product description.",
     category: "PRO",
     evaluationStructure: "TWO_STEP",
     status: "DRAFT",
@@ -283,12 +295,18 @@ test("calculation contract validator rejects missing required semantics", () => 
 
 test("order snapshots retain authoritative product price and exact stage rule versions", () => {
   const snapshot = buildProductOrderSnapshot(twoStageProduct());
+  assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.price, "79.00");
   assert.equal(snapshot.priceCurrency, "USD");
+  assert.equal(snapshot.description, "A sample product description.");
   assert.deepEqual((snapshot.stages as Array<{ rulesetVersionId: string }>).map((stage) => stage.rulesetVersionId), [
     "ruleset-version-1",
     "ruleset-version-2",
   ]);
+  const firstStage = (snapshot.stages as Array<{ rulesetVersionDetails: { effectiveDate: string }; rules: Array<{ isRequired: boolean; effectiveDate: string }> }>)[0];
+  assert.equal(firstStage.rulesetVersionDetails.effectiveDate, "2026-10-01T00:00:00.000Z");
+  assert.equal(firstStage.rules[0]?.isRequired, true);
+  assert.equal(firstStage.rules[0]?.effectiveDate, "2026-10-01T00:00:00.000Z");
 });
 
 test("order contract rejects browser-supplied price, size, category, rules, or ruleset", () => {

@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { getFundedAccount } from "@/lib/funded-account";
@@ -41,7 +42,7 @@ export async function GET(
     const result = await getFundedAccount(
       prisma,
       id,
-      trader.role === "TRADER" ? trader.id : undefined,
+      !isActiveAdministrator(trader) ? trader.id : undefined,
     );
 
     if (!result.success) {

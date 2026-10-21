@@ -92,4 +92,53 @@ describe("Prisma test entry-point coverage", () => {
 
     assert.deepEqual(unguarded, []);
   });
+
+  it("requires explicit cleanup authorization for every database suite with global cleanup", () => {
+    const candidates = [
+      ...sourceFiles(join(projectRoot, "tests")),
+      ...sourceFiles(join(projectRoot, "scripts")),
+    ].filter((path) => path !== __filename);
+    const unguarded = candidates.filter((path) => {
+      const source = readFileSync(path, "utf8");
+      const segments = path.split(/[\\/]/);
+      const databaseTest = segments.includes("tests") && source.includes("support/test-env");
+      const cleanupUtility = segments.includes("scripts") && /cleanup-db\.(?:ts|js)$/.test(path);
+      if (!databaseTest && !cleanupUtility) return false;
+      const hasGlobalCleanup = /\.deleteMany\s*\(\s*\{\s*\}\s*\)/.test(source)
+        || /\bTRUNCATE\b[\s\S]{0,160}\bCASCADE\b/i.test(source);
+      if (!hasGlobalCleanup) return false;
+      if (path.endsWith("scripts\\cleanup-db.ts")) {
+        return !(
+          source.indexOf("process.env.TEST_DATABASE_CLEANUP_CONFIRMATION") >= 0
+          && source.indexOf("process.env.TEST_DATABASE_CLEANUP_CONFIRMATION") < source.indexOf("new PrismaClient")
+        );
+      }
+      return !source.includes("support/test-cleanup-guard");
+    });
+
+    assert.deepEqual(unguarded, []);
+  });
+
+  it("uses run-scoped identities for standalone utilities that clean up test fixtures", () => {
+    const scripts = ["scripts/inspect-db.ts", "scripts/verify-monitoring-job-index.ts"];
+    const unsafe = scripts.filter((script) => {
+      const source = readFileSync(resolve(projectRoot, script), "utf8");
+      return source.includes(".deleteMany") && (
+        !source.includes("randomUUID")
+        || /test-acc-001|test-acc-002|persistent-acc-verify|persistent-index-verify/.test(source)
+      );
+    });
+
+    assert.deepEqual(unsafe, []);
+  });
+
+  it("preflights global cleanup before launching database suites and preserves process confirmation", () => {
+    const runner = readFileSync(resolve(projectRoot, "scripts/run-all-tests.js"), "utf8");
+    const cleanupPreflight = runner.indexOf("const hasGlobalCleanup =");
+    const firstChildLaunch = runner.indexOf("for (const testFile of testFiles)");
+
+    assert.ok(cleanupPreflight >= 0 && cleanupPreflight < firstChildLaunch);
+    assert.match(runner, /process\.env\.TEST_DATABASE_CLEANUP_CONFIRMATION/);
+    assert.doesNotMatch(runner, /delete childEnv\.TEST_DATABASE_CLEANUP_CONFIRMATION/);
+  });
 });

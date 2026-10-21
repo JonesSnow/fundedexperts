@@ -33,9 +33,9 @@
 
 | Process | Location | Duration | Cannot Be |
 |---------|----------|----------|-----------|
-| Monitoring Worker | `lib/monitoring/worker.ts` | Indefinite (job lifecycle) | Serverless request handler |
-| Monitoring Scheduler | `lib/monitoring/scheduler.ts` | Indefinite (continuous loop) | Serverless request handler |
-| Monitoring health checks | `lib/monitoring/health.ts` | Periodic (every 30-60s) | Serverless cron (15min max) |
+| Monitoring Worker | `lib/monitoring/worker-entrypoint.ts` (`pnpm monitoring:worker`) | Continuous batch loop | Serverless request handler |
+| Monitoring runner | `lib/monitoring/monitoring-runner.ts` | One batch per poll cycle | Serverless request handler |
+| Monitoring health checks | No worker health endpoint is wired | Not currently scheduled | Serverless cron (15min max) |
 | MT5 terminal connection | External process | Continuous | Serverless |
 
 ### 1.4 Vercel Compatibility Issues
@@ -43,7 +43,7 @@
 | Issue | Severity | Resolution |
 |-------|----------|------------|
 | Middleware deprecation (Next.js 16 → proxy) | MEDIUM | Migrate to middleware proxy pattern before production |
-| Monitoring worker/scheduler in-memory | CRITICAL | Must be separate deployment (not Vercel) |
+| Monitoring worker is a separate persistent process | HIGH | Deploy and supervise `pnpm monitoring:worker` on the Windows MT5 host; it is not part of Vercel |
 | `PrismaClient` at module level in API routes | LOW | Vercel serverless handles this; connection pooling recommended |
 | `app/page.tsx` is Next.js starter | LOW | Replace before production launch |
 | Dashboard placeholder | LOW | Replace before production launch |
@@ -245,26 +245,27 @@
 
 | Component | File | Status | Deployment |
 |-----------|------|--------|------------|
-| Monitoring Job model | `prisma/schema.prisma` | EXISTS (14 fields) | Database |
-| Monitoring Job executor | `lib/monitoring/job.ts` | EXISTS | Worker process |
-| Monitoring Worker class | `lib/monitoring/worker.ts` | EXISTS (274 lines) | Separate deployment |
-| Monitoring Scheduler | `lib/monitoring/scheduler.ts` | EXISTS (196 lines, in-memory) | Separate deployment |
-| Monitoring adapters | `lib/monitoring/adapter.ts`, `mock-adapter.ts` | EXISTS | Worker process |
-| Monitoring health | `lib/monitoring/health.ts` | EXISTS | Worker process |
-| Monitoring logger | `lib/monitoring/logger.ts` | EXISTS | Worker process |
-| Monitoring credential boundary | `lib/monitoring/credential-boundary.ts` | EXISTS | Worker process |
+| Monitoring job model and executor | `prisma/schema.prisma`, `lib/monitoring/job.ts` | Present; not the standalone entrypoint's polling mechanism | Database / application library |
+| Monitoring runner | `lib/monitoring/monitoring-runner.ts` | Finds and processes eligible evaluation accounts | Worker process |
+| Worker runtime and entrypoint | `lib/monitoring/worker-runtime.ts`, `lib/monitoring/worker-entrypoint.ts` | Continuous serial batch loop; explicit enable/configuration gate | Separate persistent deployment |
+| Monitoring adapters | `lib/monitoring/adapter.ts`, `lib/monitoring/mock-adapter.ts`, `lib/monitoring/real-mt5-adapter.ts` | Real adapter selected by standalone entrypoint; no mock fallback | Worker process |
+| Monitoring health endpoint | None wired to the standalone worker | Not implemented | — |
+| Monitoring logs | Worker emits safe cycle counts to stdout; detailed process errors are withheld | Limited operational diagnostics | Worker process |
 
 ### 6.2 Required Separation
 
 The current architecture has monitoring code in the `lib/` directory (importable by Next.js), but it MUST run as a separate process, not inside Vercel serverless functions.
 
-**Architecture:**
-1. A separate Node.js process runs the Worker + Scheduler
-2. This process runs on AWS EC2 Windows (same machine as MT5 terminal)
-3. The worker polls `MonitoringJob` table for `PENDING` jobs
-4. The worker executes jobs using `lib/monitoring/worker.ts`
-5. The worker writes results back to `MonitoringJob`, `RuleEvent` tables
-6. The worker can optionally expose a health endpoint for API polling
+**Implemented architecture:**
+1. A separate Node.js process starts with `pnpm monitoring:worker`.
+2. The operator supplies process environment explicitly; the entrypoint does not load `.env.local` or another environment file.
+3. The process requires `MONITORING_WORKER_ENABLED=true`, `DATABASE_URL`, `MT5_ENCRYPTION_KEY`, and a valid `WORKER_ID` before importing the Prisma proxy.
+4. `MonitoringRunner.runAllEligible()` selects active evaluation accounts and processes one batch at a time. The entrypoint does not poll pending `MonitoringJob` rows.
+5. The entrypoint selects the real MT5 adapter and never silently falls back to the mock adapter.
+6. The process emits cycle counts to stdout, handles SIGINT/SIGTERM, and disconnects Prisma on shutdown. It does not expose a health endpoint.
+7. Monitoring eligibility currently covers evaluation accounts only; funded-account monitoring is not implemented.
+
+Configuration names, defaults, bounds, and operational limitations are documented in [`monitoring-worker.md`](monitoring-worker.md).
 
 **What CANNOT run on Vercel:**
 - Any long-running job (timeout: 12-60s max)
@@ -274,11 +275,10 @@ The current architecture has monitoring code in the `lib/` directory (importable
 ### 6.3 Worker Deployment Design
 
 ```
-EC2 Windows Instance
-├── Node.js Process (PM2 or Windows Service)
-│   ├── Worker (lib/monitoring/worker.ts)
-│   ├── Scheduler (lib/monitoring/scheduler.ts)
-│   └── Health endpoint (lib/monitoring/health.ts)
+Windows MT5 Host (persistent process supervisor required)
+├── Node.js Process (`pnpm monitoring:worker`)
+│   ├── MonitoringRunner batch loop
+│   └── Real MT5 adapter + Python bridge
 ├── MetaTrader 5 Terminal (terminal64.exe)
 ├── Python MT5 Bridge (optional)
 └── Node.js Runtime (v20+)

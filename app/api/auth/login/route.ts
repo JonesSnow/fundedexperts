@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyPassword, performDummyPasswordVerification } from "@/lib/auth/hash";
 import { validateLoginInput } from "@/lib/auth/validation";
 import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
-import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
+import { checkAuthClientRateLimit, checkRateLimit, createBoundedRateLimitKey, resetRateLimit } from "@/lib/auth/rate-limit";
 import { sendLoginSecurityAlertEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
 import { invalidLoginResponse } from "@/lib/auth/login-policy";
@@ -20,7 +20,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "A login object is required." }, { status: 400 });
     }
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-    const rateLimit = checkRateLimit(`login:${email || "unknown"}`);
+    const clientRateLimit = checkAuthClientRateLimit(request, "login", 50);
+    if (!clientRateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many attempts. Try again later." },
+        { status: 429, headers: { "Retry-After": String(clientRateLimit.retryAfter) } },
+      );
+    }
+    const rateLimitKey = createBoundedRateLimitKey("login", email);
+    const rateLimit = checkRateLimit(rateLimitKey);
 
     if (!rateLimit.allowed) {
       return NextResponse.json(
@@ -90,7 +98,7 @@ const trader = await prisma.trader.findUnique({
       return NextResponse.json(failure.body, { status: failure.status });
     }
 
-    resetRateLimit(`login:${email}`);
+    resetRateLimit(rateLimitKey);
 
     if (!trader.emailVerified) {
       return NextResponse.json(

@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
@@ -44,7 +45,7 @@ export async function POST(
     );
   }
 
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }

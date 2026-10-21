@@ -11,6 +11,7 @@ export interface FundedAccountLinkState {
   accountPurpose: string | null;
   accountSize: unknown;
   accountCurrency: string | null;
+  credentialsConfigured: boolean;
   activeAssignmentTraderId: string | null;
   activeAssignmentCount: number;
   linkedToAnotherFundedAccount: boolean;
@@ -34,22 +35,45 @@ function canonicalAmount(value: unknown): string | null {
   return `${whole.replace(/^0+(?=\d)/, "")}.${fraction.padEnd(2, "0")}`;
 }
 
-export function getEvaluationDenominationCurrency(orderItems: unknown, expectedProductId?: string | null): string | null {
-  if (!Array.isArray(orderItems) || orderItems.length !== 1) return null;
-  const item = orderItems[0];
-  if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
-  const itemRecord = item as Record<string, unknown>;
-  const productSnapshot = itemRecord.productSnapshot;
-  if (typeof productSnapshot !== "object" || productSnapshot === null || Array.isArray(productSnapshot)) return null;
-  const snapshot = productSnapshot as Record<string, unknown>;
+export function getEvaluationDenominationCurrency(
+  orderItems: unknown,
+  expectedProductId?: string | null,
+  laterStageAccount?: { accountSize: unknown; startingBalance: unknown; currency: unknown; purpose: unknown },
+): string | null {
+  if (Array.isArray(orderItems)) {
+    if (orderItems.length !== 1) return null;
+    const item = orderItems[0];
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const itemRecord = item as Record<string, unknown>;
+    const productSnapshot = itemRecord.productSnapshot;
+    if (typeof productSnapshot !== "object" || productSnapshot === null || Array.isArray(productSnapshot)) return null;
+    const snapshot = productSnapshot as Record<string, unknown>;
+    if (
+      typeof itemRecord.productId !== "string"
+      || typeof snapshot.productId !== "string"
+      || itemRecord.productId !== snapshot.productId
+      || (expectedProductId && expectedProductId !== snapshot.productId)
+    ) return null;
+    const currency = snapshot.denominationCurrency;
+    return typeof currency === "string" && /^[A-Z]{3}$/.test(currency) ? currency : null;
+  }
+
+  // Later challenge stages cannot point at the same order because Evaluation.orderId
+  // is unique. Their product and stage are immutable after publication; use the
+  // assigned EVALUATION account only when it still agrees with the recorded balance.
+  if ((orderItems !== null && orderItems !== undefined) || !expectedProductId || !laterStageAccount) return null;
+  const evaluationSize = canonicalAmount(laterStageAccount.startingBalance);
+  const accountSize = canonicalAmount(laterStageAccount.accountSize);
   if (
-    typeof itemRecord.productId !== "string"
-    || typeof snapshot.productId !== "string"
-    || itemRecord.productId !== snapshot.productId
-    || (expectedProductId && expectedProductId !== snapshot.productId)
+    evaluationSize === null
+    || accountSize === null
+    || evaluationSize === "0.00"
+    || evaluationSize !== accountSize
+    || laterStageAccount.purpose !== "EVALUATION"
+    || typeof laterStageAccount.currency !== "string"
+    || !/^[A-Z]{3}$/.test(laterStageAccount.currency)
   ) return null;
-  const currency = snapshot.denominationCurrency;
-  return typeof currency === "string" && /^[A-Z]{3}$/.test(currency) ? currency : null;
+  return laterStageAccount.currency;
 }
 
 function canonicalCurrency(value: string | null): string | null {
@@ -95,6 +119,9 @@ export function evaluateFundedAccountLink(state: FundedAccountLinkState): Funded
   }
   if (state.accountPurpose !== "FUNDED") {
     return reject("ACCOUNT_PURPOSE_MISMATCH", "Only a FUNDED-purpose MT5 account can be linked");
+  }
+  if (state.credentialsConfigured !== true) {
+    return reject("CREDENTIALS_UNAVAILABLE", "MT5 account has no stored encrypted credentials and cannot be assigned");
   }
   if (state.linkedToAnotherFundedAccount) {
     return reject("ACCOUNT_ALREADY_LINKED", "MT5 account is already linked to another funded account");

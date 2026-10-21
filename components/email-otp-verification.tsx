@@ -6,7 +6,6 @@ import AuthShell from "@/components/auth-shell";
 import { Button, ButtonLink } from "@/components/ui/button";
 
 const EMAIL_STORAGE_KEY = "funded-experts:verification-email";
-const DELIVERY_STORAGE_KEY = "funded-experts:verification-delivery";
 
 export default function EmailOtpVerification() {
   const [email, setEmail] = useState("");
@@ -16,13 +15,9 @@ export default function EmailOtpVerification() {
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
-  const [initialDeliveryFailed, setInitialDeliveryFailed] = useState(false);
-
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       setEmail(window.sessionStorage.getItem(EMAIL_STORAGE_KEY) ?? "");
-      setInitialDeliveryFailed(window.sessionStorage.getItem(DELIVERY_STORAGE_KEY) === "failed");
-      window.sessionStorage.removeItem(DELIVERY_STORAGE_KEY);
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -92,7 +87,7 @@ export default function EmailOtpVerification() {
   return (
     <AuthShell
       title={verified ? "Email verified" : "Verify your email"}
-      description={verified ? "Your account is ready. Sign in to continue." : "Enter the 6-digit code sent to your email. Codes expire after 10 minutes."}
+      description={verified ? "Your account is ready. Sign in to continue." : "If this is a new account, enter the 6-digit code sent to this address. If you already have an account, sign in or reset your password."}
     >
       {verified ? (
         <div className="space-y-4">
@@ -101,11 +96,6 @@ export default function EmailOtpVerification() {
         </div>
       ) : (
         <>
-          {initialDeliveryFailed && (
-            <div className="mb-5 rounded-xl border border-warning/30 bg-warning-light p-4 text-sm text-warning-foreground" role="status">
-              The first verification email may not have been delivered. Request a new code below.
-            </div>
-          )}
           {message && <div className={`mb-5 rounded-xl border p-4 text-sm ${isError ? "border-danger/30 bg-danger-light text-danger" : "border-info/30 bg-info-light text-info"}`} role={isError ? "alert" : "status"} aria-live={isError ? "assertive" : "polite"}>{message}</div>}
           <form onSubmit={submitCode} className="space-y-5">
             <div>
@@ -122,7 +112,7 @@ export default function EmailOtpVerification() {
           <Button type="button" variant="outline" fullWidth className="mt-3" disabled={busy || resendSeconds > 0 || !email} onClick={resendCode}>
             {resendSeconds > 0 ? `Request another code in ${resendSeconds}s` : "Resend code"}
           </Button>
-          <p className="mt-6 text-sm text-muted-foreground text-center">Already verified? <Link href="/login" className="font-semibold text-foreground underline underline-offset-4">Sign in</Link></p>
+          <p className="mt-6 text-sm text-muted-foreground text-center">Already have an account? <Link href="/login" className="font-semibold text-foreground underline underline-offset-4">Sign in</Link>{" "}or{" "}<Link href="/forgot-password" className="font-semibold text-foreground underline underline-offset-4">reset your password</Link></p>
         </>
       )}
     </AuthShell>

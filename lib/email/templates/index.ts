@@ -279,6 +279,8 @@ export async function sendEvaluationPassedEmail(
     evaluationId: string;
     productName: string;
     totalPnl?: string;
+    stageName?: string;
+    nextStageName?: string;
   },
 ): Promise<EmailSendResult> {
   const idempotencyKey = generateIdempotencyKey("evaluation-passed", vars.evaluationId);
@@ -289,6 +291,8 @@ export async function sendEvaluationPassedEmail(
     evaluationId: vars.evaluationId,
     productName: vars.productName,
     totalPnl: vars.totalPnl,
+    stageName: vars.stageName,
+    nextStageName: vars.nextStageName,
   }, { idempotencyKey });
 
   message.userId = trader.id;

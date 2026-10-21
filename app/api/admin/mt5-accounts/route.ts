@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { MT5AccountPurpose, AccountStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
@@ -19,7 +20,7 @@ async function getAuthenticatedAdmin(request: NextRequest) {
     where: { id: session.sub },
     select: { id: true, role: true, status: true },
   });
-  if (!trader || trader.role !== "ADMIN" || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
+  if (!isActiveAdministrator(trader)) {
     return null;
   }
   return trader;
@@ -132,7 +133,7 @@ export async function POST(request: NextRequest) {
     if (!preparedCredentials.ok) {
       const invalidValue = preparedCredentials.reason === "invalid";
       return NextResponse.json(
-        { success: false, error: invalidValue ? "Credentials must be a string" : "Credential encryption is unavailable" },
+        { success: false, error: invalidValue ? "Credentials must include a positive login, password, and server." : "Credential encryption is unavailable" },
         { status: invalidValue ? 400 : 503 },
       );
     }
@@ -147,19 +148,48 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const account = await prisma.mT5Account.create({
-      data: {
-        accountNumber,
-        broker: broker ?? null,
-        server: server ?? null,
-        login: login ?? null,
-        accountSize: accountSize ?? null,
-        currency: currency ?? "USD",
-        purpose: purpose ?? "EVALUATION",
-        status: "AVAILABLE",
-        notes: notes ?? null,
-        credentials: preparedCredentials.value ?? null,
-      },
+    const account = await prisma.$transaction(async (tx) => {
+      const created = await tx.mT5Account.create({
+        data: {
+          accountNumber,
+          broker: broker ?? null,
+          server: server ?? null,
+          login: login ?? null,
+          accountSize: accountSize ?? null,
+          currency: currency ?? "USD",
+          purpose: purpose ?? "EVALUATION",
+          status: "AVAILABLE",
+          notes: notes ?? null,
+          credentials: preparedCredentials.value ?? null,
+        },
+        select: {
+          id: true,
+          accountNumber: true,
+          broker: true,
+          server: true,
+          accountSize: true,
+          currency: true,
+          purpose: true,
+          status: true,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "ACCOUNT_CREATED",
+          entityType: "MT5Account",
+          entityId: created.id,
+          performedBy: admin.id,
+          details: {
+            accountNumber: created.accountNumber,
+            purpose: created.purpose,
+            accountSize: created.accountSize?.toString() ?? null,
+            currency: created.currency,
+          },
+        },
+      });
+
+      return created;
     });
 
     logger.info("MT5_ACCOUNT", "Demo account created by admin", {

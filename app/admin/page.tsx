@@ -19,7 +19,7 @@ export default function AdminPage() {
     setSearchCompleted(false);
     setCustomers([]);
     try {
-      const res = await fetch(`/api/admin/lifecycle?email=${encodeURIComponent(email)}`);
+      const res = await fetch(`/api/admin/lifecycle?email=${encodeURIComponent(email)}&identityOnly=true`);
       const data = await res.json();
       if (res.status === 404) {
         setSearchCompleted(true);

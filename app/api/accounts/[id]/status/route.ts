@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { AccountStatus, MT5Account } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
@@ -37,7 +38,7 @@ export async function PUT(
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
@@ -65,10 +66,14 @@ export async function PUT(
 
     const transition = await prisma.$transaction(async (tx) => {
       // Serialize admin transitions with allocator reservations of this account row.
-      const locked = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT "id" FROM "MT5Account" WHERE "id" = ${id} FOR UPDATE
+      const locked = await tx.$queryRaw<Array<{ id: string; credentialsConfigured: boolean }>>`
+        SELECT "id", ("credentials" IS NOT NULL AND BTRIM("credentials") <> '') AS "credentialsConfigured"
+        FROM "MT5Account" WHERE "id" = ${id} FOR UPDATE
       `;
       if (locked.length === 0) return { kind: "missing" as const };
+      if (newStatus === "IN_USE" && locked[0]?.credentialsConfigured !== true) {
+        return { kind: "credentials-missing" as const };
+      }
 
       const account = await tx.mT5Account.findUnique({ where: { id } });
       if (!account) return { kind: "missing" as const };
@@ -119,6 +124,9 @@ export async function PUT(
     }
     if (transition.kind === "assignment-conflict") {
       return NextResponse.json({ success: false, error: transition.message }, { status: 409 });
+    }
+    if (transition.kind === "credentials-missing") {
+      return NextResponse.json({ success: false, error: "Encrypted MT5 credentials must be configured before marking this account IN_USE" }, { status: 409 });
     }
     if (transition.kind === "conflict") {
       return NextResponse.json({ success: false, error: "Account status changed; reload and try again." }, { status: 409 });

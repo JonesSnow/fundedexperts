@@ -28,6 +28,7 @@ interface EvaluationRecord {
   id: string;
   rulesetName: string | null;
   rulesetVersion: string | null;
+  productStage: { id: string; stageKey: string; displayName: string; stageOrder: number } | null;
   status: string;
   account: { accountNumber: string; broker: string | null; server: string | null; status: string; healthStatus: string } | null;
   startedAt: string;
@@ -92,7 +93,7 @@ export default function EvaluationDetailPage() {
         <div className="space-y-6">
           <Card>
             <CardHeader className="flex flex-wrap items-start justify-between gap-3">
-              <div><CardTitle>{evaluation.rulesetName || "Evaluation"}{evaluation.rulesetVersion ? ` · v${evaluation.rulesetVersion}` : ""}</CardTitle><p className="mt-1 font-mono text-xs text-muted-foreground">Evaluation {evaluation.id.slice(0, 8)}</p></div>
+              <div><CardTitle>{evaluation.rulesetName || "Evaluation"}{evaluation.rulesetVersion ? ` · v${evaluation.rulesetVersion}` : ""}</CardTitle><div className="mt-2 flex flex-wrap items-center gap-2">{evaluation.productStage && <Badge variant="outline">{evaluation.productStage.displayName} · Stage {evaluation.productStage.stageOrder}</Badge>}<p className="font-mono text-xs text-muted-foreground">Evaluation {evaluation.id.slice(0, 8)}</p></div></div>
               <StatusBadge status={evaluation.status} />
             </CardHeader>
             <CardContent>

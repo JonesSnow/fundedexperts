@@ -18,6 +18,7 @@ const validState: FundedAccountLinkState = {
   accountPurpose: "FUNDED",
   accountSize: "50000",
   accountCurrency: "USD",
+  credentialsConfigured: true,
   activeAssignmentTraderId: null,
   activeAssignmentCount: 0,
   linkedToAnotherFundedAccount: false,
@@ -29,6 +30,7 @@ test("approved passed evaluations can only receive matching available FUNDED acc
   assert.equal(evaluateFundedAccountLink({ ...validState, accountSize: "25000" }).kind, "rejected");
   assert.equal(evaluateFundedAccountLink({ ...validState, accountSize: "0" }).kind, "rejected");
   assert.equal(evaluateFundedAccountLink({ ...validState, accountCurrency: "EUR" }).kind, "rejected");
+  assert.equal(evaluateFundedAccountLink({ ...validState, credentialsConfigured: false }).kind, "rejected");
   assert.equal(evaluateFundedAccountLink({ ...validState, expectedAccountCurrency: null }).kind, "rejected");
   assert.equal(evaluateFundedAccountLink({ ...validState, accountStatus: "IN_USE" }).kind, "rejected");
   assert.equal(evaluateFundedAccountLink({ ...validState, activeAssignmentTraderId: "trader-2" }).kind, "rejected");
@@ -43,6 +45,15 @@ test("evaluation currency is read only from one immutable purchased-product snap
   assert.equal(getEvaluationDenominationCurrency([{ ...item, productSnapshot: { productId: "another-product", denominationCurrency: "USD" } }]), null);
   assert.equal(getEvaluationDenominationCurrency([item], "another-product"), null);
   assert.equal(getEvaluationDenominationCurrency([item, item]), null);
+});
+
+test("later-stage evaluations resolve denomination only from a matching evaluation account", () => {
+  const fallback = { accountSize: "25000.00", startingBalance: "25000", currency: "USD", purpose: "EVALUATION" };
+  assert.equal(getEvaluationDenominationCurrency(undefined, "product-1", fallback), "USD");
+  assert.equal(getEvaluationDenominationCurrency(null, "product-1", { ...fallback, accountSize: "50000" }), null);
+  assert.equal(getEvaluationDenominationCurrency(null, "product-1", { ...fallback, purpose: "FUNDED" }), null);
+  assert.equal(getEvaluationDenominationCurrency(null, "product-1", { ...fallback, currency: "usd" }), null);
+  assert.equal(getEvaluationDenominationCurrency([], "product-1", fallback), null);
 });
 
 test("linking requires a passed evaluation owned by the funded-account trader", () => {
@@ -82,11 +93,13 @@ test("funded account linking locks both records and commits inventory, assignmen
   assert.match(linkImplementation, /tx\.accountAssignment\.create/);
   assert.match(linkImplementation, /tx\.fundedAccount\.updateMany/);
   assert.match(linkImplementation, /currency:\s*expectedAccountCurrency/);
+  assert.match(linkImplementation, /credentialsConfigured:\s*accountLocks\[0\]\?\.credentialsConfigured === true/);
+  assert.match(linkImplementation, /BTRIM\("credentials"\) <> ''/);
   assert.match(linkImplementation, /tx\.auditLog\.create/);
   assert.match(routeSource, /result\.errorCategory === "LINK_FAILED"[\s\S]*?\? 500/);
 });
 
-test("linkAccount reserves matching inventory and writes its assignment, activation, and audit through the same mocked transaction", async () => {
+async function runMockLinkAccount(credentialsConfigured: boolean) {
   const operations: string[] = [];
   const fundedAccount = {
     id: "funded-1",
@@ -117,7 +130,7 @@ test("linkAccount reserves matching inventory and writes its assignment, activat
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const table = strings[0].includes('"FundedAccount"') ? "funded-lock" : "inventory-lock";
       operations.push(table);
-      return [{ id: values[0] }];
+      return table === "inventory-lock" ? [{ id: values[0], credentialsConfigured }] : [{ id: values[0] }];
     },
     fundedAccount: {
       findUnique: async () => ({ ...fundedAccount }),
@@ -165,6 +178,11 @@ test("linkAccount reserves matching inventory and writes its assignment, activat
     performedBy: "admin-1",
   });
 
+  return { result, operations };
+}
+
+test("linkAccount reserves matching inventory and writes its assignment, activation, and audit through the same mocked transaction", async () => {
+  const { result, operations } = await runMockLinkAccount(true);
   assert.equal(result.success, true);
   assert.deepEqual(operations, [
     "funded-lock",
@@ -174,4 +192,11 @@ test("linkAccount reserves matching inventory and writes its assignment, activat
     "funded-activate",
     "audit-create",
   ]);
+});
+
+test("linkAccount rejects inventory without encrypted credentials before any assignment or activation write", async () => {
+  const { result, operations } = await runMockLinkAccount(false);
+  assert.equal(result.success, false);
+  if (!result.success) assert.equal(result.errorCategory, "CREDENTIALS_UNAVAILABLE");
+  assert.deepEqual(operations, ["funded-lock", "inventory-lock"]);
 });

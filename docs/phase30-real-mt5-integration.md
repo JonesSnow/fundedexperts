@@ -211,3 +211,17 @@ MT5_USE_REAL_ADAPTER=true  # for "auto" mode to use real adapter
 | `tests/monitoring/real-mt5-adapter.test.ts` | 49-test suite for adapter |
 | `app/api/monitoring/[accountId]/process/route.ts` | Monitoring API endpoint (admin-only) |
 | `prisma/schema.prisma` | MT5Account, AccountAssignment, Evaluation schema |
+
+## 9. Current source verification — 2026-10-20
+
+The Python bridge previously converted failed `positions_get`, `orders_get`, and `history_deals_get` calls into empty arrays without retaining their failure state. MetaQuotes documents `None` as the error result for these calls ([positions](https://www.mql5.com/en/docs/python_metatrader5/mt5positionsget_py), [orders](https://www.mql5.com/en/docs/python_metatrader5/mt5ordersget_py), [deal history](https://www.mql5.com/en/docs/python_metatrader5/mt5historydealsget_py)). A successful empty tuple is distinct from `None`.
+
+The adapter now carries explicit collection availability through `ProviderSnapshot` normalization. Failed queries and rows that cannot be decoded are marked unavailable; a successful empty collection remains available. The rule engine already requires complete position/order data for `MAX_OPEN_TRADES` and complete history for profit-target checks, so these failures produce unavailable/warning outcomes instead of an inferred pass.
+
+Validation for this source change: 66 focused normalization/evaluation tests and 2 isolated MT5 bridge mapping tests passed; TypeScript and targeted ESLint passed. The tests use mocked provider results and inspect the embedded bridge contract. No MT5 terminal, broker, database, or live account was accessed, so this does not establish live integration readiness. The test count and live-connectivity statement in the earlier sections are historical to their 2026-09-27 review and were not reverified here.
+
+## MT5 inventory identity binding — 2026-10-20
+
+The monitoring runner now requires an explicit positive numeric login and configured inventory server. It passes both values to the real adapter, which checks that the decrypted credential identity matches the inventory identity before launching Python, then checks the connected MT5 account identity before accepting a snapshot. Missing or mismatched identities fail closed. The Phase 33 read-only diagnostic now supplies its declared demo server to this guard.
+
+Validation: 4 mocked real-adapter identity tests and 3 runner safety tests passed; 66 database-free normalization/evaluation tests passed; TypeScript and targeted ESLint passed. These checks did not connect to a database, launch the MT5 bridge, or contact a broker, so live connectivity and inventory correctness remain unverified.

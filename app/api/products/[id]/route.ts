@@ -1,10 +1,21 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { checkClientRateLimit } from "@/lib/auth/rate-limit";
+import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
 import { validateProductDraftInput, validateProductForPublication } from "@/lib/product-domain";
+import {
+  publicApiFailure,
+  publicApiStatus,
+  safePrismaErrorCode,
+  safePrismaErrorTable,
+} from "@/lib/public-catalog";
 
+const logger = createLogger({
+  environment: process.env.NODE_ENV as "development" | "production" | "test",
+});
 
 async function getAuthenticatedUser(request: NextRequest) {
   const token = getSessionCookie(request);
@@ -25,8 +36,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const correlationId = generateCorrelationId();
   const { id } = await params;
-  const rateLimit = checkRateLimit(`product:${id}`);
+  const rateLimit = checkClientRateLimit(request, `product:${id}`, 60);
   if (!rateLimit.allowed) {
     return NextResponse.json(
       { success: false, error: "Too many attempts" },
@@ -34,91 +46,103 @@ export async function GET(
     );
   }
 
-  const product = await prisma.product.findFirst({
-    where: {
-      id,
-      isActive: true,
-      status: "ACTIVE",
-      code: { not: null },
-      category: { not: null },
-      evaluationStructure: { not: null },
-      denominationCurrency: { not: null },
-      accountSize: { not: null },
-      price: { not: null },
-    },
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      description: true,
-      category: true,
-      evaluationStructure: true,
-      status: true,
-      accountSize: true,
-      denominationCurrency: true,
-      price: true,
-      currency: true,
-      displayOrder: true,
-      isActive: true,
-      ruleset: { select: { name: true } },
-      stages: {
-        orderBy: { stageOrder: "asc" },
-        select: {
-          id: true,
-          stageKey: true,
-          displayName: true,
-          stageOrder: true,
-          rulesetVersion: {
-            select: {
-              id: true,
-              version: true,
-              status: true,
-              ruleset: { select: { id: true, name: true } },
-              rules: {
-                select: {
-                  id: true,
-                  name: true,
-                  ruleType: true,
-                  value: true,
-                  isRequired: true,
-                  disposition: true,
-                  calculation: true,
+  try {
+    const product = await prisma.product.findFirst({
+      where: {
+        id,
+        isActive: true,
+        status: "ACTIVE",
+        code: { not: null },
+        category: { not: null },
+        evaluationStructure: { not: null },
+        denominationCurrency: { not: null },
+        accountSize: { not: null },
+        price: { not: null },
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        description: true,
+        category: true,
+        evaluationStructure: true,
+        status: true,
+        accountSize: true,
+        denominationCurrency: true,
+        price: true,
+        currency: true,
+        displayOrder: true,
+        isActive: true,
+        ruleset: { select: { name: true } },
+        stages: {
+          orderBy: { stageOrder: "asc" },
+          select: {
+            id: true,
+            stageKey: true,
+            displayName: true,
+            stageOrder: true,
+            rulesetVersion: {
+              select: {
+                id: true,
+                version: true,
+                status: true,
+                ruleset: { select: { id: true, name: true } },
+                rules: {
+                  select: {
+                    id: true,
+                    name: true,
+                    ruleType: true,
+                    value: true,
+                    isRequired: true,
+                    disposition: true,
+                    calculation: true,
+                  },
                 },
               },
             },
           },
         },
-      },
-      operatingRulesetVersion: {
-        select: {
-          id: true,
-          version: true,
-          status: true,
-          ruleset: { select: { id: true, name: true } },
-          rules: {
-            select: {
-              id: true,
-              name: true,
-              ruleType: true,
-              value: true,
-              isRequired: true,
-              disposition: true,
-              calculation: true,
+        operatingRulesetVersion: {
+          select: {
+            id: true,
+            version: true,
+            status: true,
+            ruleset: { select: { id: true, name: true } },
+            rules: {
+              select: {
+                id: true,
+                name: true,
+                ruleType: true,
+                value: true,
+                isRequired: true,
+                disposition: true,
+                calculation: true,
+              },
             },
           },
         },
       },
-    },
-  });
+    });
 
-  if (!product || validateProductForPublication(product).length > 0) {
+    if (!product || validateProductForPublication(product).length > 0) {
+      return NextResponse.json(
+        { success: false, error: "Product not found" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true, product }, { status: 200 });
+  } catch (error) {
+    logger.error("PRODUCT", "Public product detail retrieval failed", {
+      correlationId,
+      metadata: { table: safePrismaErrorTable(error) },
+      error: { code: safePrismaErrorCode(error), message: "Unable to query or serialize the approved product" },
+    });
     return NextResponse.json(
-      { success: false, error: "Product not found" },
-      { status: 404 }
+      publicApiFailure("SERVICE_UNAVAILABLE", "The plan details are temporarily unavailable. Please try again.", correlationId),
+      { status: publicApiStatus("SERVICE_UNAVAILABLE") },
     );
   }
-
-  return NextResponse.json({ success: true, product }, { status: 200 });
 }
 
 export async function PUT(
@@ -133,7 +157,7 @@ export async function PUT(
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }

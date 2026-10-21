@@ -24,7 +24,7 @@ interface Order {
   totalAmount: number;
   createdAt: string;
   orderItems: Array<{
-    product: { name: string; price: number | null; accountSize: number | null };
+    product: { name: string } | null;
   }>;
 }
 
@@ -63,23 +63,35 @@ interface Assignment {
   assignedAt: string;
 }
 
+type LifecycleSection = "orders" | "evaluations" | "fundedAccounts" | "assignments";
+
 interface LifecycleData {
   customer: Customer;
   orders: Order[];
   evaluations: Evaluation[];
   fundedAccounts: FundedAccount[];
   assignments: Assignment[];
+  nextCursors: Record<LifecycleSection, string | null>;
 }
+
+const LIFECYCLE_PAGE_SIZE = 25;
 
 export default function AdminCustomerPage() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<LifecycleData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadingOlder, setLoadingOlder] = useState<LifecycleSection | null>(null);
+  const [olderErrors, setOlderErrors] = useState<Record<LifecycleSection, string>>({
+    orders: "",
+    evaluations: "",
+    fundedAccounts: "",
+    assignments: "",
+  });
 
   useEffect(() => {
     if (!id) return;
-    fetch(`/api/admin/lifecycle?customerId=${encodeURIComponent(id as string)}`)
+    fetch(`/api/admin/lifecycle?customerId=${encodeURIComponent(id as string)}&limit=${LIFECYCLE_PAGE_SIZE}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
@@ -91,6 +103,70 @@ export default function AdminCustomerPage() {
       .catch(() => setError("Network error"))
       .finally(() => setLoading(false));
   }, [id]);
+
+  async function loadOlder(section: LifecycleSection) {
+    const cursor = data?.nextCursors[section];
+    if (!id || !cursor || loadingOlder) return;
+    setLoadingOlder(section);
+    setOlderErrors((current) => ({ ...current, [section]: "" }));
+    try {
+      const query = new URLSearchParams({
+        customerId: id,
+        section,
+        limit: String(LIFECYCLE_PAGE_SIZE),
+        before: cursor,
+      });
+      const response = await fetch(`/api/admin/lifecycle?${query.toString()}`);
+      const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+      const nextCursors = body.nextCursors;
+      const items = body[section];
+      const nextCursor = typeof nextCursors === "object" && nextCursors !== null && !Array.isArray(nextCursors)
+        ? (nextCursors as Record<string, unknown>)[section]
+        : undefined;
+
+      if (!response.ok || body.success !== true || !Array.isArray(items) || (typeof nextCursor !== "string" && nextCursor !== null)) {
+        const message = typeof body.error === "string" ? body.error : "Older history could not be loaded. Please try again.";
+        setOlderErrors((current) => ({ ...current, [section]: message }));
+        return;
+      }
+
+      setData((current) => {
+        if (!current) return current;
+        const updatedCursors = { ...current.nextCursors, [section]: nextCursor };
+        if (section === "orders") return { ...current, orders: [...current.orders, ...(items as Order[])], nextCursors: updatedCursors };
+        if (section === "evaluations") return { ...current, evaluations: [...current.evaluations, ...(items as Evaluation[])], nextCursors: updatedCursors };
+        if (section === "fundedAccounts") return { ...current, fundedAccounts: [...current.fundedAccounts, ...(items as FundedAccount[])], nextCursors: updatedCursors };
+        return { ...current, assignments: [...current.assignments, ...(items as Assignment[])], nextCursors: updatedCursors };
+      });
+    } catch {
+      setOlderErrors((current) => ({ ...current, [section]: "Network error while loading older history." }));
+    } finally {
+      setLoadingOlder(null);
+    }
+  }
+
+  function loadOlderControl(section: LifecycleSection, label: string) {
+    if (!data) return null;
+    const hasMore = Boolean(data.nextCursors[section]);
+    const sectionError = olderErrors[section];
+    if (!hasMore && !sectionError) return null;
+    return (
+      <div className="mt-4 space-y-2">
+        {sectionError && <p className="text-sm text-danger" role="alert">{sectionError}</p>}
+        {hasMore && (
+          <button
+            type="button"
+            onClick={() => void loadOlder(section)}
+            disabled={loadingOlder !== null}
+            aria-busy={loadingOlder === section}
+            className="min-h-10 rounded-lg border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loadingOlder === section ? `Loading older ${label}…` : sectionError ? "Try again" : `Load older ${label}`}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   if (loading) return <div className="p-8 max-w-6xl mx-auto"><p className="text-muted-foreground">Loading customer lifecycle…</p></div>;
   if (error) return <div className="p-8 max-w-6xl mx-auto"><p className="text-danger">{error}</p><Link href="/admin" className="mt-4 inline-block px-4 py-2 bg-muted rounded">Back to Admin</Link></div>;
@@ -163,6 +239,7 @@ export default function AdminCustomerPage() {
             </table>
           </div>
         )}
+        {loadOlderControl("orders", "orders")}
       </section>
 
       <section className="mb-10">
@@ -196,6 +273,7 @@ export default function AdminCustomerPage() {
             ))}
           </div>
         )}
+        {loadOlderControl("evaluations", "evaluations")}
       </section>
 
       <section className="mb-10">
@@ -228,6 +306,7 @@ export default function AdminCustomerPage() {
             </table>
           </div>
         )}
+        {loadOlderControl("fundedAccounts", "funded accounts")}
       </section>
 
       <section className="mb-10">
@@ -262,6 +341,7 @@ export default function AdminCustomerPage() {
             </table>
           </div>
         )}
+        {loadOlderControl("assignments", "assignments")}
       </section>
     </div>
   );

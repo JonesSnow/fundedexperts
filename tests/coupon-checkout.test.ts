@@ -1,4 +1,5 @@
 import "./support/test-env";
+import "./support/test-cleanup-guard";
 import { describe, it, beforeEach, after } from "node:test";
 import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";

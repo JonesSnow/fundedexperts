@@ -73,6 +73,12 @@ export interface ProviderSnapshot {
   positions: ProviderPosition[];
   orders: ProviderOrder[];
   history: ProviderDeal[];
+  /** Explicit provider collection status; false means the query failed, not an empty result. */
+  dataQuality?: {
+    positionsAvailable: boolean;
+    ordersAvailable: boolean;
+    historyAvailable: boolean;
+  };
   terminalInfo?: {
     connected?: boolean | null;
     version?: string | null;

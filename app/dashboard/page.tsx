@@ -56,6 +56,17 @@ interface Order {
   createdAt: string;
 }
 
+interface OrderSummary {
+  totalCount: number;
+  statusCounts: Record<string, number>;
+}
+
+interface EvaluationSummary {
+  totalCount: number;
+  statusCounts: Record<string, number>;
+  largestDrawdown: number | null;
+}
+
 interface EvaluationRule {
   ruleName: string;
   ruleType: string;
@@ -78,6 +89,7 @@ interface Evaluation {
   id: string;
   rulesetName: string | null;
   rulesetVersion: string | null;
+  productStage: { id: string; stageKey: string; displayName: string; stageOrder: number } | null;
   status: string;
   account: {
     accountNumber: string;
@@ -220,12 +232,14 @@ export default function DashboardPage() {
   const [sessionLoading, setSessionLoading] = useState(true);
   const [sessionError, setSessionError] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
   const [ordersLoading, setOrdersLoading] = useState<LoadStatus>("idle");
   const [ordersError, setOrdersError] = useState("");
   const [fundedAccounts, setFundedAccounts] = useState<FundedAccount[]>([]);
   const [fundedAccountsLoading, setFundedAccountsLoading] = useState<LoadStatus>("idle");
   const [fundedAccountsError, setFundedAccountsError] = useState("");
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
+  const [evaluationSummary, setEvaluationSummary] = useState<EvaluationSummary | null>(null);
   const [evaluationsLoading, setEvaluationsLoading] = useState<LoadStatus>("idle");
   const [evaluationsError, setEvaluationsError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -258,8 +272,9 @@ export default function DashboardPage() {
     if (!sessionData?.authenticated || !sessionData.trader) return;
     let cancelled = false;
 
-    const evaluationUrl =
-      sessionData.trader.role === "TRADER" ? "/api/trader/evaluations" : "/api/evaluations";
+    const evaluationUrl = sessionData.trader.role === "TRADER"
+      ? "/api/trader/evaluations?limit=10"
+      : "/api/evaluations?limit=10";
     const fundedAccountsUrl =
       sessionData.trader.role === "TRADER"
         ? "/api/trader/funded-accounts"
@@ -270,11 +285,29 @@ export default function DashboardPage() {
       setOrdersError("");
       try {
         const response = await fetch("/api/orders");
-        const body = (await response.json()) as { success?: boolean; orders?: Order[]; error?: string };
-        if (!response.ok || !body.success || !Array.isArray(body.orders)) {
+        const body = (await response.json()) as {
+          success?: boolean;
+          orders?: Order[];
+          summary?: OrderSummary;
+          error?: string;
+        };
+        if (
+          !response.ok ||
+          !body.success ||
+          !Array.isArray(body.orders) ||
+          !body.summary ||
+          !Number.isSafeInteger(body.summary.totalCount) ||
+          !body.summary.statusCounts ||
+          typeof body.summary.statusCounts !== "object" ||
+          Array.isArray(body.summary.statusCounts) ||
+          !Object.values(body.summary.statusCounts).every((count) => Number.isSafeInteger(count) && count >= 0)
+        ) {
           throw new Error(body.error || "Failed to load recent orders.");
         }
-        if (!cancelled) setOrders(body.orders);
+        if (!cancelled) {
+          setOrders(body.orders);
+          setOrderSummary(body.summary);
+        }
       } catch (error) {
         if (!cancelled) {
           setOrdersError(error instanceof Error ? error.message : "Failed to load recent orders.");
@@ -289,11 +322,31 @@ export default function DashboardPage() {
       setEvaluationsError("");
       try {
         const response = await fetch(evaluationUrl);
-        const body = (await response.json()) as { success?: boolean; evaluations?: Evaluation[]; error?: string };
-        if (!response.ok || !body.success || !Array.isArray(body.evaluations)) {
+        const body = (await response.json()) as {
+          success?: boolean;
+          evaluations?: Evaluation[];
+          summary?: EvaluationSummary;
+          error?: string;
+        };
+        if (
+          !response.ok ||
+          !body.success ||
+          !Array.isArray(body.evaluations) ||
+          !body.summary ||
+          !Number.isSafeInteger(body.summary.totalCount) ||
+          !body.summary.statusCounts ||
+          typeof body.summary.statusCounts !== "object" ||
+          Array.isArray(body.summary.statusCounts) ||
+          !Object.values(body.summary.statusCounts).every((count) => Number.isSafeInteger(count) && count >= 0) ||
+          (body.summary.largestDrawdown !== null &&
+            (typeof body.summary.largestDrawdown !== "number" || !Number.isFinite(body.summary.largestDrawdown)))
+        ) {
           throw new Error(body.error || "Failed to load evaluations.");
         }
-        if (!cancelled) setEvaluations(body.evaluations);
+        if (!cancelled) {
+          setEvaluations(body.evaluations);
+          setEvaluationSummary(body.summary);
+        }
       } catch (error) {
         if (!cancelled) {
           setEvaluationsError(error instanceof Error ? error.message : "Failed to load evaluations.");
@@ -378,6 +431,8 @@ export default function DashboardPage() {
     `${trader.firstName ?? ""} ${trader.lastName ?? ""}`.trim() || trader.email;
   const activeEvaluations = evaluations.filter((evaluation) => evaluation.status === "IN_PROGRESS");
   const pendingOrders = orders.filter((order) => order.status === "PENDING_PAYMENT");
+  const pendingOrderCount = orderSummary?.statusCounts.PENDING_PAYMENT ?? pendingOrders.length;
+  const activeEvaluationCount = evaluationSummary?.statusCounts.IN_PROGRESS ?? activeEvaluations.length;
   const pnlAccounts = fundedAccounts
     .filter((account) => account.status === "ACTIVE")
     .map((account) => ({ account, totalPnl: toFiniteNumber(account.totalPnl) }))
@@ -398,7 +453,11 @@ export default function DashboardPage() {
         typeof evaluation.maxDrawdown === "number" && Number.isFinite(evaluation.maxDrawdown),
     )
     .map((evaluation) => evaluation.maxDrawdown);
-  const largestDrawdown = drawdowns.length > 0 ? Math.max(...drawdowns) : null;
+  const largestDrawdown = trader.role === "TRADER"
+    ? evaluationSummary
+      ? evaluationSummary.largestDrawdown
+      : drawdowns.length > 0 ? Math.max(...drawdowns) : null
+    : null;
 
   const recentActivity = [
     ...orders.map((order) => ({
@@ -464,13 +523,13 @@ export default function DashboardPage() {
                   ? "Loading…"
                   : ordersError
                     ? "Unavailable"
-                    : String(orders.length)
+                    : String(orderSummary?.totalCount ?? orders.length)
               }
               detail={
                 ordersError
                   ? "Order history could not be loaded."
-                  : pendingOrders.length > 0
-                    ? `${pendingOrders.length} pending; order status alone does not confirm payment.`
+                  : pendingOrderCount > 0
+                    ? `${pendingOrderCount} pending; order status alone does not confirm payment.`
                     : "Recorded order history from your account."
               }
               icon={<ListOrdered className="h-5 w-5" />}
@@ -483,12 +542,12 @@ export default function DashboardPage() {
                   ? "Loading…"
                   : evaluationsError
                     ? "Unavailable"
-                    : String(activeEvaluations.length)
+                    : String(activeEvaluationCount)
               }
               detail={
                 evaluationsError
                   ? "Evaluation data could not be loaded."
-                  : `${evaluations.length} recorded evaluation${evaluations.length === 1 ? "" : "s"}; objective checks appear below.`
+                  : `${evaluationSummary?.totalCount ?? evaluations.length} recorded evaluation${(evaluationSummary?.totalCount ?? evaluations.length) === 1 ? "" : "s"}; objective checks appear below.`
               }
               icon={<ShieldCheck className="h-5 w-5" />}
               tone={evaluationsError ? "unavailable" : "default"}
@@ -559,8 +618,8 @@ export default function DashboardPage() {
                     Current stage and rule-check results from your evaluations.
                   </p>
                 </div>
-                {activeEvaluations.length > 0 && (
-                  <Badge variant="info">{activeEvaluations.length} active</Badge>
+                {activeEvaluationCount > 0 && (
+                  <Badge variant="info">{activeEvaluationCount} active</Badge>
                 )}
               </CardHeader>
               <CardContent>
@@ -636,6 +695,7 @@ export default function DashboardPage() {
                                 )}>
                                   {evaluation.status.replace(/_/g, " ")}
                                 </Badge>
+                                {evaluation.productStage && <Badge variant="outline">{evaluation.productStage.displayName} · Stage {evaluation.productStage.stageOrder}</Badge>}
                               </div>
                               <p className="mt-1 font-mono text-xs text-muted-foreground">
                                 ID {evaluation.id.slice(0, 8)}

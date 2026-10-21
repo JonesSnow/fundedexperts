@@ -1,8 +1,12 @@
 import "../tests/support/test-env";
 import "dotenv/config";
-import { PrismaClient, MonitoringJob, JobStatus } from "@prisma/client";
+import { randomUUID } from "node:crypto";
+import { PrismaClient, JobStatus } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const runId = randomUUID();
+const accountOneId = `test-acc-${runId}-1`;
+const accountTwoId = `test-acc-${runId}-2`;
 
 async function main() {
   console.log("=== INDEXES ===");
@@ -22,10 +26,10 @@ async function main() {
   }
 
   console.log("\n=== DUPLICATE CONSTRAINT TEST ===");
-  const account = await prisma.mT5Account.create({
+  await prisma.mT5Account.create({
     data: {
-      id: "test-acc-001",
-      accountNumber: "80012345",
+      id: accountOneId,
+      accountNumber: `verify-${runId}-1`,
       broker: "XM",
       server: "Server-XM",
       login: "12345678",
@@ -38,8 +42,8 @@ async function main() {
   try {
     const j1 = await prisma.monitoringJob.create({
       data: {
-        jobId: "test-dup-1",
-        accountId: "test-acc-001",
+        jobId: `${runId}-dup-1`,
+        accountId: accountOneId,
         workerId: "w1",
       },
     });
@@ -54,8 +58,8 @@ async function main() {
   try {
     await prisma.monitoringJob.create({
       data: {
-        jobId: "test-dup-2",
-        accountId: "test-acc-001",
+        jobId: `${runId}-dup-2`,
+        accountId: accountOneId,
         workerId: "w2",
       },
     });
@@ -73,8 +77,8 @@ async function main() {
   try {
     await prisma.monitoringJob.create({
       data: {
-        jobId: "test-dup-3",
-        accountId: "test-acc-001",
+        jobId: `${runId}-dup-3`,
+        accountId: accountOneId,
         workerId: "w3",
         status: "RUNNING" as JobStatus,
       },
@@ -93,8 +97,8 @@ async function main() {
   try {
     await prisma.monitoringJob.create({
       data: {
-        jobId: "test-dup-4",
-        accountId: "test-acc-001",
+        jobId: `${runId}-dup-4`,
+        accountId: accountOneId,
         workerId: "w4",
         status: "COMPLETED" as JobStatus,
       },
@@ -106,10 +110,10 @@ async function main() {
   }
 
   // Test 5: Different account should succeed
-  const account2 = await prisma.mT5Account.create({
+  await prisma.mT5Account.create({
     data: {
-      id: "test-acc-002",
-      accountNumber: "80012346",
+      id: accountTwoId,
+      accountNumber: `verify-${runId}-2`,
       broker: "XM",
       server: "Server-XM",
       login: "12345679",
@@ -119,8 +123,8 @@ async function main() {
   try {
     await prisma.monitoringJob.create({
       data: {
-        jobId: "test-dup-5",
-        accountId: "test-acc-002",
+        jobId: `${runId}-dup-5`,
+        accountId: accountTwoId,
         workerId: "w5",
       },
     });
@@ -131,8 +135,8 @@ async function main() {
   }
 
   // Cleanup
-  await prisma.monitoringJob.deleteMany({ where: { accountId: { in: ["test-acc-001", "test-acc-002"] } } });
-  await prisma.mT5Account.deleteMany({ where: { id: { in: ["test-acc-001", "test-acc-002"] } } });
+  await prisma.monitoringJob.deleteMany({ where: { accountId: { in: [accountOneId, accountTwoId] } } });
+  await prisma.mT5Account.deleteMany({ where: { id: { in: [accountOneId, accountTwoId] } } });
 
   console.log("\n=== DONE ===");
   await prisma.$disconnect();

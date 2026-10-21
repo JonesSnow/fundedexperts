@@ -233,3 +233,12 @@ If deletion is attempted with dependencies, a 409 Conflict error is returned. Pr
 | `updatedAt` | DateTime | Auto-updated |
 
 See `prisma/schema.prisma` for the complete schema.
+
+## Implementation status update — 2026-10-20
+
+The sections above are a historical snapshot dated 2026-09-20. Current source has since changed:
+
+- The admin inventory form collects the MT5 login, server, and password when adding an account. The account detail page can add or replace the encrypted credential bundle; the saved password is never read back into the UI.
+- Credential write APIs accept only JSON containing a positive numeric login, a non-empty password, and a non-empty server. The server encrypts the bundle before persistence and returns only whether credentials are configured.
+- `RealMT5Adapter` decrypts the stored bundle in worker-side code. `MonitoringRunner` now fails with `CREDENTIALS_UNAVAILABLE` instead of substituting a shared or placeholder password when the account has no stored bundle.
+- Source-level and mocked tests cover these paths. This does not establish that a production worker is deployed or connected to an authorized demo account; live MT5 monitoring remains unverified.

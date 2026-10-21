@@ -1,7 +1,7 @@
-const CLEANUP_CONFIRMATION = "I_UNDERSTAND_THIS_DELETES_ALL_DATA_IN_THE_TEST_DATABASE";
+import { TEST_DATABASE_CLEANUP_CONFIRMATION_VALUE } from "../lib/test-cleanup-guard";
 
 async function main() {
-  if (process.env.TEST_DATABASE_CLEANUP_CONFIRMATION !== CLEANUP_CONFIRMATION) {
+  if (process.env.TEST_DATABASE_CLEANUP_CONFIRMATION !== TEST_DATABASE_CLEANUP_CONFIRMATION_VALUE) {
     throw new Error(
       "Database cleanup is disabled. Independently verify the disposable test target, then set TEST_DATABASE_CLEANUP_CONFIRMATION."
     );

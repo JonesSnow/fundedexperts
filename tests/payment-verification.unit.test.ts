@@ -1,8 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { PrismaClient } from "@prisma/client";
 import type { PaymentRecord } from "../lib/payment";
-import { activateEvaluation } from "../lib/activation";
 import { verifyPaymentForOrder, verifyProviderPaymentForOrder } from "../lib/payment-verification";
 import { createMockPaymentProvider } from "../lib/mock-payment-provider";
 
@@ -106,38 +104,5 @@ describe("payment-to-order verification", () => {
       terms,
       payment({ amount: 125.5001 }),
     ), { valid: false, reason: "AMOUNT_MISMATCH" });
-  });
-
-  it("blocks activation before transaction work when a completed payment belongs to another order", async () => {
-    const provider = createMockPaymentProvider();
-    await provider.processPayment({
-      orderId: "order-paid-by-someone-else",
-      amount: 125.5,
-      currency: "USD",
-      provider: "MOCK",
-      idempotencyKey: "foreign-order-payment",
-    });
-    const fakePrisma = {
-      order: {
-        findUnique: async () => ({
-          id: "order-1",
-          traderId: "trader-1",
-          status: "PENDING_PAYMENT",
-          totalAmount: { toString: () => "125.50" },
-          currency: "USD",
-          rulesetVersionId: "ruleset-1",
-          orderItems: [],
-        }),
-      },
-    } as unknown as PrismaClient;
-
-    const result = await activateEvaluation(fakePrisma, provider, {
-      orderId: "order-1",
-      performedBy: "trader-1",
-      paymentReference: "foreign-order-payment",
-    });
-
-    assert.equal(result.success, false);
-    if (!result.success) assert.equal(result.errorCategory, "PAYMENT_MISMATCH");
   });
 });

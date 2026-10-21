@@ -5,8 +5,8 @@ import {
   LedgerEntryType,
   LedgerDirection,
   LedgerEntryStatus,
-  AuditAction,
 } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { createLogger, generateCorrelationId } from "./logger";
 
 const logger = createLogger({
@@ -18,7 +18,7 @@ export interface CreateLedgerEntryInput {
   orderId?: string;
   referenceId: string;
   entryType: LedgerEntryType;
-  amount: number;
+  amount: number | string;
   direction: LedgerDirection;
   currency?: string;
   metadata?: Record<string, unknown>;
@@ -38,6 +38,49 @@ export interface LedgerEntryCreateFailure {
 
 export type LedgerEntryCreateResult =
   LedgerEntryCreateSuccess | LedgerEntryCreateFailure;
+
+function parseLedgerAmount(value: number | string): Prisma.Decimal | null {
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+  const serialized = typeof value === "string" ? value.trim() : String(value);
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(serialized)) return null;
+
+  try {
+    const amount = new Prisma.Decimal(serialized);
+    if (!amount.gt(0) || amount.gte("10000000000000000")) return null;
+    return amount;
+  } catch {
+    return null;
+  }
+}
+
+function isSameLedgerOperation(
+  existing: LedgerEntry,
+  input: CreateLedgerEntryInput,
+  amount: Prisma.Decimal,
+): boolean {
+  return existing.referenceId === input.referenceId
+    && existing.traderId === (input.traderId ?? null)
+    && existing.orderId === (input.orderId ?? null)
+    && existing.entryType === input.entryType
+    && existing.amount.equals(amount)
+    && existing.direction === input.direction
+    && existing.currency === (input.currency ?? "USD");
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "P2002";
+}
+
+function idempotencyConflict(): LedgerEntryCreateFailure {
+  return {
+    success: false,
+    error: "Ledger reference was already used for a different transaction",
+    errorCategory: "IDEMPOTENCY_CONFLICT",
+  };
+}
 
 export interface LedgerEntryQueryInput {
   traderId?: string;
@@ -61,12 +104,30 @@ export async function createLedgerEntry(
     } as LedgerEntryCreateFailure;
   }
 
+  const amount = parseLedgerAmount(input.amount);
+  if (!amount) {
+    return {
+      success: false,
+      error: "amount must be positive, fit the ledger precision, and have at most two decimal places",
+      errorCategory: "VALIDATION_ERROR",
+    };
+  }
+
   try {
     const { referenceId } = input;
     const existing = await prisma.ledgerEntry.findUnique({
       where: { referenceId },
     });
     if (existing) {
+      if (!isSameLedgerOperation(existing, input, amount)) {
+        logger.warn("LEDGER", "Ledger idempotency reference conflicts with existing transaction", {
+          correlationId,
+          actor: { type: "system", id: input.createdBy ?? "unknown" },
+          entity: { type: "LedgerEntry", id: existing.id },
+          metadata: { referenceId },
+        });
+        return idempotencyConflict();
+      }
       logger.info("LEDGER", "Duplicate ledger entry ignored (idempotency)", {
         correlationId,
         actor: { type: "system", id: input.createdBy ?? "unknown" },
@@ -79,14 +140,14 @@ export async function createLedgerEntry(
       } as LedgerEntryCreateSuccess;
     }
 
-    const entryNumber = `LED-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const entryNumber = `LED-${randomUUID().toUpperCase()}`;
     const entryData: {
       entryNumber: string;
       traderId: string | null;
       orderId: string | null;
       referenceId: string;
       entryType: LedgerEntryType;
-      amount: number;
+      amount: Prisma.Decimal;
       direction: LedgerDirection;
       currency: string;
       status: string;
@@ -98,7 +159,7 @@ export async function createLedgerEntry(
       orderId: input.orderId ?? null,
       referenceId,
       entryType: input.entryType,
-      amount: input.amount,
+      amount,
       direction: input.direction,
       currency: input.currency ?? "USD",
       status: "POSTED",
@@ -108,7 +169,7 @@ export async function createLedgerEntry(
       entryData.metadata = input.metadata;
     }
 
-    const entry = await prisma.ledgerEntry.create({ data: entryData as unknown as Prisma.LedgerEntryCreateInput });
+    const entry = await prisma.ledgerEntry.create({ data: entryData as unknown as Prisma.LedgerEntryUncheckedCreateInput });
 
     logger.info("LEDGER", "Ledger entry created", {
       correlationId,
@@ -118,7 +179,7 @@ export async function createLedgerEntry(
         entryNumber: entry.entryNumber,
         referenceId: entry.referenceId,
         entryType: entry.entryType,
-        amount: entry.amount,
+        amount: entry.amount.toString(),
         direction: entry.direction,
         currency: entry.currency,
         orderId: entry.orderId,
@@ -128,6 +189,21 @@ export async function createLedgerEntry(
 
     return { success: true, entry } as LedgerEntryCreateSuccess;
   } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      try {
+        const existing = await prisma.ledgerEntry.findUnique({
+          where: { referenceId: input.referenceId },
+        });
+        if (existing) {
+          if (isSameLedgerOperation(existing, input, amount)) {
+            return { success: true, entry: existing };
+          }
+          return idempotencyConflict();
+        }
+      } catch {
+        // Keep the generic create failure if the conflict lookup is unavailable.
+      }
+    }
     const msg = error instanceof Error ? error.message : "Unknown error";
     logger.error("LEDGER", "Ledger entry creation failed", {
       correlationId,
@@ -172,7 +248,7 @@ function validateLedgerEntryInput(input: CreateLedgerEntryInput): {
   errors: string[];
 } {
   const errors: string[] = [];
-  if (!input.referenceId || typeof input.referenceId !== "string") {
+  if (typeof input.referenceId !== "string" || input.referenceId.trim().length === 0) {
     errors.push("referenceId is required");
   }
   if (!input.entryType) {
@@ -181,12 +257,10 @@ function validateLedgerEntryInput(input: CreateLedgerEntryInput): {
     errors.push("entryType is not a valid LedgerEntryType");
   }
   if (
-    input.amount === undefined ||
-    typeof input.amount !== "number" ||
-    input.amount <= 0 ||
-    !Number.isFinite(input.amount)
+    (typeof input.amount !== "number" && typeof input.amount !== "string") ||
+    !parseLedgerAmount(input.amount)
   ) {
-    errors.push("amount must be a positive number");
+    errors.push("amount must be positive, fit the ledger precision, and have at most two decimal places");
   }
   if (
     !input.direction ||

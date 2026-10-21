@@ -1,4 +1,8 @@
 import { PrismaClient } from "@prisma/client";
+import {
+  canonicalDatabaseIdentity,
+  createDatabaseClientAfterValidation,
+} from "./development-database-guard";
 
 /**
  * Shared Prisma client for the whole application.
@@ -22,14 +26,34 @@ import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
   __fundedExpertsPrisma?: PrismaClient;
+  __fundedExpertsPrismaDevelopmentIdentity?: string;
 };
 
 function resolveClient(): PrismaClient {
-  const existing = globalForPrisma.__fundedExpertsPrisma;
-  if (existing) return existing;
-  const created = new PrismaClient();
-  globalForPrisma.__fundedExpertsPrisma = created;
-  return created;
+  return createDatabaseClientAfterValidation(process.env, (developmentUrl) => {
+    const developmentIdentity = developmentUrl
+      ? canonicalDatabaseIdentity(developmentUrl) ?? undefined
+      : undefined;
+    const existing = globalForPrisma.__fundedExpertsPrisma;
+    if (existing) {
+      if (
+        process.env.NODE_ENV === "development" &&
+        globalForPrisma.__fundedExpertsPrismaDevelopmentIdentity !== developmentIdentity
+      ) {
+        throw new Error(
+          "Local database access is blocked: the cached Prisma client was not created for the verified development database.",
+        );
+      }
+      return existing;
+    }
+
+    const created = developmentUrl
+      ? new PrismaClient({ datasources: { db: { url: developmentUrl } } })
+      : new PrismaClient();
+    globalForPrisma.__fundedExpertsPrisma = created;
+    globalForPrisma.__fundedExpertsPrismaDevelopmentIdentity = developmentIdentity;
+    return created;
+  });
 }
 
 export const prisma: PrismaClient = new Proxy({} as PrismaClient, {

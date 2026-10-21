@@ -1,6 +1,6 @@
 import "./support/test-env";
+import "./support/test-cleanup-guard";
 import { describe, it, after } from "node:test";
-import assert from "node:assert/strict";
 import {
   PrismaClient,
   LedgerEntryType,
@@ -112,16 +112,11 @@ describe("Ledger Entry Creation", () => {
       direction: LedgerDirection.DEBIT,
       createdBy: "system",
     });
-    check("Duplicate returns existing", result2.success === true, "");
-    if (result2.success) {
-      check(
-        "Duplicate has same id",
-        result2.entry.id ===
-          (result1 as { success: true; entry: { id: string } }).entry.id,
-        "",
-      );
-      check("Duplicate has original amount", result2.entry.amount.equals(10.0), "");
-    }
+    check(
+      "Conflicting duplicate reference is rejected",
+      result1.success && !result2.success && result2.errorCategory === "IDEMPOTENCY_CONFLICT",
+      "",
+    );
   });
 
   it("should reject invalid amount (zero)", async () => {

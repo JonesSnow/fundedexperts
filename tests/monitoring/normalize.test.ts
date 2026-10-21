@@ -170,6 +170,30 @@ describe("normalizeSnapshot", () => {
       assert.equal(result.snapshot?.dataQuality?.positionsAvailable, false);
       assert.equal(result.snapshot?.dataQuality?.ordersAvailable, false);
     });
+
+    it("preserves provider collection failures when failed reads are represented by empty arrays", () => {
+      const raw: ProviderSnapshot = {
+        accountInfo: { login: 12345678, balance: 100000 },
+        positions: [],
+        orders: [],
+        history: [],
+        dataQuality: {
+          positionsAvailable: false,
+          ordersAvailable: false,
+          historyAvailable: false,
+        },
+        terminalInfo: { connected: true },
+        timestamp: new Date(),
+        provider: "MT5",
+      };
+
+      const result = normalizeSnapshot("acc-1", "ACCT-001", "MT5", raw);
+      assert.deepEqual(result.snapshot?.dataQuality, {
+        positionsAvailable: false,
+        ordersAvailable: false,
+        historyAvailable: false,
+      });
+    });
   });
 
   describe("Timestamp normalization", () => {

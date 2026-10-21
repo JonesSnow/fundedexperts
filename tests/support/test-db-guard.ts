@@ -41,6 +41,7 @@ export class ProductionDatabaseGuardError extends Error {
 }
 
 const DISPOSABLE_CONFIRMATION = "I_HAVE_VERIFIED_THIS_IS_A_DISPOSABLE_TEST_DATABASE";
+export { assertTestDatabaseCleanupAuthorized } from "../../lib/test-cleanup-guard";
 
 export function resolveTestDatabaseUrl(env: DatabaseEnvironment): ResolvedTestDatabase {
   const override = env.PHASE33_DATABASE_URL?.trim();

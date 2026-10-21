@@ -51,3 +51,8 @@ jobs:
 
       - name: Database-free tests
         run: pnpm test:unit
+
+      - name: Production build
+        run: pnpm exec next build --webpack
+        env:
+          DATABASE_URL: postgresql://127.0.0.1:5432/schema-validation

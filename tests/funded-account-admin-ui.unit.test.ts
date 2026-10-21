@@ -24,7 +24,7 @@ test("funded-assignment candidates require exact positive size and currency, FUN
 test("admin funded-account API projection exposes only the size, currency, and status fields needed for honest assignment UI", () => {
   const route = readFileSync(new URL("../app/api/funded-accounts/route.ts", import.meta.url), "utf8");
   assert.match(route, /take:\s*100/);
-  assert.match(route, /getEvaluationDenominationCurrency\(evaluation\.order\?\.orderItems,\s*evaluation\.productId\)/);
+  assert.match(route, /getEvaluationDenominationCurrency\([\s\S]*evaluation\.order\?\.orderItems,[\s\S]*evaluation\.productId,[\s\S]*evaluation\.account/);
   assert.match(route, /startingBalance:\s*evaluation\.startingBalance/);
   assert.match(route, /account:\s*\{\s*select:\s*\{[^}]*accountSize:\s*true,\s*currency:\s*true,\s*purpose:\s*true\s*\}\s*\}/);
 });

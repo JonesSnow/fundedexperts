@@ -10,24 +10,41 @@ export interface AdapterFactoryConfig {
   realConfig?: RealAdapterConfig;
 }
 
+export function assertNoMockAdapterInProduction(
+  adapter: MT5Adapter,
+  environment: string | undefined = process.env.NODE_ENV,
+): void {
+  if (environment === "production" && isMockAdapter(adapter)) {
+    throw new Error("Mock MT5 adapters are disabled in production.");
+  }
+}
+
 export function createMT5Adapter(config: AdapterFactoryConfig = {}): MT5Adapter {
   const mode = config.mode ?? "mock";
 
+  let adapter: MT5Adapter;
   switch (mode) {
     case "mock":
-      return new MockMT5Adapter(config.mockConfig ?? { accounts: [] });
+      adapter = new MockMT5Adapter(config.mockConfig ?? { accounts: [] });
+      break;
     case "real":
-      return new RealMT5Adapter(config.realConfig);
+      adapter = new RealMT5Adapter(config.realConfig);
+      break;
     case "auto": {
       const useReal = process.env.MT5_USE_REAL_ADAPTER === "true";
       if (useReal) {
-        return new RealMT5Adapter(config.realConfig);
+        adapter = new RealMT5Adapter(config.realConfig);
+        break;
       }
-      return new MockMT5Adapter(config.mockConfig ?? { accounts: [] });
+      adapter = new MockMT5Adapter(config.mockConfig ?? { accounts: [] });
+      break;
     }
     default:
-      return new MockMT5Adapter(config.mockConfig ?? { accounts: [] });
+      throw new Error("Unsupported MT5 adapter mode.");
   }
+
+  assertNoMockAdapterInProduction(adapter);
+  return adapter;
 }
 
 export function isRealAdapter(adapter: MT5Adapter): boolean {

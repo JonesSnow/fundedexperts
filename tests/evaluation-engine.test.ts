@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Rule } from "@prisma/client";
 import { evaluateRule, evaluateAllRules, getOverallResult } from "../lib/rule-engine";
@@ -183,9 +184,12 @@ test("static drawdown uses the starting balance and exact breach comparison", ()
 test("trailing drawdown requires a complete historical peak and never substitutes zero", () => {
   const missing = evaluateDrawdown({ equity: 24_000, startingBalance: 25_000, historicalPeakEquity: null, maxDrawdown: 500, model: "TRAILING_PEAK_EQUITY", breachComparison: "STRICTLY_GREATER_THAN", historyComplete: true, dataTimestamp: freshAt, asOf, maxSnapshotAgeMs: 120_000 });
   const incomplete = evaluateDrawdown({ equity: 24_000, startingBalance: 25_000, historicalPeakEquity: 25_500, maxDrawdown: 500, model: "TRAILING_PEAK_EQUITY", breachComparison: "STRICTLY_GREATER_THAN", historyComplete: false, dataTimestamp: freshAt, asOf, maxSnapshotAgeMs: 120_000 });
+  const inconsistentPeak = evaluateDrawdown({ equity: 25_600, startingBalance: 25_000, historicalPeakEquity: 25_500, maxDrawdown: 500, model: "TRAILING_PEAK_EQUITY", breachComparison: "STRICTLY_GREATER_THAN", historyComplete: true, dataTimestamp: freshAt, asOf, maxSnapshotAgeMs: 120_000 });
   const fromPeak = evaluateDrawdown({ equity: 24_900, startingBalance: 25_000, historicalPeakEquity: 25_500, maxDrawdown: 500, model: "TRAILING_PEAK_EQUITY", breachComparison: "STRICTLY_GREATER_THAN", historyComplete: true, dataTimestamp: freshAt, asOf, maxSnapshotAgeMs: 120_000 });
   assert.equal(missing.state, "UNAVAILABLE");
   assert.equal(incomplete.state, "UNAVAILABLE");
+  assert.equal(inconsistentPeak.state, "UNAVAILABLE");
+  assert.match(inconsistentPeak.details, /history is inconsistent/);
   assert.equal(fromPeak.state, "FAIL");
   assert.equal(fromPeak.actualValue, 600);
 });
@@ -301,9 +305,12 @@ test("time and symbol rules require a complete provider activity window", () => 
 test("other rules require explicit definitions and complete source fields", () => {
   const openTrades = rule("MAX_OPEN_TRADES", { maxTrades: 2 }, { schemaVersion: 1, method: "COUNT_OPEN_POSITIONS_AND_PENDING_ORDERS", maxSnapshotAgeMs: 120_000, breachComparison: "GREATER_THAN" });
   const missingPositions = evaluateRule(openTrades, snapshot({ dataQuality: { positionsAvailable: false, ordersAvailable: true, historyAvailable: true } }));
+  const failedCollections = evaluateRule(openTrades, snapshot({ dataQuality: { positionsAvailable: false, ordersAvailable: false, historyAvailable: false } }));
   const leverage = rule("MAX_LEVERAGE", { maxLeverage: 30 }, { schemaVersion: 1, method: "SNAPSHOT_ACCOUNT_LEVERAGE", maxSnapshotAgeMs: 120_000, breachComparison: "GREATER_THAN" });
   const missingLeverage = evaluateRule(leverage, snapshot({ leverage: null }));
   assert.equal(missingPositions.state, "UNAVAILABLE");
+  assert.equal(failedCollections.state, "UNAVAILABLE");
+  assert.equal(failedCollections.result, "WARNING");
   assert.equal(missingLeverage.state, "UNAVAILABLE");
 });
 
@@ -341,6 +348,12 @@ test("runtime capability gate enforces every published rule method and treats mi
     maxSnapshotAgeMs: 120_000,
     breachComparison: "STRICTLY_GREATER_THAN",
   })], snapshot());
+  const inconsistentTrailing = evaluateAllRules([rule("DRAWDOWN_LIMIT", { maxDrawdown: 100 }, {
+    schemaVersion: 1,
+    method: "TRAILING_PEAK_EQUITY",
+    maxSnapshotAgeMs: 120_000,
+    breachComparison: "STRICTLY_GREATER_THAN",
+  })], snapshot({ equity: 25_600, historicalPeakEquity: 25_500, historyComplete: true }));
   const unsupportedProfit = evaluateAllRules([rule("PROFIT_TARGET", { target: 100 }, {
     schemaVersion: 1,
     method: "REALIZED_PLUS_FLOATING_PNL",
@@ -349,6 +362,8 @@ test("runtime capability gate enforces every published rule method and treats mi
   })], snapshot());
   assert.equal(missingOrders[0]?.state, "UNAVAILABLE");
   assert.equal(unavailableTrailing[0]?.state, "UNAVAILABLE");
+  assert.equal(inconsistentTrailing[0]?.state, "UNAVAILABLE");
+  assert.equal(inconsistentTrailing[0]?.result, "WARNING");
   assert.equal(unsupportedProfit[0]?.state, "UNAVAILABLE");
 });
 
@@ -380,14 +395,15 @@ function productFixture() {
   const leverageCalculation = { schemaVersion: 1, method: "SNAPSHOT_ACCOUNT_LEVERAGE", metric: "account leverage", reference: "latest account snapshot", breachComparison: "GREATER_THAN", evaluationTiming: "fresh snapshot", requiredInputs: ["leverage", "dataTimestamp"], maxSnapshotAgeMs: 120_000 };
   const openTradesCalculation = { schemaVersion: 1, method: "COUNT_OPEN_POSITIONS_AND_PENDING_ORDERS", metric: "open positions and pending orders", reference: "latest account snapshot", breachComparison: "GREATER_THAN", evaluationTiming: "fresh snapshot", requiredInputs: ["positions", "orders", "dataTimestamp"], maxSnapshotAgeMs: 120_000 };
   const rules: ActivationRule[] = [
-    { id: "leverage-rule", name: "Maximum leverage", ruleType: "MAX_LEVERAGE", disposition: "REQUIRED", value: { maxLeverage: 30 }, calculation: leverageCalculation },
-    { id: "open-trades-rule", name: "Maximum open trades", ruleType: "MAX_OPEN_TRADES", disposition: "REQUIRED", value: { maxTrades: 5 }, calculation: openTradesCalculation },
+    { id: "leverage-rule", name: "Maximum leverage", ruleType: "MAX_LEVERAGE", disposition: "REQUIRED", isRequired: true, effectiveDate: asOf, value: { maxLeverage: 30 }, calculation: leverageCalculation },
+    { id: "open-trades-rule", name: "Maximum open trades", ruleType: "MAX_OPEN_TRADES", disposition: "REQUIRED", isRequired: true, effectiveDate: asOf, value: { maxTrades: 5 }, calculation: openTradesCalculation },
   ];
-  const version: ActivationRulesetVersion = { id: "version-1", version: "1.0.0", status: "PUBLISHED", rules };
+  const version: ActivationRulesetVersion = { id: "version-1", version: "1.0.0", status: "PUBLISHED", effectiveDate: asOf, rules };
   const product = {
     id: "product-1",
     code: "expert-25k",
     name: "Expert 25K",
+    description: "A one-stage simulated evaluation.",
     category: "EXPERT",
     evaluationStructure: "ONE_STEP",
     status: "ACTIVE",
@@ -396,7 +412,7 @@ function productFixture() {
     denominationCurrency: "USD",
     price: "79.00",
     currency: "USD",
-    stages: [{ id: "stage-1", stageKey: "stage-1", displayName: "Stage 1", stageOrder: 1, rulesetVersion: { ...version, rules: rules.map((ruleValue) => ({ id: ruleValue.id, name: ruleValue.name, ruleType: ruleValue.ruleType, disposition: ruleValue.disposition, value: ruleValue.value, calculation: ruleValue.calculation })) } }],
+    stages: [{ id: "stage-1", stageKey: "stage-1", displayName: "Stage 1", stageOrder: 1, rulesetVersion: { ...version, rules: rules.map((ruleValue) => ({ id: ruleValue.id, name: ruleValue.name, ruleType: ruleValue.ruleType, disposition: ruleValue.disposition, isRequired: ruleValue.isRequired, effectiveDate: ruleValue.effectiveDate, value: ruleValue.value, calculation: ruleValue.calculation })) } }],
   } as const;
   return { product, version, rules };
 }
@@ -410,7 +426,7 @@ test("order terms are server resolved, versioned, and require centrally supporte
     assert.equal(terms.accountSize, "25000.00");
     assert.equal(terms.productSnapshot.denominationCurrency, "USD");
     assert.equal(terms.rulesetVersionId, "version-1");
-    assert.equal(terms.productSnapshot.schemaVersion, 1);
+    assert.equal(terms.productSnapshot.schemaVersion, 2);
   }
 });
 
@@ -455,7 +471,7 @@ class MemoryActivationRepository implements ActivationRepository {
       getAssignment: async (traderId, accountId) => staged.assignment?.traderId === traderId && staged.assignment.accountId === accountId ? staged.assignment : null,
       lockTraderActivation: async () => undefined,
       hasActiveAssignment: async (traderId) => staged.assignment?.traderId === traderId && staged.assignment.status === "ASSIGNED",
-      reserveMatchingAccount: async (accountSize, denominationCurrency) => staged.account?.status === "AVAILABLE" && Number(staged.account.accountSize) === accountSize && staged.account.currency === denominationCurrency ? staged.account : null,
+      reserveMatchingAccount: async (accountSize, denominationCurrency) => staged.account?.status === "AVAILABLE" && staged.account.credentialsConfigured === true && Number(staged.account.accountSize) === accountSize && staged.account.currency === denominationCurrency ? staged.account : null,
       createEvaluation: async (data) => {
         const evaluation = { ...data, id: "evaluation-1" };
         staged.evaluation = evaluation;
@@ -499,7 +515,7 @@ function activationFixture(overrides: Partial<MemoryState> = {}) {
     rulesetVersionId: "version-1",
     orderItems: [{ productId: "product-1", unitPrice: "79.00", currency: "USD", productSnapshot: terms.productSnapshot }],
   };
-  const account: ActivationAccount = { id: "account-1", accountNumber: "DEMO-1", accountSize: "25000.00", currency: "USD", status: "AVAILABLE", purpose: "EVALUATION" };
+  const account: ActivationAccount = { id: "account-1", accountNumber: "DEMO-1", accountSize: "25000.00", currency: "USD", status: "AVAILABLE", purpose: "EVALUATION", credentialsConfigured: true };
   const state: MemoryState = {
     order,
     version,
@@ -540,7 +556,7 @@ test("missing inventory leaves no evaluation, assignment, or success audit", asy
 
 test("activation does not assign an equal-size account denominated in a different currency", async () => {
   const { repository, state } = activationFixture({
-    account: { id: "account-1", accountNumber: "DEMO-1", accountSize: "25000.00", currency: "EUR", status: "AVAILABLE", purpose: "EVALUATION" },
+    account: { id: "account-1", accountNumber: "DEMO-1", accountSize: "25000.00", currency: "EUR", status: "AVAILABLE", purpose: "EVALUATION", credentialsConfigured: true },
   });
   const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
   assert.equal(result.success, false);
@@ -549,6 +565,31 @@ test("activation does not assign an equal-size account denominated in a differen
   assert.equal(state.assignment, null);
   assert.equal(state.account?.status, "AVAILABLE");
   assert.equal(state.auditEvents.length, 0);
+});
+
+test("activation does not assign an account without configured encrypted credentials", async () => {
+  const { repository, state } = activationFixture({
+    account: { id: "account-1", accountNumber: "DEMO-1", accountSize: "25000.00", currency: "USD", status: "AVAILABLE", purpose: "EVALUATION", credentialsConfigured: false },
+  });
+  const result = await activatePaidOrder(repository, { orderId: "order-1", traderId: "trader-1" });
+  assert.equal(result.success, false);
+  assert.equal(result.code, "NO_MATCHING_INVENTORY");
+  assert.equal(state.evaluation, null);
+  assert.equal(state.assignment, null);
+  assert.equal(state.account?.status, "AVAILABLE");
+  assert.equal(state.auditEvents.length, 0);
+});
+
+test("Prisma activation reservation only selects inventory with non-empty encrypted credentials", () => {
+  const source = readFileSync(new URL("../lib/evaluation-activation.ts", import.meta.url), "utf8");
+  const start = source.indexOf("async reserveMatchingAccount(accountSize, denominationCurrency)");
+  const end = source.indexOf("async createEvaluation(data)", start);
+  const reservation = source.slice(start, end);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  assert.match(reservation, /"credentials" IS NOT NULL/);
+  assert.match(reservation, /BTRIM\("credentials"\) <> ''/);
+  assert.match(reservation, /FOR UPDATE SKIP LOCKED/);
 });
 
 test("activation requires denomination currency from the immutable order snapshot", async () => {
@@ -683,6 +724,26 @@ test("mismatched snapshot rule values are rejected instead of mixed with live ru
   const resolved = resolvePurchasedTerms(fixture.state.order, fixture.state.version);
   assert.equal(resolved.terms, null);
   assert.ok(resolved.errors.some((error) => error.includes("does not match")));
+});
+
+test("version 2 purchase terms reject rule and ruleset effective-date drift", () => {
+  const requiredness = activationFixture();
+  requiredness.state.version.rules[0]!.isRequired = false;
+  const requirednessResult = resolvePurchasedTerms(requiredness.state.order, requiredness.state.version);
+  assert.equal(requirednessResult.terms, null);
+  assert.ok(requirednessResult.errors.some((error) => error.includes("does not match")));
+
+  const ruleDate = activationFixture();
+  ruleDate.state.version.rules[0]!.effectiveDate = new Date("2026-02-01T00:00:00.000Z");
+  const ruleDateResult = resolvePurchasedTerms(ruleDate.state.order, ruleDate.state.version);
+  assert.equal(ruleDateResult.terms, null);
+  assert.ok(ruleDateResult.errors.some((error) => error.includes("does not match")));
+
+  const rulesetDate = activationFixture();
+  rulesetDate.state.version.effectiveDate = new Date("2026-02-01T00:00:00.000Z");
+  const rulesetDateResult = resolvePurchasedTerms(rulesetDate.state.order, rulesetDate.state.version);
+  assert.equal(rulesetDateResult.terms, null);
+  assert.ok(rulesetDateResult.errors.some((error) => error.includes("effective date")));
 });
 
 test("published ruleset versions and product stages remain explicit in snapshot checks", () => {

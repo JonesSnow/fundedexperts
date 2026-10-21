@@ -1,26 +1,42 @@
 import assert from "node:assert/strict";
 import test, { after, before } from "node:test";
 import { Prisma } from "@prisma/client";
+import { NextRequest } from "next/server";
 import { isPublicProductsResponse } from "../lib/product-experience";
 
 let findProducts: () => Promise<unknown[]> = async () => [];
+let findProduct: () => Promise<unknown | null> = async () => null;
 const fakePrisma = {
   product: {
     findMany: () => findProducts(),
+    findFirst: () => findProduct(),
   },
 };
 const previousPrisma = Reflect.get(globalThis, "__fundedExpertsPrisma");
 Reflect.set(globalThis, "__fundedExpertsPrisma", fakePrisma);
 
-let getProducts: (() => Promise<Response>) | undefined;
+let getProducts: ((request: NextRequest) => Promise<Response>) | undefined;
+let getProduct: ((
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) => Promise<Response>) | undefined;
 
 before(async () => {
   getProducts = (await import("../app/api/products/route")).GET;
+  getProduct = (await import("../app/api/products/[id]/route")).GET;
 });
 
 function callGetProducts(): Promise<Response> {
   if (!getProducts) throw new Error("Products route was not initialized");
-  return getProducts();
+  return getProducts(new NextRequest("http://localhost/api/products"));
+}
+
+function callGetProduct(): Promise<Response> {
+  if (!getProduct) throw new Error("Product detail route was not initialized");
+  return getProduct(
+    new NextRequest("http://localhost/api/products/product-detail-test"),
+    { params: Promise.resolve({ id: "product-detail-test" }) },
+  );
 }
 
 function configuredProductFixture() {
@@ -185,4 +201,42 @@ test("public products route handles a missing-table error without exposing datab
   assert.match(diagnosticText, /public\.ProductStage/);
   assert.match(diagnosticText, /corr_/);
   assert.equal(diagnosticText.includes("private database details"), false);
+});
+
+test("public product detail maps a missing-table error to the same safe service contract", async () => {
+  findProduct = async () => {
+    throw new Prisma.PrismaClientKnownRequestError("private product database details", {
+      code: "P2021",
+      clientVersion: "6.19.3",
+      meta: { table: "public.ProductStage" },
+    });
+  };
+
+  const diagnostics: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  const capture = (...values: unknown[]) => {
+    diagnostics.push(values.map((value) => typeof value === "string" ? value : JSON.stringify(value)).join(" "));
+  };
+  console.log = capture;
+  console.error = capture;
+  let response: Response;
+  let body: unknown;
+  try {
+    response = await callGetProduct();
+    body = await response.json();
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+
+  assert.equal(response.status, 503);
+  assert.equal((body as { code?: string }).code, "SERVICE_UNAVAILABLE");
+  assert.equal(JSON.stringify(body).includes("private product database details"), false);
+  assert.equal(JSON.stringify(body).includes("ProductStage"), false);
+  assert.match((body as { correlationId: string }).correlationId, /^corr_/);
+  const diagnosticText = diagnostics.join("\n");
+  assert.match(diagnosticText, /SCHEMA_TABLE_MISSING/);
+  assert.match(diagnosticText, /public\.ProductStage/);
+  assert.equal(diagnosticText.includes("private product database details"), false);
 });

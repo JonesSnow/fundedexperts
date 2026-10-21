@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -36,7 +37,7 @@ export async function GET(
     const notification = await prisma.notification.findFirst({
       where: {
         id,
-        ...(trader.role === "TRADER" ? { traderId: trader.id } : {}),
+        ...(!isActiveAdministrator(trader) ? { traderId: trader.id } : {}),
       },
     });
 
@@ -61,7 +62,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const trader = await getAuthenticatedTrader(request);
-  if (!trader || trader.role !== "ADMIN") {
+  if (!trader || !isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 },
@@ -126,7 +127,7 @@ export async function PATCH(
     const notification = await prisma.notification.findFirst({
       where: {
         id,
-        ...(trader.role === "TRADER" ? { traderId: trader.id } : {}),
+        ...(!isActiveAdministrator(trader) ? { traderId: trader.id } : {}),
       },
     });
 

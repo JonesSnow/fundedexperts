@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -28,7 +29,7 @@ export async function GET(
   const versions = await prisma.rulesetVersion.findMany({
     where: {
       rulesetId: id,
-      ...(trader?.role === "ADMIN" ? {} : PUBLIC_RULESET_VERSION_WHERE),
+      ...(isActiveAdministrator(trader) ? {} : PUBLIC_RULESET_VERSION_WHERE),
     },
     orderBy: { version: "desc" },
   });
@@ -51,7 +52,7 @@ export async function POST(
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }

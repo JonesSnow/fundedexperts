@@ -1,6 +1,23 @@
 # Master Scope Completion Matrix — 2026-10-14
 
-This is the working checklist for the master brief supplied on 2026-10-14. It uses the source audit dated 2026-10-12 and current source inspection. “Implemented but not verified” means code exists but its runtime dependencies were intentionally not exercised. No database target was considered safe for connection.
+This is the original working checklist for the master brief supplied on 2026-10-14. It uses the source audit dated 2026-10-12; the current source checkpoint immediately below records later evidence and supersedes conflicting status claims. “Implemented but not verified” means code exists but its runtime dependencies were intentionally not exercised. No database target was considered safe for connection.
+
+## Current source checkpoint — 2026-10-20
+
+This checkpoint reconciles the 2026-10-14 matrix with the current repository. It does not replace the original audit evidence or claim live-system verification.
+
+| Area | Current verified source state | Runtime or external limit |
+|---|---|---|
+| Order creation and payment | `lib/order-availability.ts` hard-disables order creation in every environment. `POST /api/orders/[id]/pay` returns 503 and ignores request-supplied payment claims. `lib/mock-payment-provider.ts` now refuses construction unless `NODE_ENV=test`; database-free regression tests cover the boundary. | No crypto provider, durable payment-intent/event persistence, authenticated webhook/chain adapter, reconciliation, or live payment verification exists. Checkout must remain unavailable. |
+| Public catalog | `GET /api/products` queries approved products with ordered `ProductStage` records. `ProductShowcase` has loading, retryable error, empty states, and hides purchase actions. Draft/test/incomplete configurations are filtered by source checks and tests. | User-provided local logs report the missing `public.ProductStage` table. The repository has a migration that creates it (`20261013000000_product_domain_foundation`), but no database was connected to verify migration state or current records. No active sizes/prices/rules are independently confirmed. |
+| Product publication | Draft editing, stage/ruleset linking, owner approval, publication validation, and the Phase 33 public-catalog exclusion have source and mocked/static regression coverage. Direct Funded publication remains deliberately blocked because order fulfillment is absent. | No product is certified for customer publication from these checks alone. Prices, offer sizes, exact rule formulas, payout policy, and payment terms remain unresolved or unapproved in `docs/product-decision-register.md`. |
+| Evaluation and funded-account safety | The current evaluator and activation code include explicit unavailable/incomplete outcomes, purchased-term checks, transactional activation interfaces, and mocked concurrency/rollback tests. Current details and unsupported adapter capabilities are recorded in the source-status table in `docs/product-decision-register.md`. | Mocked tests do not prove Neon transaction behavior or MT5 event completeness. Published rule semantics and production evaluation outcomes remain uncertified. |
+| Database target | The latest available read-only Neon branch listing showed only `production`; no isolated development/test branch was verified. | No database connection, query, migration, seed, or write was performed. Local database use remains fail-closed until the isolated target is independently verified and explicitly configured. |
+| Validation | On 2026-10-20, `pnpm test:unit` passed 72/72 database-free suites; `pnpm exec tsc --noEmit --incremental false` passed; targeted ESLint passed. Full `pnpm lint` exited successfully with 0 errors and 67 warnings. | `pnpm exec prisma validate` was blocked because `DATABASE_URL` was unset. Git status/diff remains blocked by the existing dubious-ownership safeguard. No database-backed suite, production build, browser flow, SMTP, payment, or broker action was verified. |
+
+The statements in the original matrix below are historical findings from the earlier snapshot. Current source and later tests supersede conflicting claims; live database, provider, broker, and browser behavior remain unverified.
+
+## Historical checklist as of 2026-10-14
 
 ## Public website
 

@@ -3,13 +3,13 @@ import Link from "next/link";
 import Header from "@/components/header";
 import SiteFooter from "@/components/site-footer";
 import ProductShowcase from "@/components/product-showcase";
-import { Badge } from "@/components/ui/badge";
+import WorkingPlanPreview from "@/components/working-plan-preview";
 import { ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Account Catalog",
-  description: "Compare simulated evaluation plans, prices, stages, and published rules.",
-  openGraph: { title: "Account Catalog | Funded Experts", description: "Compare active accounts and their rules." },
+  description: "Review approved simulated trading offers and their published terms when available.",
+  openGraph: { title: "Account Catalog | Funded Experts", description: "Review approved simulated trading offers and their published terms." },
 };
 
 export default function CatalogPage() {
@@ -24,11 +24,11 @@ export default function CatalogPage() {
               <p className="site-kicker text-primary">Account catalog</p>
               <h1 className="site-display mt-5 text-foreground">Explore Trading Plans</h1>
               <p className="mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-                Compare account sizes, prices, evaluation stages, and published rules before you choose a plan.
+                Only offers approved in the product catalog appear here. Draft terms are never substituted for live offers.
               </p>
               <div className="mt-7 flex flex-wrap items-center gap-3">
                 <Link href="#configured-products" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                  Compare plans <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  View published offers <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </Link>
                 <Link href="/rules" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                   Read the rules
@@ -38,14 +38,7 @@ export default function CatalogPage() {
           </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-5 pb-8 sm:px-8" aria-label="Purchase availability">
-          <div className="flex flex-col gap-3 rounded-2xl border border-warning/30 bg-warning-light p-5 sm:flex-row sm:items-start sm:p-6" role="status">
-            <Badge variant="warning">Purchases are not open yet</Badge>
-            <p className="max-w-4xl text-sm leading-6 text-warning-foreground">
-              Review each plan&apos;s terms. Purchasing and simulated account access are not available yet.
-            </p>
-          </div>
-        </section>
+        <WorkingPlanPreview />
 
         <section id="configured-products" className="mx-auto max-w-7xl scroll-mt-24 px-5 pb-16 sm:px-8 md:pb-20" aria-label="Available plans">
           <ProductShowcase purchaseUnavailable />

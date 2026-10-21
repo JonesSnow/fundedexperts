@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkCooldown, checkRateLimit } from "@/lib/auth/rate-limit";
+import { checkAuthClientRateLimit, checkCooldown, checkRateLimit } from "@/lib/auth/rate-limit";
 import { generateOtp, hashOtp, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS } from "@/lib/auth/otp";
 import { sendVerificationEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
@@ -23,6 +23,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Enter a valid email address." }, { status: 400 });
     }
 
+    const clientRateLimit = checkAuthClientRateLimit(request, "verify-email-resend", 20);
+    if (!clientRateLimit.allowed) {
+      return NextResponse.json(GENERIC_RESPONSE, {
+        status: 200,
+        headers: { "Retry-After": String(clientRateLimit.retryAfter) },
+      });
+    }
     const limit = checkRateLimit(`verify-email:${email}`);
     const cooldown = checkCooldown(`verify-email-resend:${email}`, OTP_RESEND_COOLDOWN_MS);
     if (!limit.allowed || !cooldown.allowed) {

@@ -1,4 +1,5 @@
 import "./support/test-env";
+import "./support/test-cleanup-guard";
 import { Prisma, PrismaClient, MT5Account, AccountAssignment, Evaluation, AuditLog, Trader } from "@prisma/client";
 import { allocateAccount } from "../lib/allocation";
 import { releaseAccount, ReleaseReason } from "../lib/release";

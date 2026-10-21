@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "./lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -41,7 +42,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    if (pathname.startsWith("/admin") && trader.role !== "ADMIN") {
+    if (pathname.startsWith("/admin") && !isActiveAdministrator(trader)) {
       const url = new URL("/login", request.url);
       url.searchParams.set("from", pathname);
       return NextResponse.redirect(url);

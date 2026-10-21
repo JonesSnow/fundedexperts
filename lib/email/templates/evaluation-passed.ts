@@ -8,6 +8,8 @@ export interface EvaluationPassedEmailVars {
   evaluationId: string;
   productName: string;
   totalPnl?: string;
+  stageName?: string;
+  nextStageName?: string;
 }
 
 export interface EvaluationPassedEmailOptions {

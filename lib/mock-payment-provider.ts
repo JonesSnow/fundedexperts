@@ -25,6 +25,10 @@ interface StoredPayment {
 }
 
 export function createMockPaymentProvider(): PaymentProvider {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("The mock payment provider is available only in tests");
+  }
+
   const payments = new Map<string, StoredPayment>();
 
   return {

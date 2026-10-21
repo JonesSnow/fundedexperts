@@ -14,7 +14,6 @@ interface AdminNotification {
   relatedEntityType: string | null;
   relatedEntityId: string | null;
   createdAt: string;
-  updatedAt: string;
 }
 
 interface TraderSearchResult {
@@ -29,8 +28,12 @@ interface TraderSearchResult {
 interface ApiNotificationResponse {
   success: boolean;
   notifications?: AdminNotification[];
+  unreadCount?: number;
+  nextCursor?: string | null;
   error?: string;
 }
+
+const NOTIFICATION_PAGE_SIZE = 50;
 
 export default function AdminNotificationsPage() {
   const [searchInput, setSearchInput] = useState("");
@@ -38,7 +41,11 @@ export default function AdminNotificationsPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState("");
   const [notificationsError, setNotificationsError] = useState("");
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
 
@@ -48,12 +55,15 @@ export default function AdminNotificationsPage() {
     setSearchError("");
     setSearchTrader(null);
     setNotifications([]);
+    setUnreadTotal(0);
+    setNextCursor(null);
+    setOlderError("");
     try {
       let url = "";
       if (value.includes("@")) {
-        url = `/api/admin/lifecycle?email=${encodeURIComponent(value)}`;
+        url = `/api/admin/lifecycle?email=${encodeURIComponent(value)}&identityOnly=true`;
       } else {
-        url = `/api/admin/lifecycle?customerId=${encodeURIComponent(value)}`;
+        url = `/api/admin/lifecycle?customerId=${encodeURIComponent(value)}&identityOnly=true`;
       }
       const res = await fetch(url);
       const data = await res.json();
@@ -78,22 +88,49 @@ export default function AdminNotificationsPage() {
     }
   }
 
-  async function loadNotifications(traderId: string) {
-    setNotificationsLoading(true);
-    setNotificationsError("");
+  async function loadNotifications(traderId: string, cursor: string | null = null, append = false) {
+    if (append) setLoadingOlder(true);
+    else setNotificationsLoading(true);
+    if (append) setOlderError("");
+    else setNotificationsError("");
     try {
-      const res = await fetch(`/api/notifications?traderId=${encodeURIComponent(traderId)}`);
+      const query = new URLSearchParams({ traderId, limit: String(NOTIFICATION_PAGE_SIZE) });
+      if (cursor) query.set("before", cursor);
+      const res = await fetch(`/api/notifications?${query.toString()}`);
       const data = (await res.json()) as ApiNotificationResponse;
-      if (res.ok && data.success) {
-        setNotifications(data.notifications || []);
+      if (
+        res.ok && data.success && Array.isArray(data.notifications) &&
+        typeof data.unreadCount === "number" && Number.isSafeInteger(data.unreadCount) && data.unreadCount >= 0 &&
+        (data.nextCursor === null || typeof data.nextCursor === "string")
+      ) {
+        if (append) {
+          setNotifications((current) => {
+            const knownIds = new Set(current.map((notification) => notification.id));
+            return [...current, ...(data.notifications ?? []).filter((notification) => !knownIds.has(notification.id))];
+          });
+          setOlderError("");
+        } else {
+          setNotifications(data.notifications);
+        }
+        setUnreadTotal(data.unreadCount);
+        setNextCursor(data.nextCursor ?? null);
       } else {
-        setNotificationsError((data as { error?: string }).error || "Failed to load notifications");
+        const error = data.error || "Notifications returned an unexpected response. Please retry.";
+        if (append) setOlderError(error);
+        else setNotificationsError(error);
       }
     } catch {
-      setNotificationsError("Network error. Please try again.");
+      if (append) setOlderError("Network error while loading older notifications.");
+      else setNotificationsError("Network error. Please try again.");
     } finally {
       setNotificationsLoading(false);
+      setLoadingOlder(false);
     }
+  }
+
+  async function handleLoadOlder() {
+    if (!searchTrader || !nextCursor || loadingOlder) return;
+    await loadNotifications(searchTrader.id, nextCursor, true);
   }
 
   async function handleMarkRead(notificationId: string) {
@@ -104,12 +141,14 @@ export default function AdminNotificationsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ read: true }),
       });
-      if (res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && (body as { success?: boolean }).success) {
+        const wasUnread = notifications.some((notification) => notification.id === notificationId && !notification.read);
         setNotifications((prev) =>
           prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n))
         );
+        if (wasUnread) setUnreadTotal((count) => Math.max(0, count - 1));
       } else {
-        const body = await res.json().catch(() => ({}));
         setNotificationsError((body as { error?: string }).error || "Failed to update");
       }
     } catch {
@@ -131,12 +170,14 @@ export default function AdminNotificationsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ read: false }),
       });
-      if (res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && (body as { success?: boolean }).success) {
+        const wasRead = notifications.some((notification) => notification.id === notificationId && notification.read);
         setNotifications((prev) =>
           prev.map((n) => (n.id === notificationId ? { ...n, read: false } : n))
         );
+        if (wasRead) setUnreadTotal((count) => count + 1);
       } else {
-        const body = await res.json().catch(() => ({}));
         setNotificationsError((body as { error?: string }).error || "Failed to update");
       }
     } catch {
@@ -156,10 +197,12 @@ export default function AdminNotificationsPage() {
       const res = await fetch(`/api/notifications/${notificationId}`, {
         method: "DELETE",
       });
-      if (res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && (body as { success?: boolean }).success) {
+        const wasUnread = notifications.some((notification) => notification.id === notificationId && !notification.read);
         setNotifications((prev) => prev.filter((n) => n.id !== notificationId));
+        if (wasUnread) setUnreadTotal((count) => Math.max(0, count - 1));
       } else {
-        const body = await res.json().catch(() => ({}));
         setNotificationsError((body as { error?: string }).error || "Failed to delete");
       }
     } catch {
@@ -213,7 +256,7 @@ export default function AdminNotificationsPage() {
     }
   }
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const unreadCount = unreadTotal;
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -330,8 +373,18 @@ export default function AdminNotificationsPage() {
         </div>
 
         {notificationsError && (
-          <div className="mb-4 rounded border border-danger/30 bg-danger-light p-3 text-sm text-danger">
-            {notificationsError}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded border border-danger/30 bg-danger-light p-3 text-sm text-danger" role="alert">
+            <span>{notificationsError}</span>
+            {searchTrader && (
+              <button
+                type="button"
+                onClick={() => void loadNotifications(searchTrader.id)}
+                disabled={notificationsLoading}
+                className="rounded px-3 py-2 font-semibold underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              >
+                {notificationsLoading ? "Retrying…" : "Retry"}
+              </button>
+            )}
           </div>
         )}
 
@@ -418,6 +471,20 @@ export default function AdminNotificationsPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {searchTrader && !notificationsLoading && nextCursor && (
+          <div className="mt-4 space-y-2">
+            {olderError && <p className="text-sm text-danger" role="alert">{olderError}</p>}
+            <button
+              type="button"
+              onClick={() => void handleLoadOlder()}
+              disabled={loadingOlder}
+              aria-busy={loadingOlder}
+              className="min-h-10 rounded border border-border bg-card px-4 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+            >
+              {loadingOlder ? "Loading older notifications…" : olderError ? "Try again" : "Load older notifications"}
+            </button>
           </div>
         )}
       </section>

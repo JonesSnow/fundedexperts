@@ -107,6 +107,19 @@ Approval is required for exact active product combinations and denominations, ex
 | P2 | Review and validate the new migration against the approved disposable database before deployment; explicitly inventory products that will become drafts. | M | Independently verified disposable target and migration review; no migration was run here. |
 | P3 | Expand monitoring freshness, outage behavior, concurrency and throughput tests; document recovery and operator procedures. | M | Safe test infrastructure and observability requirements. |
 
+## Source-status refresh — 2026-10-20
+
+The evaluator table above records the state observed during the 2026-10-13 Block 2 batch. It is not a description of the current rule-engine source. Read-only inspection of `prisma/schema.prisma`, `lib/rule-engine.ts`, `lib/evaluation-calculations.ts`, `lib/rule-capabilities.ts`, and the isolated tests shows subsequent corrections:
+
+- `MIN_TRADES` below its threshold produces `INCOMPLETE` rather than `FAIL`; the Prisma `RuleType` now also includes `MIN_TRADING_DAYS`, with distinct-day calculation and tests.
+- Daily loss uses explicitly configured net PnL components, the configured timezone/reset boundary, a matching data period, and freshness checks. It returns unavailable when required evidence is absent.
+- Drawdown calculation consumes the configured static or trailing method and requires complete peak history for trailing mode.
+- Trading-hours evaluation uses each activity event's timestamp and an IANA timezone. Trading-session evaluation checks configured allowed symbols rather than unconditionally passing.
+- These pure functions do not make the live integration ready. `RULE_CAPABILITY_REGISTRY` still marks profit target, daily loss, minimum activity, trading hours, and trading session unsupported because the live adapter does not provide complete verified inputs. The product publication route remains closed by default.
+- The earlier activation warning in the historical API/lifecycle section is also superseded: the current activation service runs evaluation, inventory reservation, assignment, account status, initial rule evaluations, and audit records in one transaction. Database-free mocked tests cover no-inventory/init-failure rollback, retry idempotency, and concurrent activation. This has not been verified against the database adapter or a real isolated database.
+
+The associated isolated evaluator tests are run as part of this refresh. No database, migration, account inventory, payment provider, or external MT5 service was accessed. The earlier blocker concerning missing live `ProductStage` data remains unverified and is not resolved by these source-level corrections.
+
 ## Launch recommendation
 
 **NO-GO for paid public launch or database-backed product activation.** The structured foundation compiles and builds, but there are no verified catalog values, the migration is unapplied, the evaluator has confirmed fail/pass correctness defects, route-level contracts are not covered by isolated mocks, Direct Funded fulfillment is absent, and commercial terms remain unapproved. Internal code review of the draft foundation is appropriate; activation must remain closed.

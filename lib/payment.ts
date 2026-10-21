@@ -1,6 +1,7 @@
 export type PaymentStatus =
   "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "REFUNDED" | "CANCELLED";
-export type PaymentProviderName = "STRIPE" | "PAYPAL" | "MOCK";
+/** Only the test mock exists; add a concrete crypto provider after one is selected. */
+export type PaymentProviderName = "MOCK";
 export type RefundStatus = "PENDING" | "COMPLETED" | "FAILED";
 
 export interface PaymentRequest {

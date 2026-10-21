@@ -114,6 +114,11 @@ export interface Mt5PythonResult {
   positions?: Mt5RawPosition[];
   orders?: Mt5RawOrder[];
   history?: Mt5RawHistoryDeal[];
+  dataQuality?: {
+    positionsAvailable: boolean;
+    ordersAvailable: boolean;
+    historyAvailable: boolean;
+  };
   terminalInfo?: Mt5RawTerminalInfo;
   timestamp?: number;
   provider?: ProviderName;
@@ -138,6 +143,9 @@ def safe_call(func, *args, **kwargs):
             code = err[0] if err else None
         return {"__error__": True, "code": code, "message": str(e)}
 
+def collection_available(result):
+    return result is not None and not (isinstance(result, dict) and result.get("__error__") is True)
+
 def safe_dict_result(result):
     if result is None:
         return None
@@ -148,7 +156,7 @@ def safe_dict_result(result):
     try:
         return dict(result)
     except (TypeError, ValueError):
-        return {"raw": str(result)}
+        return None
 
 def check_terminal_only():
     """Check if MT5 terminal is running without requiring credentials."""
@@ -231,7 +239,8 @@ def main():
     account_info = safe_call(mt5.account_info)
 
     # Check if account is actually connected
-    if account_info is None:
+    ai = safe_dict_result(account_info)
+    if not collection_available(account_info) or not ai:
         mt5.shutdown()
         err = mt5.last_error()
         print(json.dumps({
@@ -242,48 +251,52 @@ def main():
         }))
         sys.exit(0)
 
-    ai = safe_dict_result(account_info)
-
     # Fetch positions
     positions_raw = safe_call(mt5.positions_get)
     positions = []
-    if positions_raw and not (isinstance(positions_raw, dict) and positions_raw.get("__error__")):
+    positions_available = collection_available(positions_raw)
+    if positions_available:
         for p in positions_raw:
             pd = safe_dict_result(p)
-            if pd:
-                positions.append({
-                    "ticket": pd.get("ticket"),
-                    "symbol": pd.get("symbol"),
-                    "type": pd.get("type"),
-                    "volume": pd.get("volume"),
-                    "price": pd.get("price"),
-                    "sl": pd.get("sl"),
-                    "tp": pd.get("tp"),
-                    "profit": pd.get("profit"),
-                    "swap": pd.get("swap"),
-                    "openTime": pd.get("time"),
-                    "comment": pd.get("comment"),
-                })
+            if not pd:
+                positions_available = False
+                continue
+            positions.append({
+                "ticket": pd.get("ticket"),
+                "symbol": pd.get("symbol"),
+                "type": pd.get("type"),
+                "volume": pd.get("volume"),
+                "price": pd.get("price"),
+                "sl": pd.get("sl"),
+                "tp": pd.get("tp"),
+                "profit": pd.get("profit"),
+                "swap": pd.get("swap"),
+                "openTime": pd.get("time"),
+                "comment": pd.get("comment"),
+            })
 
     # Fetch orders
     orders_raw = safe_call(mt5.orders_get)
     orders = []
-    if orders_raw and not (isinstance(orders_raw, dict) and orders_raw.get("__error__")):
+    orders_available = collection_available(orders_raw)
+    if orders_available:
         for o in orders_raw:
             od = safe_dict_result(o)
-            if od:
-                orders.append({
-                    "ticket": od.get("ticket"),
-                    "symbol": od.get("symbol"),
-                    "type": od.get("type"),
-                    "volume": od.get("volume"),
-                    "price": od.get("price"),
-                    "sl": od.get("sl"),
-                    "tp": od.get("tp"),
-                    "state": od.get("state"),
-                    "time": od.get("time"),
-                    "comment": od.get("comment"),
-                })
+            if not od:
+                orders_available = False
+                continue
+            orders.append({
+                "ticket": od.get("ticket"),
+                "symbol": od.get("symbol"),
+                "type": od.get("type"),
+                "volume": od.get("volume"),
+                "price": od.get("price"),
+                "sl": od.get("sl"),
+                "tp": od.get("tp"),
+                "state": od.get("state"),
+                "time": od.get("time"),
+                "comment": od.get("comment"),
+            })
 
     # Fetch deal history (last 7 days for daily loss calculations)
     import datetime as dt
@@ -291,23 +304,26 @@ def main():
     start_date = end_date - dt.timedelta(days=7)
     history_raw = safe_call(mt5.history_deals_get, start_date, end_date)
     history = []
-    if history_raw and not (isinstance(history_raw, dict) and history_raw.get("__error__")):
+    history_available = collection_available(history_raw)
+    if history_available:
         for h in history_raw:
             hd = safe_dict_result(h)
-            if hd:
-                history.append({
-                    "ticket": hd.get("ticket"),
-                    "symbol": hd.get("symbol"),
-                    "type": hd.get("type"),
-                    "volume": hd.get("volume"),
-                    "price": hd.get("price"),
-                    "profit": hd.get("profit"),
-                    "swap": hd.get("swap"),
-                    "commission": hd.get("commission"),
-                    "time": hd.get("time"),
-                    "reason": hd.get("reason"),
-                    "comment": hd.get("comment"),
-                })
+            if not hd:
+                history_available = False
+                continue
+            history.append({
+                "ticket": hd.get("ticket"),
+                "symbol": hd.get("symbol"),
+                "type": hd.get("type"),
+                "volume": hd.get("volume"),
+                "price": hd.get("price"),
+                "profit": hd.get("profit"),
+                "swap": hd.get("swap"),
+                "commission": hd.get("commission"),
+                "time": hd.get("time"),
+                "reason": hd.get("reason"),
+                "comment": hd.get("comment"),
+            })
 
     ti = safe_dict_result(terminal_info) if terminal_info else {}
 
@@ -333,6 +349,11 @@ def main():
         "positions": positions,
         "orders": orders,
         "history": history,
+        "dataQuality": {
+            "positionsAvailable": positions_available,
+            "ordersAvailable": orders_available,
+            "historyAvailable": history_available,
+        },
         "terminalInfo": {
             "connected": ti.get("connected") if ti else None,
             "version": ti.get("version") if ti else None,
@@ -358,6 +379,21 @@ export interface RealAdapterConfig {
 const DEFAULT_PYTHON_PATH = "python";
 const DEFAULT_SCRIPT_TIMEOUT_MS = 15000;
 
+function normalizeMt5Login(value: unknown): string | null {
+  const login = Number(value);
+  return Number.isSafeInteger(login) && login > 0 ? String(login) : null;
+}
+
+function normalizeMt5Server(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const server = value.trim().toLowerCase();
+  return server.length > 0 ? server : null;
+}
+
+function accountIdentityMismatch(): Error {
+  return new Error("MT5 account identity does not match the configured inventory record");
+}
+
 export class RealMT5Adapter extends MT5Adapter {
   readonly providerName = "MT5" as ProviderName;
   private config: Required<RealAdapterConfig>;
@@ -382,8 +418,18 @@ export class RealMT5Adapter extends MT5Adapter {
   ): Promise<ProviderSnapshot> {
     const timeoutMs = options?.timeoutMs ?? this.config.scriptTimeoutMs;
     const credentials = this.decryptCredentials(input.credentials);
+    const expectedLogin = normalizeMt5Login(input.accountNumber);
+    const expectedServer = normalizeMt5Server(input.expectedServer);
+    if (
+      !expectedLogin ||
+      !expectedServer ||
+      expectedLogin !== normalizeMt5Login(credentials.login) ||
+      expectedServer !== normalizeMt5Server(credentials.server)
+    ) {
+      throw accountIdentityMismatch();
+    }
 
-    return this.executePythonBridge(credentials, timeoutMs);
+    return this.executePythonBridge(credentials, timeoutMs, { login: expectedLogin, server: expectedServer });
   }
 
   async testConnection(): Promise<{ connected: boolean; message: string }> {
@@ -449,10 +495,10 @@ export class RealMT5Adapter extends MT5Adapter {
     }
 
     const login = Number(creds.login);
-    const password = String(creds.password);
-    const server = String(creds.server);
+    const password = typeof creds.password === "string" ? creds.password : "";
+    const server = typeof creds.server === "string" ? creds.server.trim() : "";
 
-    if (!login || !password || !server) {
+    if (!Number.isSafeInteger(login) || login <= 0 || password.length === 0 || server.length === 0) {
       throw new Error("Credentials must contain login, password, and server");
     }
 
@@ -462,12 +508,19 @@ export class RealMT5Adapter extends MT5Adapter {
   private async executePythonBridge(
     credentials: Mt5Credentials,
     timeoutMs: number,
+    expectedIdentity: { login: string; server: string },
   ): Promise<ProviderSnapshot> {
     const credsJson = JSON.stringify(credentials);
     const result = await this.executePythonScript(credsJson, timeoutMs);
 
     if (result.error) {
       throw this.mapPythonError(result);
+    }
+
+    const actualLogin = normalizeMt5Login(result.accountInfo?.login);
+    const actualServer = normalizeMt5Server(result.accountInfo?.server);
+    if (actualLogin !== expectedIdentity.login || actualServer !== expectedIdentity.server) {
+      throw accountIdentityMismatch();
     }
 
     return this.mapToProviderSnapshot(result);
@@ -616,6 +669,7 @@ export class RealMT5Adapter extends MT5Adapter {
         reason: typeof h.reason === "number" ? h.reason : Number(h.reason) || null,
         comment: h.comment ?? null,
       })),
+      dataQuality: data.dataQuality,
       terminalInfo: {
         connected: data.terminalInfo?.connected ?? data.connected ?? true,
         version: data.terminalInfo?.version ?? null,

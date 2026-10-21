@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession, getSessionCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -8,7 +9,7 @@ async function getAdmin(request: NextRequest) {
   const session = await getSession(token);
   if (!session) return null;
   const trader = await prisma.trader.findUnique({ where: { id: session.sub }, select: { id: true, role: true, status: true } });
-  return trader && trader.role === "ADMIN" && trader.status !== "SUSPENDED" && trader.status !== "INACTIVE" ? trader : null;
+  return isActiveAdministrator(trader) ? trader : null;
 }
 
 export async function GET(request: NextRequest) {

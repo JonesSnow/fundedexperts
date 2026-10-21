@@ -1,7 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { PrismaClient } from "@prisma/client";
+import { runCleanupSteps } from "../lib/cleanup-helper";
 import {
   assertSafeTestDatabase,
+  assertTestDatabaseCleanupAuthorized,
   mergeTestEnvironmentFileValues,
   ProductionDatabaseGuardError,
   resolveTestDatabaseUrl,
@@ -98,5 +101,39 @@ describe("database test safety guard", () => {
       TEST_DATABASE_DISPOSABLE: "true",
       JWT_SECRET: "test-only-placeholder",
     });
+  });
+
+  it("requires a separate process-level confirmation before global cleanup", () => {
+    assert.throws(
+      () => assertTestDatabaseCleanupAuthorized({}),
+      /Refusing destructive test cleanup/,
+    );
+    assert.throws(
+      () => assertTestDatabaseCleanupAuthorized({
+        TEST_DATABASE_CLEANUP_CONFIRMATION: "incorrect",
+      }),
+      /Refusing destructive test cleanup/,
+    );
+    assert.doesNotThrow(() => assertTestDatabaseCleanupAuthorized({
+      TEST_DATABASE_CLEANUP_CONFIRMATION: "I_UNDERSTAND_THIS_DELETES_ALL_DATA_IN_THE_TEST_DATABASE",
+    }));
+  });
+
+  it("does not invoke cleanup callbacks without the cleanup confirmation", async () => {
+    const previous = process.env.TEST_DATABASE_CLEANUP_CONFIRMATION;
+    delete process.env.TEST_DATABASE_CLEANUP_CONFIRMATION;
+    let cleanupInvoked = false;
+    try {
+      await assert.rejects(
+        runCleanupSteps({} as unknown as PrismaClient, [
+          { label: "test.deleteMany", fn: async () => { cleanupInvoked = true; } },
+        ]),
+        /Refusing destructive test cleanup/,
+      );
+      assert.equal(cleanupInvoked, false);
+    } finally {
+      if (previous === undefined) delete process.env.TEST_DATABASE_CLEANUP_CONFIRMATION;
+      else process.env.TEST_DATABASE_CLEANUP_CONFIRMATION = previous;
+    }
   });
 });

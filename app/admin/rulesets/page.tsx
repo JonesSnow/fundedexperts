@@ -7,6 +7,18 @@ type RuleRecord = { id: string; name: string; ruleType: string; value: unknown; 
 type RulesetVersion = { id: string; version: string; status: string; effectiveDate: string | null; rules: RuleRecord[] };
 type Ruleset = { id: string; name: string; description: string | null; isActive: boolean; versions: RulesetVersion[] };
 
+const RULE_TYPE_OPTIONS = [
+  ["PROFIT_TARGET", "Profit target"],
+  ["DRAWDOWN_LIMIT", "Drawdown limit"],
+  ["TRADING_HOURS", "Trading hours"],
+  ["MIN_TRADES", "Minimum trades"],
+  ["MIN_TRADING_DAYS", "Minimum trading days"],
+  ["MAX_DAILY_LOSS", "Daily loss"],
+  ["MAX_OPEN_TRADES", "Maximum open trades"],
+  ["MAX_LEVERAGE", "Maximum leverage"],
+  ["TRADING_SESSION", "Trading session"],
+] as const;
+
 async function fetchRulesets(): Promise<Ruleset[]> {
   const response = await fetch("/api/admin/rulesets");
   const data = await response.json();
@@ -16,6 +28,86 @@ async function fetchRulesets(): Promise<Ruleset[]> {
 
 function JsonText({ value }: { value: unknown }) {
   return <code className="block max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-background p-2 text-xs">{value === null || value === undefined ? "Not configured" : JSON.stringify(value, null, 2)}</code>;
+}
+
+function formatJsonDraft(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (parsed !== null && typeof parsed === "object") return JSON.stringify(parsed, null, 2) ?? "";
+    } catch {
+      // Keep ordinary string values as valid JSON text below.
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function RuleDraftEditor({
+  rulesetId,
+  version,
+  rule,
+  request,
+  busy,
+}: {
+  rulesetId: string;
+  version: string;
+  rule: RuleRecord;
+  request: (url: string, method: string, body?: unknown) => Promise<boolean>;
+  busy: boolean;
+}) {
+  const [name, setName] = useState(rule.name);
+  const [ruleType, setRuleType] = useState(rule.ruleType);
+  const [disposition, setDisposition] = useState(rule.disposition);
+  const [valueText, setValueText] = useState(formatJsonDraft(rule.value));
+  const [calculationText, setCalculationText] = useState(formatJsonDraft(rule.calculation));
+  const [effectiveDate, setEffectiveDate] = useState(rule.effectiveDate?.slice(0, 10) ?? "");
+  const [error, setError] = useState("");
+
+  async function saveRule(event: React.FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    setError("");
+    let value: unknown = null;
+    let calculation: unknown = null;
+    try {
+      if (disposition !== "OPTIONAL") {
+        value = valueText.trim() ? JSON.parse(valueText) : null;
+        calculation = calculationText.trim() ? JSON.parse(calculationText) : null;
+      }
+    } catch {
+      setError("Rule value and calculation must each contain valid JSON.");
+      return;
+    }
+
+    const saved = await request(
+      `/api/rulesets/${rulesetId}/versions/${encodeURIComponent(version)}/rules/${rule.id}`,
+      "PUT",
+      { name, ruleType, disposition, value, calculation, effectiveDate: effectiveDate || null },
+    );
+    if (saved) setError("");
+  }
+
+  return (
+    <details className="mt-4">
+      <summary className="cursor-pointer text-sm font-semibold">Edit draft rule</summary>
+      <form onSubmit={(event) => void saveRule(event)} className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="text-xs font-medium">Rule name<input required maxLength={100} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm" /></label>
+        <label className="text-xs font-medium">Rule type<select required value={ruleType} onChange={(event) => setRuleType(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm">{RULE_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="text-xs font-medium">Applicability<select value={disposition} onChange={(event) => setDisposition(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm"><option value="UNRESOLVED">Unresolved · blocks publication</option><option value="REQUIRED">Required</option><option value="OPTIONAL">Optional · no active threshold</option></select></label>
+        <label className="text-xs font-medium">Effective date<input type="date" value={effectiveDate} onChange={(event) => setEffectiveDate(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm" /></label>
+        <label className="text-xs font-medium">Value JSON<textarea value={valueText} onChange={(event) => setValueText(event.target.value)} rows={4} disabled={disposition === "OPTIONAL"} placeholder="Enter approved rule data" className="mt-1 w-full rounded border px-3 py-2 font-mono text-xs disabled:opacity-60" /></label>
+        <label className="text-xs font-medium">Calculation definition JSON<textarea value={calculationText} onChange={(event) => setCalculationText(event.target.value)} rows={4} disabled={disposition === "OPTIONAL"} placeholder="Enter an explicit, supported calculation" className="mt-1 w-full rounded border px-3 py-2 font-mono text-xs disabled:opacity-60" /></label>
+        {disposition === "OPTIONAL" && <p className="text-xs text-muted-foreground sm:col-span-2">Optional rules are saved without an active threshold or calculation.</p>}
+        {error && <p role="alert" className="rounded bg-danger-light p-3 text-sm text-danger sm:col-span-2">{error}</p>}
+        <button disabled={busy} className="w-fit rounded border border-primary/40 px-4 py-2 text-sm font-semibold text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 sm:col-span-2">{busy ? "Saving…" : "Save rule changes"}</button>
+      </form>
+    </details>
+  );
 }
 
 function VersionEditor({ ruleset, version, onRefresh }: { ruleset: Ruleset; version: RulesetVersion; onRefresh: () => void }) {
@@ -72,11 +164,11 @@ function VersionEditor({ ruleset, version, onRefresh }: { ruleset: Ruleset; vers
   return (
     <section className="mt-4 rounded-lg border p-4">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-semibold">{ruleset.name} · version {version.version}</h4><p className="mt-1 text-xs text-muted-foreground">Version ID: {version.id} · status: {version.status}</p></div>{version.status === "DRAFT" && <button disabled={busy} onClick={() => void request(`${base}/publish`, "POST")} className="rounded bg-success px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">Validate and publish</button>}</div>
-      {version.rules.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No rules configured yet.</p> : <div className="mt-4 space-y-3">{version.rules.map((rule) => <div key={rule.id} className="rounded border bg-card p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><h5 className="font-medium">{rule.name} · {rule.ruleType}</h5><p className="text-xs text-muted-foreground">{rule.disposition} · rule ID {rule.id}</p></div>{version.status === "DRAFT" && <button disabled={busy} onClick={() => void request(`${base}/rules/${rule.id}`, "DELETE")} className="text-xs text-danger underline disabled:opacity-50">Remove draft rule</button>}</div><div className="mt-3 grid gap-3 sm:grid-cols-2"><div><p className="mb-1 text-xs font-semibold">Rule value</p><JsonText value={rule.value} /></div><div><p className="mb-1 text-xs font-semibold">Calculation definition</p><JsonText value={rule.calculation} /></div></div></div>)}</div>}
+      {version.rules.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No rules configured yet.</p> : <div className="mt-4 space-y-3">{version.rules.map((rule) => <article key={rule.id} className="rounded border bg-card p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><h5 className="font-medium">{rule.name} · {rule.ruleType}</h5><p className="text-xs text-muted-foreground">{rule.disposition} · rule ID {rule.id}</p></div>{version.status === "DRAFT" && <button type="button" disabled={busy} onClick={() => void request(`${base}/rules/${rule.id}`, "DELETE")} className="text-xs text-danger underline disabled:opacity-50">Remove draft rule</button>}</div><div className="mt-3 grid gap-3 sm:grid-cols-2"><div><p className="mb-1 text-xs font-semibold">Rule value</p><JsonText value={rule.value} /></div><div><p className="mb-1 text-xs font-semibold">Calculation definition</p><JsonText value={rule.calculation} /></div></div>{version.status === "DRAFT" && <RuleDraftEditor key={`${rule.id}:${version.status}`} rulesetId={ruleset.id} version={version.version} rule={rule} request={request} busy={busy} />}</article>)}</div>}
       {version.status === "DRAFT" && <form onSubmit={(event) => void addRule(event)} className="mt-5 grid gap-3 border-t pt-4 sm:grid-cols-2">
         <h5 className="font-semibold sm:col-span-2">Add rule to this draft</h5>
         <label className="text-xs font-medium">Rule name<input required value={ruleName} onChange={(event) => setRuleName(event.target.value)} maxLength={100} className="mt-1 w-full rounded border px-3 py-2 text-sm" /></label>
-        <label className="text-xs font-medium">Rule type<select required value={ruleType} onChange={(event) => setRuleType(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm"><option value="">Select a rule type</option><option value="PROFIT_TARGET">Profit target</option><option value="DRAWDOWN_LIMIT">Drawdown limit</option><option value="MAX_DAILY_LOSS">Daily loss</option><option value="MIN_TRADES">Minimum trades</option><option value="MAX_OPEN_TRADES">Maximum open trades</option><option value="MAX_LEVERAGE">Maximum leverage</option><option value="TRADING_SESSION">Trading session</option><option value="TRADING_HOURS">Trading hours</option></select></label>
+        <label className="text-xs font-medium">Rule type<select required value={ruleType} onChange={(event) => setRuleType(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm"><option value="">Select a rule type</option>{RULE_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="text-xs font-medium">Applicability<select value={disposition} onChange={(event) => setDisposition(event.target.value)} className="mt-1 w-full rounded border px-3 py-2 text-sm"><option value="UNRESOLVED">Unresolved · blocks publication</option><option value="REQUIRED">Required</option><option value="OPTIONAL">Optional · intentionally unused</option></select></label>
         <label className="text-xs font-medium">Value JSON<textarea value={valueText} onChange={(event) => setValueText(event.target.value)} rows={4} placeholder="Enter approved rule data" className="mt-1 w-full rounded border px-3 py-2 font-mono text-xs" /></label>
         <label className="text-xs font-medium sm:col-span-2">Calculation definition JSON<textarea value={calculationText} onChange={(event) => setCalculationText(event.target.value)} rows={5} placeholder="metric, method, reference, breach comparison, evaluation timing, and required inputs" className="mt-1 w-full rounded border px-3 py-2 font-mono text-xs" /></label>

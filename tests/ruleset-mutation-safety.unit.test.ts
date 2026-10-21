@@ -3,7 +3,7 @@ import test, { after, before } from "node:test";
 import { NextRequest } from "next/server";
 import { createSession } from "../lib/auth/session";
 
-let actor: { id: string; role: string; status: string } | null = { id: "admin-1", role: "ADMIN", status: "ACTIVE" };
+const actor: { id: string; role: string; status: string } | null = { id: "admin-1", role: "ADMIN", status: "ACTIVE" };
 let initialStatus = "PUBLISHED";
 let transactionStatus = "PUBLISHED";
 let writes = 0;

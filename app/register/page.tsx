@@ -30,9 +30,8 @@ export default function RegisterPage() {
       });
       const data = await response.json();
 
-      if (response.ok) {
-        window.sessionStorage.setItem("funded-experts:verification-email", data.trader.email);
-        window.sessionStorage.setItem("funded-experts:verification-delivery", data.emailSent ? "sent" : "failed");
+      if (response.status === 202 && data.accepted === true) {
+        window.sessionStorage.setItem("funded-experts:verification-email", email.trim().toLowerCase());
         router.push("/verify-email-pending");
       } else if (data.errors) {
         setErrors(data.errors);
@@ -121,15 +120,15 @@ export default function RegisterPage() {
           {loading ? "Creating account…" : "Create account"}
         </Button>
       </form>
-      <p className="mt-5 text-xs leading-5 text-muted-foreground text-center">
-        By registering, you agree to our{" "}
-        <Link href="/policies#terms" className="font-semibold text-foreground underline underline-offset-4">Terms</Link>{" "}
-        and{" "}
-        <Link href="/policies#privacy" className="font-semibold text-foreground underline underline-offset-4">Privacy notice</Link>.
-        Please read the{" "}
-        <Link href="/policies#risk" className="font-semibold text-foreground underline underline-offset-4">risk disclosure</Link>
-        before trading.
-      </p>
+      <div className="mt-5 rounded-xl border border-warning/30 bg-warning/10 p-4 text-xs leading-5 text-muted-foreground" role="note">
+        <p>
+          Terms and privacy documents are not published yet. Review their{" "}
+          <Link href="/policies#terms" className="font-semibold text-foreground underline underline-offset-4">publication status</Link>{" "}
+          and the{" "}
+          <Link href="/policies#risk" className="font-semibold text-foreground underline underline-offset-4">risk disclosure</Link>
+          {" "}before proceeding. Purchases and simulated trading access are not available yet.
+        </p>
+      </div>
       <p className="mt-7 text-sm text-muted-foreground text-center">
         Already have an account?{" "}
         <Link href="/login" className="font-semibold text-foreground underline decoration-primary underline-offset-4">Sign in</Link>

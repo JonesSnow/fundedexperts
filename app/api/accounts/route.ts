@@ -1,8 +1,30 @@
-import { MT5Account, MT5AccountPurpose, AccountStatus, MT5HealthStatus } from "@prisma/client";
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
+import { MT5AccountPurpose, AccountStatus, MT5HealthStatus, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
-import { encryptIfEnabled } from "@/lib/encryption";
+import { prepareMt5Credentials } from "@/lib/mt5-credential-storage";
 import { prisma } from "@/lib/db";
+import { encodeCreatedAtCursor, parseCursorPage } from "@/lib/cursor-pagination";
+
+const accountResponseSelect = {
+  id: true,
+  accountNumber: true,
+  broker: true,
+  server: true,
+  login: true,
+  accountSize: true,
+  currency: true,
+  purpose: true,
+  status: true,
+  healthStatus: true,
+  notes: true,
+  lastHealthCheck: true,
+  createdAt: true,
+  updatedAt: true,
+  lastMonitoringAt: true,
+  currentMonitoringStatus: true,
+  currentMonitoringResult: true,
+} satisfies Prisma.MT5AccountSelect;
 
 
 async function getAuthenticatedUser(request: NextRequest) {
@@ -20,12 +42,6 @@ async function getAuthenticatedUser(request: NextRequest) {
   return trader;
 }
 
-function omitCredentials(account: MT5Account) {
-  const { credentials, ...rest } = account;
-  void credentials;
-  return rest;
-}
-
 export async function GET(request: NextRequest) {
   const trader = await getAuthenticatedUser(request);
   if (!trader) {
@@ -34,11 +50,16 @@ export async function GET(request: NextRequest) {
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
     );
+  }
+
+  const page = parseCursorPage(request.nextUrl.searchParams);
+  if (!page.success) {
+    return NextResponse.json({ success: false, error: page.error }, { status: 400 });
   }
 
   try {
@@ -49,27 +70,58 @@ export async function GET(request: NextRequest) {
       broker?: string;
     };
 
-    const where: Record<string, unknown> = {};
+    const baseWhere: Prisma.MT5AccountWhereInput = {};
     if (search) {
-      where.accountNumber = { contains: search, mode: "insensitive" };
+      baseWhere.accountNumber = { contains: search, mode: "insensitive" };
     }
     if (status && Object.values(AccountStatus).includes(status as AccountStatus)) {
-      where.status = status as AccountStatus;
+      baseWhere.status = status as AccountStatus;
     }
     if (purpose && Object.values(MT5AccountPurpose).includes(purpose as MT5AccountPurpose)) {
-      where.purpose = purpose as MT5AccountPurpose;
+      baseWhere.purpose = purpose as MT5AccountPurpose;
     }
     if (broker) {
-      where.broker = { contains: broker, mode: "insensitive" };
+      baseWhere.broker = { contains: broker, mode: "insensitive" };
     }
 
-    const accounts = await prisma.mT5Account.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-    });
+    const where: Prisma.MT5AccountWhereInput = page.cursor
+      ? {
+          AND: [
+            baseWhere,
+            {
+              OR: [
+                { createdAt: { lt: page.cursor.createdAt } },
+                { createdAt: page.cursor.createdAt, id: { lt: page.cursor.id } },
+              ],
+            },
+          ],
+        }
+      : baseWhere;
+    const [rows, totalCount] = await prisma.$transaction(
+      async (tx) => Promise.all([
+        tx.mT5Account.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: page.limit + 1,
+          select: accountResponseSelect,
+        }),
+        tx.mT5Account.count({ where: baseWhere }),
+      ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+    const hasMore = rows.length > page.limit;
+    const accounts = rows.slice(0, page.limit);
+    const lastAccount = accounts.at(-1);
 
     return NextResponse.json(
-      { success: true, accounts: accounts.map(omitCredentials) },
+      {
+        success: true,
+        accounts,
+        totalCount,
+        nextCursor: hasMore && lastAccount
+          ? encodeCreatedAtCursor({ id: lastAccount.id, createdAt: lastAccount.createdAt })
+          : null,
+      },
       { status: 200 }
     );
   } catch {
@@ -88,7 +140,7 @@ export async function POST(request: NextRequest) {
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
@@ -151,16 +203,13 @@ export async function POST(request: NextRequest) {
 
     let encryptedCredentials: string | null = null;
     if (body.credentials !== undefined) {
-      if (body.credentials !== null && typeof body.credentials !== "string") {
-        errors.credentials = "Credentials must be a string";
-      } else if (body.credentials !== null) {
-        try {
-          encryptedCredentials = encryptIfEnabled(body.credentials);
-        } catch {
-          errors.credentials = "Encryption key not configured — cannot store credentials";
-        }
+      const prepared = prepareMt5Credentials(body.credentials);
+      if (!prepared.ok) {
+        errors.credentials = prepared.reason === "invalid"
+          ? "Credentials must include a positive login, password, and server."
+          : "Encryption key not configured — cannot store credentials";
       } else {
-        encryptedCredentials = null;
+        encryptedCredentials = prepared.value ?? null;
       }
     }
 
@@ -186,6 +235,7 @@ export async function POST(request: NextRequest) {
           credentials: encryptedCredentials,
           notes: body.notes ?? null,
         },
+        select: accountResponseSelect,
       });
 
       await tx.auditLog.create({
@@ -207,7 +257,7 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json(
-      { success: true, account: omitCredentials(account) },
+      { success: true, account },
       { status: 201 }
     );
   } catch (error: unknown) {

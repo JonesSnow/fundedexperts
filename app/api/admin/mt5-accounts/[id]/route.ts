@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { AccountStatus, MT5AccountPurpose } from "@prisma/client";
 import type { MT5Account, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -21,7 +22,7 @@ async function getAuthenticatedAdmin(request: NextRequest) {
     where: { id: session.sub },
     select: { id: true, role: true, status: true },
   });
-  if (!trader || trader.role !== "ADMIN" || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
+  if (!isActiveAdministrator(trader)) {
     return null;
   }
   return trader;
@@ -143,7 +144,7 @@ export async function PATCH(
     if (!preparedCredentials.ok) {
       const invalidValue = preparedCredentials.reason === "invalid";
       return NextResponse.json(
-        { success: false, error: invalidValue ? "Credentials must be a string" : "Credential encryption is unavailable" },
+        { success: false, error: invalidValue ? "Credentials must include a positive login, password, and server." : "Credential encryption is unavailable" },
         { status: invalidValue ? 400 : 503 },
       );
     }
@@ -180,8 +181,9 @@ export async function PATCH(
     if (status !== undefined) {
       const newStatus = status as AccountStatus;
       const transition = await prisma.$transaction(async (tx) => {
-        const locked = await tx.$queryRaw<Array<{ id: string }>>`
-          SELECT "id" FROM "MT5Account" WHERE "id" = ${id} FOR UPDATE
+        const locked = await tx.$queryRaw<Array<{ id: string; credentialsConfigured: boolean }>>`
+          SELECT "id", ("credentials" IS NOT NULL AND BTRIM("credentials") <> '') AS "credentialsConfigured"
+          FROM "MT5Account" WHERE "id" = ${id} FOR UPDATE
         `;
         if (locked.length === 0) return { kind: "missing" as const };
 
@@ -190,6 +192,15 @@ export async function PATCH(
         const activeAssignment = await tx.accountAssignment.findFirst({
           where: { accountId: id, status: "ASSIGNED" },
         });
+        const credentialsConfiguredAfterUpdate = credentials === undefined
+          ? locked[0]?.credentialsConfigured === true
+          : typeof preparedCredentials.value === "string" && preparedCredentials.value.trim().length > 0;
+        if (newStatus === "IN_USE" && !credentialsConfiguredAfterUpdate) {
+          return { kind: "credentials-missing" as const };
+        }
+        if (credentials !== undefined && !credentialsConfiguredAfterUpdate && (current.status === "IN_USE" || activeAssignment)) {
+          return { kind: "credentials-assigned" as const };
+        }
         const decision = evaluateMt5AccountStatusChange(
           current.status as Mt5AccountStatus,
           newStatus as Mt5AccountStatus,
@@ -221,20 +232,22 @@ export async function PATCH(
         });
         if (!updatedAccount) return { kind: "missing" as const };
 
-        if (current.status !== newStatus) {
-          await tx.auditLog.create({
-            data: {
-              action: "ACCOUNT_UPDATED",
-              entityType: "MT5Account",
-              entityId: current.id,
-              performedBy: admin.id,
-              details: {
-                accountNumber: current.accountNumber,
-                statusChange: { from: current.status, to: newStatus },
-              },
+        await tx.auditLog.create({
+          data: {
+            action: "ACCOUNT_UPDATED",
+            entityType: "MT5Account",
+            entityId: current.id,
+            performedBy: admin.id,
+            details: {
+              accountNumber: current.accountNumber,
+              changes: Object.keys(updateData).filter((key) => key !== "credentials" && key !== "updatedAt"),
+              credentialsChanged: credentials !== undefined,
+              ...(current.status !== newStatus
+                ? { statusChange: { from: current.status, to: newStatus } }
+                : {}),
             },
-          });
-        }
+          },
+        });
         return { kind: "updated" as const, account: updatedAccount };
       });
 
@@ -243,6 +256,12 @@ export async function PATCH(
       }
       if (transition.kind === "assignment-conflict") {
         return NextResponse.json({ success: false, error: transition.message }, { status: 409 });
+      }
+      if (transition.kind === "credentials-missing") {
+        return NextResponse.json({ success: false, error: "Encrypted MT5 credentials must be configured before marking this account IN_USE" }, { status: 409 });
+      }
+      if (transition.kind === "credentials-assigned") {
+        return NextResponse.json({ success: false, error: "Credentials cannot be removed while the account is IN_USE or has an active assignment" }, { status: 409 });
       }
       if (transition.kind === "invalid-transition") {
         return NextResponse.json(
@@ -255,23 +274,61 @@ export async function PATCH(
       }
       updated = transition.account;
     } else {
-      updated = await prisma.mT5Account.update({
-        where: { id },
-        data: updateData,
-        select: {
-          id: true,
-          accountNumber: true,
-          broker: true,
-          server: true,
-          accountSize: true,
-          currency: true,
-          purpose: true,
-          status: true,
-          healthStatus: true,
-          notes: true,
-          updatedAt: true,
-        },
+      const update = await prisma.$transaction(async (tx) => {
+        const locked = await tx.$queryRaw<Array<{ id: string; status: AccountStatus }>>`
+          SELECT "id", "status" FROM "MT5Account" WHERE "id" = ${id} FOR UPDATE
+        `;
+        if (locked.length === 0) return { kind: "missing" as const };
+        if (credentials !== undefined && !preparedCredentials.value) {
+          const activeAssignment = await tx.accountAssignment.findFirst({
+            where: { accountId: id, status: "ASSIGNED" },
+            select: { id: true },
+          });
+          if (locked[0]?.status === "IN_USE" || activeAssignment) {
+            return { kind: "credentials-assigned" as const };
+          }
+        }
+        const updatedAccount = await tx.mT5Account.update({
+          where: { id },
+          data: updateData,
+          select: {
+            id: true,
+            accountNumber: true,
+            broker: true,
+            server: true,
+            accountSize: true,
+            currency: true,
+            purpose: true,
+            status: true,
+            healthStatus: true,
+            notes: true,
+            updatedAt: true,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            action: "ACCOUNT_UPDATED",
+            entityType: "MT5Account",
+            entityId: updatedAccount.id,
+            performedBy: admin.id,
+            details: {
+              accountNumber: account.accountNumber,
+              changes: Object.keys(updateData).filter((key) => key !== "credentials" && key !== "updatedAt"),
+              credentialsChanged: credentials !== undefined,
+            },
+          },
+        });
+
+        return { kind: "updated" as const, account: updatedAccount };
       });
+      if (update.kind === "missing") {
+        return NextResponse.json({ success: false, error: "MT5 account not found" }, { status: 404 });
+      }
+      if (update.kind === "credentials-assigned") {
+        return NextResponse.json({ success: false, error: "Credentials cannot be removed while the account is IN_USE or has an active assignment" }, { status: 409 });
+      }
+      updated = update.account;
     }
 
     logger.info("MT5_ACCOUNT", "Demo account updated by admin", {

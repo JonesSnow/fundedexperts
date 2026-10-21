@@ -32,6 +32,8 @@ export interface ActivationRule {
   name: string;
   ruleType: string;
   disposition: string;
+  isRequired?: boolean;
+  effectiveDate?: Date | string | null;
   value: unknown;
   calculation: unknown;
 }
@@ -40,12 +42,14 @@ export interface ActivationRulesetVersion {
   id: string;
   version: string;
   status: string;
+  effectiveDate?: Date | string | null;
   rules: ActivationRule[];
 }
 
 export interface ActivationEvaluation {
   id: string;
   orderId: string | null;
+  productId: string | null;
   traderId: string;
   rulesetVersionId: string;
   productStageId: string | null;
@@ -61,6 +65,7 @@ export interface ActivationAccount {
   currency: string;
   status: string;
   purpose: string | null;
+  credentialsConfigured: boolean;
 }
 
 export interface ActivationAssignment {
@@ -110,6 +115,13 @@ function canonicalJson(value: unknown): string {
   return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
 }
 
+function canonicalTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (!(value instanceof Date) && typeof value !== "string") return "invalid";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "invalid";
+}
+
 function priceString(value: unknown): string | null {
   if (typeof value === "string" && /^\d+(?:\.\d{1,2})?$/.test(value)) return Number(value).toFixed(2);
   if (typeof value === "number" && Number.isFinite(value)) return value.toFixed(2);
@@ -140,8 +152,8 @@ export function resolvePurchasedTerms(order: ActivationOrder, version: Activatio
   if (!snapshot) return { terms: null, errors: ["Order is missing its immutable product snapshot."] };
   const rawSchemaVersion = snapshot.schemaVersion;
   const schemaVersion = typeof rawSchemaVersion === "number" ? rawSchemaVersion : rawSchemaVersion === undefined ? 0 : Number.NaN;
-  if (schemaVersion !== 0 && schemaVersion !== 1) errors.push("Order snapshot schema version is unsupported.");
-  if (schemaVersion === 1 && (typeof snapshot.capturedAt !== "string" || !Number.isFinite(Date.parse(snapshot.capturedAt)))) errors.push("Versioned order snapshot is missing its capture timestamp.");
+  if (schemaVersion !== 0 && schemaVersion !== 1 && schemaVersion !== 2) errors.push("Order snapshot schema version is unsupported.");
+  if ((schemaVersion === 1 || schemaVersion === 2) && (typeof snapshot.capturedAt !== "string" || !Number.isFinite(Date.parse(snapshot.capturedAt)))) errors.push("Versioned order snapshot is missing its capture timestamp.");
   if (snapshot.productId !== item.productId) errors.push("Order snapshot product identity does not match its order item.");
   const accountSize = typeof snapshot.accountSize === "string" ? Number(snapshot.accountSize) : Number.NaN;
   if (!Number.isFinite(accountSize) || accountSize <= 0) errors.push("Order snapshot account size is missing or invalid.");
@@ -163,6 +175,14 @@ export function resolvePurchasedTerms(order: ActivationOrder, version: Activatio
   if (!order.rulesetVersionId || snapshotVersionId !== order.rulesetVersionId || version.id !== order.rulesetVersionId) errors.push("Order, snapshot, and published ruleset version identities do not match.");
   if (version.status !== "PUBLISHED" && version.status !== "ARCHIVED") errors.push("The order references a ruleset version that was never published.");
   if (firstStage?.rulesetVersion !== version.version) errors.push("Snapshot ruleset version label does not match its immutable version ID.");
+  if (schemaVersion === 2) {
+    const versionDetails = plainRecord(firstStage?.rulesetVersionDetails);
+    if (!versionDetails || !Object.prototype.hasOwnProperty.call(versionDetails, "effectiveDate")) {
+      errors.push("Version 2 order snapshot is missing ruleset version details.");
+    } else if (canonicalTimestamp(versionDetails.effectiveDate) !== canonicalTimestamp(version.effectiveDate)) {
+      errors.push("Snapshot ruleset effective date does not match its immutable version ID.");
+    }
+  }
 
   const snapshotRules = Array.isArray(firstStage?.rules) ? firstStage.rules.map(plainRecord).filter((rule): rule is Record<string, unknown> => rule !== null) : [];
   const dbRules = [...version.rules].sort((a, b) => a.id.localeCompare(b.id));
@@ -172,8 +192,17 @@ export function resolvePurchasedTerms(order: ActivationOrder, version: Activatio
   for (let index = 0; index < Math.min(savedRules.length, dbRules.length); index += 1) {
     const saved = savedRules[index];
     const current = dbRules[index];
-    const expected = { id: current.id, name: current.name, type: current.ruleType, disposition: current.disposition, value: current.value, calculation: current.calculation };
-    const actual = { id: saved.id, name: saved.name, type: saved.type, disposition: saved.disposition, value: saved.value ?? null, calculation: saved.calculation ?? null };
+    const expected: Record<string, unknown> = { id: current.id, name: current.name, type: current.ruleType, disposition: current.disposition, value: current.value, calculation: current.calculation };
+    const actual: Record<string, unknown> = { id: saved.id, name: saved.name, type: saved.type, disposition: saved.disposition, value: saved.value ?? null, calculation: saved.calculation ?? null };
+    if (schemaVersion === 2) {
+      if (!Object.prototype.hasOwnProperty.call(saved, "isRequired") || !Object.prototype.hasOwnProperty.call(saved, "effectiveDate")) {
+        errors.push(`Snapshot rule ${String(saved.id)} is missing version 2 rule metadata.`);
+      }
+      expected.isRequired = current.isRequired ?? (current.disposition === "REQUIRED");
+      actual.isRequired = saved.isRequired;
+      expected.effectiveDate = canonicalTimestamp(current.effectiveDate);
+      actual.effectiveDate = canonicalTimestamp(saved.effectiveDate);
+    }
     if (canonicalJson(actual) !== canonicalJson(expected)) errors.push(`Snapshot rule ${String(saved.id)} does not match its referenced published ruleset version.`);
   }
   if (errors.length > 0 || !firstStage) return { terms: null, errors };
@@ -227,7 +256,7 @@ export async function activatePaidOrder(
       if (existing) {
         const account = existing.accountId ? await tx.getAccount(existing.accountId) : null;
         const assignment = existing.accountId ? await tx.getAssignment(order.traderId, existing.accountId) : null;
-        const inProgressButUnassigned = existing.status === "IN_PROGRESS" && (!assignment || assignment.status !== "ASSIGNED" || account?.status !== "IN_USE");
+        const inProgressButUnassigned = existing.status === "IN_PROGRESS" && (!assignment || assignment.status !== "ASSIGNED" || account?.status !== "IN_USE" || account.credentialsConfigured !== true);
         if (existing.traderId !== order.traderId || existing.rulesetVersionId !== terms.rulesetVersionId || existing.productStageId !== terms.stageId || !existing.accountId || !assignment || !account || inProgressButUnassigned) {
           await tx.writeReviewAudit({ orderId: order.id, traderId: order.traderId, code: "TERMS_REVIEW_REQUIRED", reasons: ["Existing evaluation, account, or assignment state does not satisfy the purchased activation invariant."] });
           return { success: false, code: "TERMS_REVIEW_REQUIRED", error: "Existing activation state is incomplete or inconsistent; administrator review is required", reviewRequired: true };
@@ -239,10 +268,14 @@ export async function activatePaidOrder(
       if (await tx.hasActiveAssignment(order.traderId)) return { success: false, code: "ACTIVE_ASSIGNMENT_EXISTS", error: "Customer already has an active account assignment" };
       const account = await tx.reserveMatchingAccount(terms.accountSize, terms.denominationCurrency);
       if (!account) return { success: false, code: "NO_MATCHING_INVENTORY", error: "No available evaluation account matches the purchased size and denomination currency" };
+      if (account.credentialsConfigured !== true) {
+        return { success: false, code: "NO_MATCHING_INVENTORY", error: "No available evaluation account has encrypted credentials configured" };
+      }
 
       const startedAt = new Date();
       const evaluation = await tx.createEvaluation({
         orderId: order.id,
+        productId: terms.productId,
         traderId: order.traderId,
         rulesetVersionId: terms.rulesetVersionId,
         productStageId: terms.stageId,
@@ -292,7 +325,14 @@ export function prismaActivationRepository(prisma: PrismaClient): ActivationRepo
             return client.evaluation.findUnique({ where: { orderId: id } }) as unknown as Promise<ActivationEvaluation | null>;
           },
           async getAccount(id) {
-            return client.mT5Account.findUnique({ where: { id }, select: { id: true, accountNumber: true, accountSize: true, currency: true, status: true, purpose: true } }) as unknown as Promise<ActivationAccount | null>;
+            const rows = await client.$queryRaw<Array<ActivationAccount>>`
+              SELECT "id", "accountNumber", "accountSize", "currency", "status", "purpose",
+                ("credentials" IS NOT NULL AND BTRIM("credentials") <> '') AS "credentialsConfigured"
+              FROM "MT5Account"
+              WHERE "id" = ${id}
+              FOR UPDATE
+            `;
+            return rows[0] ?? null;
           },
           async getAssignment(traderId, accountId) {
             return client.accountAssignment.findFirst({ where: { traderId, accountId }, orderBy: { assignedAt: "desc" } }) as unknown as Promise<ActivationAssignment | null>;
@@ -304,13 +344,16 @@ export function prismaActivationRepository(prisma: PrismaClient): ActivationRepo
             return Boolean(await client.accountAssignment.findFirst({ where: { traderId, status: "ASSIGNED" }, select: { id: true } }));
           },
           async reserveMatchingAccount(accountSize, denominationCurrency) {
-            const rows = await client.$queryRaw<Array<{ id: string; accountNumber: string; accountSize: unknown; currency: string; status: string; purpose: string | null }>>`
-              SELECT "id", "accountNumber", "accountSize", "currency", "status", "purpose"
+            const rows = await client.$queryRaw<Array<ActivationAccount>>`
+              SELECT "id", "accountNumber", "accountSize", "currency", "status", "purpose",
+                ("credentials" IS NOT NULL AND BTRIM("credentials") <> '') AS "credentialsConfigured"
               FROM "MT5Account"
               WHERE "status" = 'AVAILABLE'
                 AND "purpose" = 'EVALUATION'::"MT5AccountPurpose"
                 AND "accountSize" = ${accountSize}
                 AND "currency" = ${denominationCurrency}
+                AND "credentials" IS NOT NULL
+                AND BTRIM("credentials") <> ''
               ORDER BY "createdAt" ASC
               LIMIT 1
               FOR UPDATE SKIP LOCKED
@@ -325,7 +368,7 @@ export function prismaActivationRepository(prisma: PrismaClient): ActivationRepo
             return client.accountAssignment.create({ data }) as unknown as Promise<ActivationAssignment>;
           },
           async markAccountInUse(accountId) {
-            const updated = await client.mT5Account.updateMany({ where: { id: accountId, status: "AVAILABLE" }, data: { status: "IN_USE" } });
+            const updated = await client.mT5Account.updateMany({ where: { id: accountId, status: "AVAILABLE", credentials: { not: "" } }, data: { status: "IN_USE" } });
             if (updated.count !== 1) throw new Error("Reserved account is no longer available");
           },
           async createInitialRuleEvaluations(evaluationId, rules) {

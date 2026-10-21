@@ -67,7 +67,7 @@ test("suspension and termination require a documented reason before database acc
   assert.equal(transactionStarted, false);
 });
 
-test("reactivation requires the original matching account and assignment to remain intact", async () => {
+async function runReactivation(credentialsConfigured: boolean) {
   const operations: string[] = [];
   const fundedAccount = {
     id: "funded-1",
@@ -84,8 +84,9 @@ test("reactivation requires the original matching account and assignment to rema
   };
   const tx = {
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      operations.push(strings[0].includes('"FundedAccount"') ? "funded-lock" : "inventory-lock");
-      return [{ id: values[0] }];
+      const table = strings[0].includes('"FundedAccount"') ? "funded-lock" : "inventory-lock";
+      operations.push(table);
+      return table === "inventory-lock" ? [{ id: values[0], credentialsConfigured }] : [{ id: values[0] }];
     },
     fundedAccount: {
       findUnique: async ({ include }: { include?: unknown }) => include ? fundedAccount : { ...fundedAccount },
@@ -129,6 +130,12 @@ test("reactivation requires the original matching account and assignment to rema
     performedBy: "admin-1",
   });
 
+  return { result, operations };
+}
+
+test("reactivation requires the original matching account and assignment to remain intact", async () => {
+  const { result, operations } = await runReactivation(true);
+
   assert.equal(result.success, true);
   if (result.success) assert.equal(result.account.status, "ACTIVE");
   assert.deepEqual(operations, [
@@ -140,6 +147,14 @@ test("reactivation requires the original matching account and assignment to rema
     "funded-reactivate",
     "audit-create",
   ]);
+});
+
+test("funded-account reactivation is rejected when encrypted credentials are missing", async () => {
+  const { result, operations } = await runReactivation(false);
+
+  assert.equal(result.success, false);
+  if (!result.success) assert.equal(result.errorCategory, "TERMS_REVIEW_REQUIRED");
+  assert.deepEqual(operations, ["funded-lock", "inventory-lock", "inventory-read", "assignment-read", "other-funded-link-check"]);
 });
 
 test("terminal funded-account transitions revoke the assignment and deactivate its inventory atomically", async () => {

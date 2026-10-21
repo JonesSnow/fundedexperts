@@ -21,6 +21,7 @@ import {
   ruleGroup,
 } from "@/lib/product-experience";
 import { categoryLabel, structureLabel } from "@/lib/product-domain";
+import { publicApiCorrelationId } from "@/lib/public-api-error";
 
 interface Props {
   compact?: boolean;
@@ -79,6 +80,7 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
   const [productRules, setProductRules] = useState<Record<string, ProductRules>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [errorReference, setErrorReference] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [category, setCategory] = useState<"all" | AccountPathwayId | "other">("all");
   const [size, setSize] = useState("all");
@@ -95,10 +97,13 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
     async function loadCatalog() {
       setLoading(true);
       setError("");
+      setErrorReference(null);
+      let responseReference: string | null = null;
       try {
         const productsResponse = await fetch("/api/products", { cache: "no-store", signal: controller.signal });
         const productsData: unknown = await productsResponse.json();
         if (!productsResponse.ok || !isPublicProductsResponse(productsData)) {
+          responseReference = publicApiCorrelationId(productsData);
           throw new Error("Product list unavailable");
         }
         const activeProducts = productsData.products.filter((product) => product.isActive && product.status === "ACTIVE");
@@ -125,6 +130,7 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
       } catch {
         if (!controller.signal.aborted) {
           setError("We couldn't load plan details. Please try again.");
+          setErrorReference(responseReference);
           publishHomeCatalog({
             products: [],
             rulesByProductId: {},
@@ -185,6 +191,7 @@ export default function ProductShowcase({ compact = false, purchaseUnavailable =
     return (
       <div className="rounded-2xl border border-danger/30 bg-danger-light p-5 text-sm text-danger" role="alert">
         <p>{error}</p>
+        {errorReference && <p className="mt-2 text-xs text-muted-foreground">Request reference: <code>{errorReference}</code></p>}
         <Button type="button" variant="ghost" className="mt-3" onClick={() => setRetryCount((count) => count + 1)}><RotateCw className="mr-2 h-4 w-4" aria-hidden="true" />Try again</Button>
       </div>
     );

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
+import { checkAuthClientRateLimit, checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { hashOtp, isSixDigitOtp } from "@/lib/auth/otp";
 import { sendWelcomeEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
@@ -19,6 +19,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Enter the email address and six-digit code." }, { status: 400 });
     }
 
+    const clientRateLimit = checkAuthClientRateLimit(request, "verify-email-confirm", 30);
+    if (!clientRateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many code attempts. Request a new code later." },
+        { status: 429, headers: { "Retry-After": String(clientRateLimit.retryAfter) } },
+      );
+    }
     const rateLimitKey = `verify-email-code:${email}`;
     const rateLimit = checkRateLimit(rateLimitKey);
     if (!rateLimit.allowed) {

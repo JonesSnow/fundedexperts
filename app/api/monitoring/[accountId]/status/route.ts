@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
@@ -20,7 +21,7 @@ async function getAuthenticatedAdmin(request: NextRequest) {
   if (!trader || trader.status === "SUSPENDED" || trader.status === "INACTIVE") {
     return null;
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return null;
   }
   return trader;

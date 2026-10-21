@@ -1,10 +1,14 @@
 # Products and Rulesets
 
-**Last Updated:** 2026-10-14
+**Last Updated:** 2026-10-20
 
 ## Product Catalog
 
 Products represent configured simulated evaluation offers. A record or category label is not an offer: only active products that pass publication validation and have published, active stage rules can appear in the public catalog.
+
+### Product term approval
+
+Publication requires explicit approval from the configured owner account. Set the server-only `PRODUCT_OWNER_TRADER_ID` to the active admin trader ID authorized to approve customer terms. The approval records a SHA-256 fingerprint of the saved product fields, ordered stages, attached published rule versions, thresholds, calculations and effective dates in the product audit log. The publication route recomputes the fingerprint and fails closed if approval is missing, belongs to another actor, or the saved product changed after review. This repository does not set the owner identity; configure it only through the deployment's approved configuration process.
 
 ### Product Fields
 
@@ -33,6 +37,10 @@ Products represent configured simulated evaluation offers. A record or category 
 | Direct Funded | Category label; fulfillment is unavailable until implemented |
 
 Only validated, active product records are offers. Product briefs and category labels do not create offers, prices, account sizes, or purchase availability.
+
+### Purchased-term snapshots
+
+New order snapshots use schema version 2. They preserve the product description and configured commercial fields, the ordered evaluation stages, each attached ruleset's identity/version/status/effective date, and each rule's value, calculation, requiredness, and effective date. Rule ordering is stable. Activation and later-stage progression continue to accept legacy snapshot versions, while version 2 snapshots are checked against their referenced ruleset before use. The snapshot records only fields the current application actually models; it does not supply missing profit-share, payout, or other unapproved commercial terms. Order creation and payment remain unavailable until the separately documented readiness gates are satisfied.
 
 ## Ruleset Management
 

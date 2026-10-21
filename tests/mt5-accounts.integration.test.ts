@@ -1,4 +1,5 @@
 import "./support/test-env";
+import "./support/test-cleanup-guard";
 import { describe, it, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Prisma, PrismaClient, MT5Account, AccountAssignment, MT5AccountPurpose, AccountStatus, AuditAction } from "@prisma/client";

@@ -1,9 +1,10 @@
 import "../tests/support/test-env";
+import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
-const TEST_ACCOUNT_ID = "persistent-acc-verify";
-const TEST_RUN_ID = "persistent-index-verify";
+const TEST_RUN_ID = randomUUID();
+const TEST_ACCOUNT_ID = `monitoring-index-verify-${TEST_RUN_ID}`;
 
 async function cleanupData(): Promise<void> {
   await prisma.monitoringJob.deleteMany({ where: { accountId: TEST_ACCOUNT_ID } });
@@ -16,10 +17,10 @@ async function createTestAccount(): Promise<void> {
     update: {},
     create: {
       id: TEST_ACCOUNT_ID,
-      accountNumber: "90012345",
+      accountNumber: `verify-${TEST_RUN_ID}`,
       broker: "XM",
       server: "Server-XM",
-      login: "12345678",
+      login: `verify-${TEST_RUN_ID}`,
       status: "IN_USE",
       credentials: "encrypted-test-credentials",
     },

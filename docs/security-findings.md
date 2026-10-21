@@ -93,12 +93,12 @@ No critical security findings identified.
 - **Impact:** Low — UI treats both as "not logged in", which is correct behavior. But API consumers cannot tell if a session exists but is inactive.
 - **Fix:** Consider returning `{ authenticated: false, status: "none" | "suspended" | "inactive" }`.
 
-### L-3: Duplicate Email Error Message
+### L-3: Registration Account Enumeration — Response-Based Signal Removed
 - **Component:** app/api/auth/register/route.ts
-- **Finding:** Returns "Email already registered" for duplicate registration (line 47). This confirms email existence to attackers (user enumeration).
-- **Evidence:** Line 47 in register route
-- **Impact:** Low — standard UX tradeoff. Many applications do this for usability.
-- **Fix:** Could return generic "Registration failed" but this harms UX. Document as known limitation.
+- **Previous finding:** Duplicate registration returned a distinct 409 response, and successful registration returned account and email-delivery details.
+- **Current behavior:** Valid new, duplicate, and concurrent-duplicate registrations return the same generic 202 payload with no account identifier or delivery-state field. Duplicate requests also perform password hashing to reduce the obvious timing difference. The registration screen uses the submitted address and directs existing users to sign in or recover their password.
+- **Regression coverage:** `tests/registration-enumeration.unit.test.ts` checks the shared response contract, duplicate-conflict handling, and UI behavior.
+- **Residual risk:** Response timing can still vary with database and platform behavior; this is not a constant-time guarantee. The in-process rate limiter also does not coordinate across server instances (see AU-2).
 
 ### L-4: PrismaClient Per-Route Instantiation
 - **Component:** All API route files

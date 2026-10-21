@@ -19,6 +19,7 @@ interface Account {
   lastHealthCheck: string | null;
   createdAt: string;
   updatedAt: string;
+  credentialsConfigured: boolean;
 }
 
 export default function AdminAccountDetailPage() {
@@ -26,6 +27,11 @@ export default function AdminAccountDetailPage() {
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [credentialLogin, setCredentialLogin] = useState("");
+  const [credentialServer, setCredentialServer] = useState("");
+  const [credentialPassword, setCredentialPassword] = useState("");
+  const [credentialBusy, setCredentialBusy] = useState(false);
+  const [credentialFeedback, setCredentialFeedback] = useState<{ message: string; success: boolean } | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -34,6 +40,8 @@ export default function AdminAccountDetailPage() {
       .then((data) => {
         if (data.success) {
           setAccount(data.account);
+          setCredentialLogin(data.account.login ?? "");
+          setCredentialServer(data.account.server ?? "");
         } else {
           setError(data.error || "Failed to load account");
         }
@@ -51,7 +59,9 @@ export default function AdminAccountDetailPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setAccount(data.account);
+        setAccount((current) => current
+          ? { ...current, ...data.account, credentialsConfigured: current.credentialsConfigured }
+          : data.account);
       } else {
         setError(data.error || "Failed to update status");
       }
@@ -69,12 +79,50 @@ export default function AdminAccountDetailPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setAccount(data.account);
+        setAccount((current) => current
+          ? { ...current, ...data.account, credentialsConfigured: current.credentialsConfigured }
+          : data.account);
       } else {
         setError(data.error || "Failed to update health");
       }
     } catch {
       setError("Network error");
+    }
+  }
+
+  async function handleSaveCredentials(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!account || !/^\d+$/.test(credentialLogin.trim()) || !credentialServer.trim() || credentialPassword.length === 0) {
+      setCredentialFeedback({ message: "Enter a positive MT5 login, server, and password.", success: false });
+      return;
+    }
+    const login = credentialLogin.trim();
+    const server = credentialServer.trim();
+    setCredentialBusy(true);
+    setCredentialFeedback(null);
+    try {
+      const response = await fetch(`/api/accounts/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          login,
+          server,
+          credentials: JSON.stringify({ login, password: credentialPassword, server }),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.account) {
+        throw new Error(data.errors?.credentials ?? data.error ?? "Failed to save MT5 credentials");
+      }
+      setAccount(data.account);
+      setCredentialLogin(data.account.login ?? login);
+      setCredentialServer(data.account.server ?? server);
+      setCredentialFeedback({ message: "MT5 credentials encrypted and saved.", success: true });
+    } catch (cause) {
+      setCredentialFeedback({ message: cause instanceof Error ? cause.message : "Network error. Try again.", success: false });
+    } finally {
+      setCredentialPassword("");
+      setCredentialBusy(false);
     }
   }
 
@@ -102,6 +150,68 @@ export default function AdminAccountDetailPage() {
         <DetailCard label="Purpose" value={account.purpose ?? "—"} />
         <DetailCard label="Created" value={new Date(account.createdAt).toLocaleString()} />
       </div>
+
+      <section className="mb-6 rounded-lg border p-4" aria-labelledby="mt5-credentials-heading">
+        <div className="mb-3">
+          <h2 id="mt5-credentials-heading" className="text-xl font-semibold">MT5 Credentials</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The saved password is never displayed. {account.credentialsConfigured ? "Enter the broker details again to replace the stored credential bundle." : "Add a credential bundle before the monitoring runner can process this account."}
+          </p>
+        </div>
+        {credentialFeedback && (
+          <p className={"mb-3 text-sm " + (credentialFeedback.success ? "text-success" : "text-danger")} role={credentialFeedback.success ? "status" : "alert"}>
+            {credentialFeedback.message}
+          </p>
+        )}
+        <form onSubmit={handleSaveCredentials} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label htmlFor="credential-login" className="mb-1 block text-sm font-medium">MT5 Login</label>
+            <input
+              id="credential-login"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]+"
+              value={credentialLogin}
+              onChange={(event) => setCredentialLogin(event.target.value)}
+              required
+              className="w-full rounded border px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div>
+            <label htmlFor="credential-server" className="mb-1 block text-sm font-medium">MT5 Server</label>
+            <input
+              id="credential-server"
+              type="text"
+              value={credentialServer}
+              onChange={(event) => setCredentialServer(event.target.value)}
+              required
+              className="w-full rounded border px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div>
+            <label htmlFor="credential-password" className="mb-1 block text-sm font-medium">MT5 Password</label>
+            <input
+              id="credential-password"
+              type="password"
+              autoComplete="new-password"
+              value={credentialPassword}
+              onChange={(event) => setCredentialPassword(event.target.value)}
+              required
+              className="w-full rounded border px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              type="submit"
+              disabled={credentialBusy}
+              aria-busy={credentialBusy}
+              className="min-h-10 rounded bg-primary px-4 py-2 text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {credentialBusy ? "Saving securely..." : account.credentialsConfigured ? "Replace Credentials" : "Save Credentials"}
+            </button>
+          </div>
+        </form>
+      </section>
 
       <div className="mb-6">
         <h2 className="text-xl font-semibold mb-3">Status Management</h2>

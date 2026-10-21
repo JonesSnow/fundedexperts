@@ -15,6 +15,8 @@
     "test": "pnpm test:unit",
     "test:unit": "node scripts/run-unit-tests.js",
     "test:db": "node scripts/run-all-tests.js",
+    "monitoring:worker": "tsx lib/monitoring/worker-entrypoint.ts",
+    "db:dev:migrate": "tsx scripts/run-development-migration.ts",
     "db:test:migrate": "node scripts/run-migration.js",
     "db:test:diff": "tsx scripts/prisma-diff.ts",
     "db:test:cleanup": "tsx scripts/cleanup-db.ts",

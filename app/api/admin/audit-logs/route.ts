@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession, getSessionCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!actor) return errorResponse(401, "Sign in is required.");
-    if (actor.role !== "ADMIN" || actor.status !== "ACTIVE") {
+    if (!isActiveAdministrator(actor)) {
       return errorResponse(403, "Administrator access is required.");
     }
 

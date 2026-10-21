@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { FundedAccountStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
     };
 
     const where: Record<string, unknown> = {};
-    if (trader.role === "TRADER") {
+    if (!isActiveAdministrator(trader)) {
       where.traderId = trader.id;
     }
     if (status && Object.values(FundedAccountStatus).includes(status as FundedAccountStatus)) {
@@ -61,6 +62,7 @@ export async function GET(request: NextRequest) {
             status: true,
             traderId: true,
             startingBalance: true,
+            account: { select: { accountSize: true, currency: true, purpose: true } },
             order: { select: { orderItems: { select: { productId: true, productSnapshot: true } } } },
           },
         },
@@ -78,7 +80,16 @@ export async function GET(request: NextRequest) {
               status: evaluation.status,
               traderId: evaluation.traderId,
               startingBalance: evaluation.startingBalance,
-              denominationCurrency: getEvaluationDenominationCurrency(evaluation.order?.orderItems, evaluation.productId),
+              denominationCurrency: getEvaluationDenominationCurrency(
+                evaluation.order?.orderItems,
+                evaluation.productId,
+                evaluation.account ? {
+                  accountSize: evaluation.account.accountSize,
+                  currency: evaluation.account.currency,
+                  purpose: evaluation.account.purpose,
+                  startingBalance: evaluation.startingBalance,
+                } : undefined,
+              ),
             }
           : null,
       };
@@ -104,7 +115,7 @@ export async function POST(request: NextRequest) {
       { status: 401 },
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 },

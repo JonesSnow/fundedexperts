@@ -1,6 +1,7 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { checkClientRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
 import { hasDuplicateProductCode, validateProductDraftInput } from "@/lib/product-domain";
@@ -36,9 +37,9 @@ async function getAuthenticatedUser(request: NextRequest) {
   return trader;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const correlationId = generateCorrelationId();
-  const rateLimit = checkRateLimit("products:list");
+  const rateLimit = checkClientRateLimit(request, "products:list", 60);
   if (!rateLimit.allowed) {
     return NextResponse.json(
       publicApiFailure("RATE_LIMITED", "Too many attempts. Please try again later.", correlationId),
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
       { status: 401 }
     );
   }
-  if (trader.role !== "ADMIN") {
+  if (!isActiveAdministrator(trader)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }

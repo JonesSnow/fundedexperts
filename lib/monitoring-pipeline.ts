@@ -6,7 +6,7 @@ import { releaseAccount } from "./release";
 import { createFundedAccount } from "./funded-account";
 import { sendRuleBreachEmail } from "./email/templates";
 import type { TraderRef } from "./email/templates";
-import { computeLeaseExpiry } from "./monitoring/repository";
+import { computeLeaseExpiry, withAccountMonitoringLock } from "./monitoring/repository";
 import { buildRuleEventIdempotencyKey } from "./evaluation-calculations";
 
 const logger = createLogger({
@@ -329,55 +329,11 @@ export async function processMonitoringSnapshot(
         entity: { type: "Evaluation", id: evaluation.id },
         error: { code: "RELEASE_FAILED", message: releaseResult.error },
       });
-      failed = true;
-      evaluationStatus = "FAILED";
-      await prisma.evaluation.update({
-        where: { id: evaluation.id },
-        data: { status: "FAILED", completedAt: new Date() },
-      });
-      await prisma.auditLog.create({
-        data: {
-          action: "SYSTEM_EVENT" as AuditAction,
-          entityType: "Evaluation",
-          entityId: evaluation.id,
-          performedBy,
-          details: {
-            event: "EVALUATION_FAILED",
-            accountId: evaluation.accountId,
-            accountNumber: account.accountNumber,
-            breachRules: breachRules.map((o) => ({
-              ruleType: o.ruleType,
-              details: o.details,
-              actualValue: o.actualValue as Prisma.InputJsonValue,
-              expectedValue: o.expectedValue as Prisma.InputJsonValue,
-            })),
-            reason: "RELEASE_FAILED",
-          } as Prisma.InputJsonObject,
-        },
-      });
-      if (sendEmails && evaluation.trader) {
-        try {
-          await sendRuleBreachEmail(
-            account.accountNumber,
-            {
-              id: evaluation.traderId,
-              email: evaluation.trader.email,
-              firstName: evaluation.trader.firstName ?? undefined,
-            } as TraderRef,
-            {
-              violationType: primaryViolation.ruleType,
-              detectedAt: new Date().toISOString(),
-              currentStatus: "FAILED",
-            },
-          );
-        } catch {
-          logger.error("MONITORING_PIPELINE", "Rule breach email failed", {
-            correlationId,
-            entity: { type: "Evaluation", id: evaluation.id },
-            error: { code: "EMAIL_FAILED", message: "Failed to send rule breach email" },
-          });
-        }
-      }
+      return {
+        success: false,
+        error: "A rule breach was recorded, but the account could not be released. The evaluation needs operator review.",
+        errorCategory: "EVALUATION_RELEASE_FAILED",
+      };
     }
   } else if (overallResult === "PASS") {
     const profitTargetOutcome = outcomes.find((o) => o.ruleType === "PROFIT_TARGET");
@@ -420,33 +376,41 @@ export async function processMonitoringSnapshot(
           },
         });
 
-        const fundedResult = await createFundedAccount(prisma, {
-          evaluationId: evaluation.id,
-          performedBy: "system",
-        });
-
-        // The result was previously discarded, so a failed funded-account
-        // creation was completely invisible. It is now logged and surfaced on
-        // the pipeline result so the caller can detect it.
-        if (!fundedResult.success) {
-          logger.error("MONITORING_PIPELINE", "Failed to create funded account after evaluation pass", {
+        if (releaseResult.stageAdvanced) {
+          logger.info("MONITORING_PIPELINE", "Evaluation stage passed and the next stage was activated", {
             correlationId,
-            entity: { type: "Evaluation", id: evaluation.id },
-            error: {
-              code: fundedResult.errorCategory,
-              message: fundedResult.error,
-            },
+            entity: { type: "Evaluation", id: releaseResult.nextEvaluationId ?? undefined },
+            metadata: { completedEvaluationId: evaluation.id },
           });
-
-          fundedAccountError = fundedResult.error;
         } else {
-          logger.info("MONITORING_PIPELINE", "Funded account created after evaluation pass", {
-            correlationId,
-            entity: { type: "FundedAccount", id: fundedResult.account.id },
-            metadata: {
-              wasAlreadyCreated: fundedResult.wasAlreadyCreated,
-            },
+          const fundedResult = await createFundedAccount(prisma, {
+            evaluationId: evaluation.id,
+            performedBy: "system",
           });
+
+          // The result was previously discarded, so a failed funded-account
+          // creation was completely invisible. It is now logged and surfaced on
+          // the pipeline result so the caller can detect it.
+          if (!fundedResult.success) {
+            logger.error("MONITORING_PIPELINE", "Failed to create funded account after evaluation pass", {
+              correlationId,
+              entity: { type: "Evaluation", id: evaluation.id },
+              error: {
+                code: fundedResult.errorCategory,
+                message: fundedResult.error,
+              },
+            });
+
+            fundedAccountError = fundedResult.error;
+          } else {
+            logger.info("MONITORING_PIPELINE", "Funded account created after evaluation pass", {
+              correlationId,
+              entity: { type: "FundedAccount", id: fundedResult.account.id },
+              metadata: {
+                wasAlreadyCreated: fundedResult.wasAlreadyCreated,
+              },
+            });
+          }
         }
       } else {
         logger.error("MONITORING_PIPELINE", "Failed to release account after evaluation pass", {
@@ -512,29 +476,31 @@ export async function scheduleMonitoringJob(
   workerId: string = "monitoring-worker",
   timeoutMs: number = 10000,
 ): Promise<{ jobId: string; duplicate: boolean }> {
-  const existing = await prisma.monitoringJob.findFirst({
-    where: {
-      accountId,
-      status: { in: ["PENDING", "RUNNING"] as const },
-    },
+  return withAccountMonitoringLock(prisma, accountId, async (transaction) => {
+    const existing = await transaction.monitoringJob.findFirst({
+      where: {
+        accountId,
+        status: { in: ["PENDING", "RUNNING"] as const },
+      },
+    });
+
+    if (existing) {
+      return { jobId: existing.jobId, duplicate: true };
+    }
+
+    const now = new Date();
+    const jobId = `job-${accountId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    await transaction.monitoringJob.create({
+      data: {
+        jobId,
+        accountId,
+        workerId,
+        timeoutMs,
+        leaseExpiry: computeLeaseExpiry(now, timeoutMs),
+      },
+    });
+
+    return { jobId, duplicate: false };
   });
-
-  if (existing) {
-    return { jobId: existing.jobId, duplicate: true };
-  }
-
-  const now = new Date();
-  const jobId = `job-${accountId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-  await prisma.monitoringJob.create({
-    data: {
-      jobId,
-      accountId,
-      workerId,
-      timeoutMs,
-      leaseExpiry: computeLeaseExpiry(now, timeoutMs),
-    },
-  });
-
-  return { jobId, duplicate: false };
 }

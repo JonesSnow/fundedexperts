@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { Prisma, type Coupon } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
@@ -9,12 +10,22 @@ import { validateCreateOrderInput } from "@/lib/order-validation";
 import { resolveOrderTerms } from "@/lib/order-domain";
 import { attemptOrderCreatedNotification } from "@/lib/order-notification";
 import { redeemableCouponWhere } from "@/lib/coupon-redemption";
+import { encodeCreatedAtCursor, parseCursorPage } from "@/lib/cursor-pagination";
+import { isOrderCreationEnabled } from "@/lib/order-availability";
+import { isSameOrderRequest, type OrderRequestIdentity } from "@/lib/order-idempotency";
 
 const logger = createLogger({
   environment: process.env.NODE_ENV as "development" | "production" | "test",
 });
 
 export async function POST(request: NextRequest) {
+  if (!isOrderCreationEnabled()) {
+    return NextResponse.json(
+      { success: false, error: "Purchases are not available yet" },
+      { status: 503 },
+    );
+  }
+
   const correlationId = generateCorrelationId();
   const trader = await getAuthenticatedUser(request);
   if (!trader) {
@@ -54,28 +65,18 @@ export async function POST(request: NextRequest) {
     const notes = typeof orderInput.notes === "string" ? orderInput.notes : undefined;
     const couponCode = typeof orderInput.couponCode === "string" ? orderInput.couponCode : undefined;
 
+    if (typeof productId !== "string") return NextResponse.json({ success: false, errors: { productId: "Product ID is required" } }, { status: 400 });
+
     if (idempotencyKey) {
-      const existing = await prisma.order.findUnique({
-        where: { idempotencyKey },
+      const existingResponse = await findExistingOrderResponse(idempotencyKey, trader.id, {
+        traderId: trader.id,
+        productId,
+        notes,
+        couponCode,
       });
-      if (existing) {
-        if (existing.traderId !== trader.id) {
-          return NextResponse.json({ success: false, error: "Idempotency key is already in use" }, { status: 409 });
-        }
-        logger.info("ORDER", "Duplicate order request ignored (idempotency)", {
-          correlationId,
-          actor: { type: "trader", id: trader.id },
-          entity: { type: "Order", id: existing.id },
-          metadata: { idempotencyKey, existingStatus: existing.status },
-        });
-        return NextResponse.json(
-          { success: true, order: existing, duplicate: true },
-          { status: 200 },
-        );
-      }
+      if (existingResponse) return existingResponse;
     }
 
-    if (typeof productId !== "string") return NextResponse.json({ success: false, errors: { productId: "Product ID is required" } }, { status: 400 });
     const product = await prisma.product.findUnique({
       where: { id: productId },
       include: {
@@ -136,55 +137,77 @@ export async function POST(request: NextRequest) {
 
     const orderNumber = `ORD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
-    const order = await prisma.$transaction(async (tx) => {
-      if (coupon) {
-        const reservation = await tx.coupon.updateMany({
-          where: redeemableCouponWhere(coupon, new Date()),
-          data: { usedCount: { increment: 1 } },
-        });
-        if (reservation.count !== 1) {
-          throw new Error("COUPON_NO_LONGER_REDEEMABLE");
-        }
-      }
+    const orderResult = await (async () => {
+      try {
+        const order = await prisma.$transaction(async (tx) => {
+          if (coupon) {
+            const reservation = await tx.coupon.updateMany({
+              where: redeemableCouponWhere(coupon, new Date()),
+              data: { usedCount: { increment: 1 } },
+            });
+            if (reservation.count !== 1) {
+              throw new Error("COUPON_NO_LONGER_REDEEMABLE");
+            }
+          }
 
-      const createdOrder = await tx.order.create({
-        data: {
-          orderNumber,
-          traderId: trader.id,
-          rulesetVersionId,
-          status: "PENDING_PAYMENT",
-          subtotal,
-          taxAmount: new Prisma.Decimal(0),
-          totalAmount,
-          currency: terms.currency,
-          idempotencyKey: idempotencyKey ?? null,
-          notes: notes ?? null,
-          orderItems: {
-            create: {
-              productId: product.id,
-              unitPrice: subtotal,
+          const createdOrder = await tx.order.create({
+            data: {
+              orderNumber,
+              traderId: trader.id,
+              rulesetVersionId,
+              status: "PENDING_PAYMENT",
+              subtotal,
+              taxAmount: new Prisma.Decimal(0),
+              totalAmount,
               currency: terms.currency,
-              quantity: 1,
-              status: "PENDING",
-              productSnapshot: terms.productSnapshot as Prisma.InputJsonValue,
+              idempotencyKey: idempotencyKey ?? null,
+              notes: notes ?? null,
+              orderItems: {
+                create: {
+                  productId: product.id,
+                  unitPrice: subtotal,
+                  currency: terms.currency,
+                  quantity: 1,
+                  status: "PENDING",
+                  productSnapshot: terms.productSnapshot as Prisma.InputJsonValue,
+                },
+              },
             },
-          },
-        },
-        include: { orderItems: true },
-      });
+            include: { orderItems: true },
+          });
 
-      if (coupon) {
-        await tx.couponUsage.create({
-          data: {
-            couponId: coupon.id,
-            traderId: trader.id,
-            orderId: createdOrder.id,
-          },
+          if (coupon) {
+            await tx.couponUsage.create({
+              data: {
+                couponId: coupon.id,
+                traderId: trader.id,
+                orderId: createdOrder.id,
+              },
+            });
+          }
+
+          return createdOrder;
         });
+        return { kind: "created" as const, order };
+      } catch (error) {
+        if (isPrismaUniqueConstraintError(error) && idempotencyKey) {
+          try {
+            const duplicateResponse = await findExistingOrderResponse(idempotencyKey, trader.id, {
+              traderId: trader.id,
+              productId,
+              notes,
+              couponCode,
+            });
+            if (duplicateResponse) return { kind: "response" as const, response: duplicateResponse };
+          } catch {
+            // Preserve the transaction failure if the concurrent retry lookup fails.
+          }
+        }
+        throw error;
       }
-
-      return createdOrder;
-    });
+    })();
+    if (orderResult.kind === "response") return orderResult.response;
+    const order = orderResult.order;
 
     logger.info("ORDER", "Order created", {
       correlationId,
@@ -241,6 +264,44 @@ export async function POST(request: NextRequest) {
   }
 }
 
+async function findExistingOrderResponse(
+  idempotencyKey: string,
+  traderId: string,
+  requestIdentity: OrderRequestIdentity,
+) {
+  const existing = await prisma.order.findUnique({
+    where: { idempotencyKey },
+    include: { orderItems: { select: { productId: true, quantity: true } } },
+  });
+  if (!existing) return null;
+  if (existing.traderId !== traderId) {
+    return NextResponse.json({ success: false, error: "Idempotency key is already in use" }, { status: 409 });
+  }
+
+  const couponUsages = await prisma.couponUsage.findMany({
+    where: { orderId: existing.id, traderId },
+    select: { coupon: { select: { code: true } } },
+  });
+  const couponCodes = couponUsages.map((usage) => usage.coupon.code);
+  if (!isSameOrderRequest(existing, requestIdentity, couponCodes)) {
+    return NextResponse.json({ success: false, error: "Idempotency key is already in use" }, { status: 409 });
+  }
+
+  logger.info("ORDER", "Duplicate order request ignored (idempotency)", {
+    actor: { type: "trader", id: traderId },
+    entity: { type: "Order", id: existing.id },
+    metadata: { idempotencyKey, existingStatus: existing.status },
+  });
+  return NextResponse.json({ success: true, order: existing, duplicate: true }, { status: 200 });
+}
+
+function isPrismaUniqueConstraintError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "P2002";
+}
+
 export async function GET(request: NextRequest) {
   const trader = await getAuthenticatedUser(request);
   if (!trader) {
@@ -250,25 +311,74 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const page = parseCursorPage(request.nextUrl.searchParams);
+  if (!page.success) {
+    return NextResponse.json({ success: false, error: page.error }, { status: 400 });
+  }
+
   try {
-    const orders = await prisma.order.findMany({
-      where: trader.role === "TRADER" ? { traderId: trader.id } : {},
-      orderBy: { createdAt: "desc" },
-      include: {
-        orderItems: {
-          select: {
-            id: true,
-            productId: true,
-            unitPrice: true,
-            currency: true,
-            quantity: true,
-            status: true,
-            productSnapshot: true,
+    const baseWhere: Prisma.OrderWhereInput = !isActiveAdministrator(trader) ? { traderId: trader.id } : {};
+    const where: Prisma.OrderWhereInput = page.cursor
+      ? {
+          AND: [
+            baseWhere,
+            {
+              OR: [
+                { createdAt: { lt: page.cursor.createdAt } },
+                { createdAt: page.cursor.createdAt, id: { lt: page.cursor.id } },
+              ],
+            },
+          ],
+        }
+      : baseWhere;
+
+    const [rows, totalCount, groupedStatuses] = await prisma.$transaction(
+      async (tx) => Promise.all([
+        tx.order.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: page.limit + 1,
+          include: {
+            orderItems: {
+              select: {
+                id: true,
+                productId: true,
+                unitPrice: true,
+                currency: true,
+                quantity: true,
+                status: true,
+                productSnapshot: true,
+              },
+            },
           },
-        },
+        }),
+        tx.order.count({ where: baseWhere }),
+        tx.order.groupBy({
+          by: ["status"],
+          where: baseWhere,
+          _count: { _all: true },
+        }),
+      ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+
+    const hasMore = rows.length > page.limit;
+    const orders = rows.slice(0, page.limit);
+    const lastOrder = orders.at(-1);
+    const statusCounts = Object.fromEntries(
+      groupedStatuses.map((group) => [group.status, group._count._all]),
+    );
+    return NextResponse.json(
+      {
+        success: true,
+        orders,
+        nextCursor: hasMore && lastOrder
+          ? encodeCreatedAtCursor({ id: lastOrder.id, createdAt: lastOrder.createdAt })
+          : null,
+        summary: { totalCount, statusCounts },
       },
-    });
-    return NextResponse.json({ success: true, orders }, { status: 200 });
+      { status: 200 },
+    );
   } catch {
     return NextResponse.json(
       { success: false, error: "Failed to list orders" },

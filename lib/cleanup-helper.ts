@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { assertTestDatabaseCleanupAuthorized } from "./test-cleanup-guard";
 
 export interface CleanupStepResult {
   label: string;
@@ -26,8 +27,12 @@ export function createCleanupResult(): CleanupResult {
 
 export async function runCleanupSteps(
   prisma: PrismaClient,
-  steps: Array<{ label: string; fn: () => Promise<unknown> }>
+  steps: Array<{ label: string; fn: () => Promise<unknown> }>,
+  options: { requireGlobalCleanupConfirmation?: boolean } = {},
 ): Promise<CleanupResult> {
+  if (options.requireGlobalCleanupConfirmation !== false) {
+    assertTestDatabaseCleanupAuthorized(process.env);
+  }
   const result = createCleanupResult();
   for (const step of steps) {
     result.total++;

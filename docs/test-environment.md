@@ -67,21 +67,27 @@ infer this from the database name, local hostname, or an environment flag.
 
 ## 3. Configure development and test targets
 
-Keep the Next.js development application's `DATABASE_URL` (and `DIRECT_URL`
-if present) in the ignored `.env.local` pointed only at
-`fundedexperts_dev_local`. The Prisma CLI reads `DATABASE_URL` from the
-process environment or `.env`; it does not automatically use `.env.local`.
-When applying a development migration, set `DATABASE_URL` in the current
-PowerShell process from the independently verified local development
-configuration without printing or recording its value.
+Local development uses `DEVELOPMENT_DATABASE_URL` in the ignored `.env.local`.
+Set `DEVELOPMENT_DATABASE_CONFIRMATION` to
+`I_HAVE_VERIFIED_THIS_IS_AN_ISOLATED_DEVELOPMENT_BRANCH` only after verifying
+the branch independently. Keep `DATABASE_URL`, `DIRECT_URL`, or
+`PRODUCTION_DATABASE_URL` as comparison references; the development guard
+rejects any development target whose canonical host, port, and database name
+matches one of them. The app's shared Prisma client receives the validated
+development URL directly. Do not run raw Prisma CLI commands against an
+unknown target.
 
-To apply already checked-in migrations to that verified development database,
-run `pnpm exec prisma migrate deploy` only after setting the process
-`DATABASE_URL` to that local development target. The project does not provide
-a guarded development-migration wrapper; do not run the command with an
-unknown or shared target. Use `prisma migrate dev --name ...` only when
-intentionally authoring a new migration and after reviewing its reset/drift
-prompts against the local development database.
+The guarded development migration command has two modes. First run
+`pnpm db:dev:migrate` to validate configuration and display only the sanitized
+host/database identity; this mode does not connect. Only after the branch,
+recovery arrangements, and intended schema change have been verified should an
+operator explicitly run `pnpm run db:dev:migrate -- --apply`. That mode applies
+already checked-in migrations with `migrate deploy`; it does not reset, seed,
+or generate migrations. This command was not run as part of this work.
+
+The test database remains separate: it must be explicitly designated
+disposable, independently verified, and configured through `.env.test.local`.
+Do not use the development migration command for the test database.
 
 Copy `.env.test.example` to the ignored `.env.test.local`. Set only these
 test-specific variable names there:
@@ -159,8 +165,13 @@ been established.
 
 The legacy `test-reset.cjs` and `scripts/clean-db.js` are disabled. The
 purpose-built cleanup script deletes test rows and truncates `AuditLog` with
-cascade, so it is destructive and is not run by unit tests, CI, migration
-setup, or the database test runner.
+cascade. Some legacy database test suites also contain whole-table deletes or
+`TRUNCATE ... CASCADE`; they are guarded separately from the test-target check.
+The database test runners inspect selected suites and refuse to launch any
+suite containing global cleanup unless the invoking process supplies the
+cleanup-only confirmation below. Each such test module checks the same
+confirmation before constructing a Prisma client. Unit tests and CI do not
+receive this confirmation.
 
 Before explicitly choosing to erase all data in the disposable test database:
 
@@ -169,7 +180,9 @@ Before explicitly choosing to erase all data in the disposable test database:
    production.
 3. Set `TEST_DATABASE_CLEANUP_CONFIRMATION` to
    `I_UNDERSTAND_THIS_DELETES_ALL_DATA_IN_THE_TEST_DATABASE` temporarily.
-4. Run `pnpm db:test:cleanup` once, then remove the cleanup-only confirmation.
+4. Run only the database suite you intend to execute, then remove the
+   cleanup-only confirmation. The suite may erase all data in the disposable
+   test database before running.
 
 The cleanup-only confirmation must be set in the invoking PowerShell process,
 not saved in either environment file:
@@ -180,9 +193,11 @@ pnpm db:test:cleanup
 Remove-Item Env:TEST_DATABASE_CLEANUP_CONFIRMATION
 ```
 
-The cleanup script checks this separate confirmation before loading the test
-environment or Prisma. It then applies the common test-database guard. Do not
-automate the cleanup confirmation or add it to CI.
+The standalone cleanup script checks this confirmation before loading the test
+environment or Prisma. Database test modules additionally check it before
+creating a Prisma client, and the guarded test runners preflight global
+cleanup before launching children. The common test-target guard still applies.
+Do not automate the cleanup confirmation or add it to CI.
 
 ## 7. Diagnose common failures
 

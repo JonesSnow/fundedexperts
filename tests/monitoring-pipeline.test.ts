@@ -1,4 +1,5 @@
 import "./support/test-env";
+import "./support/test-cleanup-guard";
 import { describe, it, after, beforeEach, afterEach } from "node:test";
 import { PrismaClient, RuleType, RuleResult, type Rule } from "@prisma/client";
 import { runCleanupSteps, assertCleanup, type CleanupResult } from "../lib/cleanup-helper";

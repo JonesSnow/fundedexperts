@@ -3,6 +3,7 @@ import {
   DEFAULT_GRACE_PERIOD_MS,
   DEFAULT_TIMEOUT_MS,
   computeLeaseExpiry,
+  withAccountMonitoringLock,
   type CreateJobInput,
 } from "./repository";
 
@@ -25,27 +26,29 @@ export async function createJobSafe(
   prisma: PrismaClient,
   input: CreateJobInput
 ): Promise<CreateJobResult> {
-  const activeJob = await prisma.monitoringJob.findFirst({
-    where: {
-      accountId: input.accountId,
-      status: { in: ["PENDING", "RUNNING"] as JobStatus[] },
-    },
+  return withAccountMonitoringLock(prisma, input.accountId, async (transaction) => {
+    const activeJob = await transaction.monitoringJob.findFirst({
+      where: {
+        accountId: input.accountId,
+        status: { in: ["PENDING", "RUNNING"] as JobStatus[] },
+      },
+    });
+
+    if (activeJob) {
+      return { job: activeJob, duplicate: true };
+    }
+
+    const job = await transaction.monitoringJob.create({
+      data: {
+        jobId: `job-${input.accountId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        accountId: input.accountId,
+        workerId: input.workerId,
+        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      },
+    });
+
+    return { job, duplicate: false };
   });
-
-  if (activeJob) {
-    return { job: activeJob, duplicate: true };
-  }
-
-  const job = await prisma.monitoringJob.create({
-    data: {
-      jobId: `job-${input.accountId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      accountId: input.accountId,
-      workerId: input.workerId,
-      timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    },
-  });
-
-  return { job, duplicate: false };
 }
 
 export async function claimJob(

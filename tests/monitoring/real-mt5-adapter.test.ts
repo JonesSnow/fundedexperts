@@ -105,6 +105,7 @@ describe("RealMT5Adapter — Credential Decryption & Security", () => {
     const input: AdapterAccountInput = {
       accountId: "test-acc",
       accountNumber: "12345678",
+      expectedServer: "XM-Demo",
       provider: "MT5",
       credentials: "invalid-encrypted-data",
     };
@@ -123,6 +124,7 @@ describe("RealMT5Adapter — Credential Decryption & Security", () => {
     const input: AdapterAccountInput = {
       accountId: "test-acc",
       accountNumber: "12345678",
+      expectedServer: "XM-Demo",
       provider: "MT5",
       credentials: null,
     };
@@ -493,6 +495,7 @@ describe("RealMT5Adapter — Timeout Behavior", () => {
       await adapter.fetchSnapshot({
         accountId: "test-acc",
         accountNumber: "12345678",
+        expectedServer: "XM-Demo",
         provider: "MT5",
         credentials: creds,
       });
@@ -526,6 +529,7 @@ describe("RealMT5Adapter — Connection Failure Handling", () => {
       await adapter.fetchSnapshot({
         accountId: "test-acc",
         accountNumber: "12345678",
+        expectedServer: "XM-Demo",
         provider: "MT5",
         credentials: creds,
       });
@@ -551,6 +555,7 @@ describe("RealMT5Adapter — Connection Failure Handling", () => {
       await badScriptAdapter.fetchSnapshot({
         accountId: "test-acc",
         accountNumber: "12345678",
+        expectedServer: "XM-Demo",
         provider: "MT5",
         credentials: creds,
       });
@@ -569,6 +574,74 @@ describe("RealMT5Adapter — Data Validation", () => {
 
   afterEach(() => {
     restoreEnv();
+  });
+
+  it("preserves failed MT5 collection status and emits it from the Python bridge", () => {
+    const adapter = new RealMT5Adapter({ scriptTimeoutMs: 5000 });
+    const bridgeSource = adapter["pythonScript"];
+    const mockOutput: Mt5PythonResult = {
+      connected: true,
+      accountInfo: { login: 12345678, balance: 100000, equity: 100000, isDemo: true },
+      positions: [],
+      orders: [],
+      history: [],
+      dataQuality: {
+        positionsAvailable: false,
+        ordersAvailable: false,
+        historyAvailable: false,
+      },
+      terminalInfo: { connected: true },
+      timestamp: Math.floor(Date.now() / 1000),
+      provider: "MT5" as ProviderName,
+    };
+
+    const providerSnapshot = adapter["mapToProviderSnapshot"](mockOutput);
+    const normalized = normalizeSnapshot("test-acc", "12345", "MT5", providerSnapshot);
+
+    assert.deepEqual(normalized.snapshot?.dataQuality, {
+      positionsAvailable: false,
+      ordersAvailable: false,
+      historyAvailable: false,
+    });
+    assert.match(bridgeSource, /def collection_available\(result\):\s+return result is not None and not \(isinstance\(result, dict\) and result\.get\("__error__"\) is True\)/);
+    assert.match(bridgeSource, /except \(TypeError, ValueError\):\s+return None/);
+    assert.match(bridgeSource, /if not collection_available\(account_info\) or not ai:/);
+    assert.match(bridgeSource, /positions_available = collection_available\(positions_raw\)/);
+    assert.match(bridgeSource, /orders_available = collection_available\(orders_raw\)/);
+    assert.match(bridgeSource, /history_available = collection_available\(history_raw\)/);
+    assert.match(bridgeSource, /"positionsAvailable": positions_available/);
+    assert.match(bridgeSource, /"ordersAvailable": orders_available/);
+    assert.match(bridgeSource, /"historyAvailable": history_available/);
+    assert.match(bridgeSource, /positions_available = False/);
+    assert.match(bridgeSource, /orders_available = False/);
+    assert.match(bridgeSource, /history_available = False/);
+  });
+
+  it("keeps successfully empty MT5 collections available", () => {
+    const adapter = new RealMT5Adapter({ scriptTimeoutMs: 5000 });
+    const mockOutput: Mt5PythonResult = {
+      connected: true,
+      accountInfo: { login: 12345678, balance: 100000, equity: 100000, isDemo: true },
+      positions: [],
+      orders: [],
+      history: [],
+      dataQuality: {
+        positionsAvailable: true,
+        ordersAvailable: true,
+        historyAvailable: true,
+      },
+      terminalInfo: { connected: true },
+      timestamp: Math.floor(Date.now() / 1000),
+      provider: "MT5" as ProviderName,
+    };
+
+    const providerSnapshot = adapter["mapToProviderSnapshot"](mockOutput);
+    const normalized = normalizeSnapshot("test-acc", "12345", "MT5", providerSnapshot);
+    assert.deepEqual(normalized.snapshot?.dataQuality, {
+      positionsAvailable: true,
+      ordersAvailable: true,
+      historyAvailable: true,
+    });
   });
 
   it("36. Validates snapshot for NaN values after normalization", () => {
@@ -708,56 +781,102 @@ describe("RealMT5Adapter — Account Identity Verification", () => {
     restoreEnv();
   });
 
-  it("41. Login in credentials must match accountNumber in snapshot", () => {
+  it("rejects encrypted credentials that do not match the inventory login before starting Python", async () => {
     const adapter = new RealMT5Adapter({ scriptTimeoutMs: 5000 });
-
-    const mockOutput: Mt5PythonResult = {
-      connected: true,
-      accountInfo: {
-        login: 12345678,
-        server: "XM-Demo",
-        broker: "XM",
-        balance: 100000,
-        equity: 100000,
-        isDemo: true,
-      },
-      positions: [],
-      orders: [],
-      history: [],
-      terminalInfo: { connected: true },
-      timestamp: Math.floor(Date.now() / 1000),
-      provider: "MT5" as ProviderName,
+    let pythonStarted = false;
+    (adapter as unknown as {
+      executePythonScript: (input: string, timeoutMs: number) => Promise<Mt5PythonResult>;
+    }).executePythonScript = async () => {
+      pythonStarted = true;
+      return {};
     };
 
-    const snapshot = adapter["mapToProviderSnapshot"](mockOutput);
-
-    const resolvedLogin = snapshot.accountInfo?.login;
-    assert.strictEqual(resolvedLogin, 12345678, "Login should match expected value");
+    await assert.rejects(
+      adapter.fetchSnapshot({
+        accountId: "test-account",
+        accountNumber: "87654321",
+        expectedServer: "XM-Demo",
+        provider: "MT5",
+        credentials: encryptCredentials({ login: 12345678, password: "test-only-password", server: "XM-Demo" }),
+      }),
+      /identity does not match/,
+    );
+    assert.equal(pythonStarted, false);
   });
 
-  it("42. Server name in credentials must match returned server name", () => {
+  it("rejects encrypted credentials that do not match the inventory server before starting Python", async () => {
     const adapter = new RealMT5Adapter({ scriptTimeoutMs: 5000 });
+    let pythonStarted = false;
+    (adapter as unknown as {
+      executePythonScript: (input: string, timeoutMs: number) => Promise<Mt5PythonResult>;
+    }).executePythonScript = async () => {
+      pythonStarted = true;
+      return {};
+    };
 
-    const mockOutput: Mt5PythonResult = {
+    await assert.rejects(
+      adapter.fetchSnapshot({
+        accountId: "test-account",
+        accountNumber: "12345678",
+        expectedServer: "Other-Demo",
+        provider: "MT5",
+        credentials: encryptCredentials({ login: 12345678, password: "test-only-password", server: "XM-Demo" }),
+      }),
+      /identity does not match/,
+    );
+    assert.equal(pythonStarted, false);
+  });
+
+  it("rejects a connected MT5 account whose returned login or server differs from inventory", async () => {
+    const adapter = new RealMT5Adapter({ scriptTimeoutMs: 5000 });
+    (adapter as unknown as {
+      executePythonScript: (input: string, timeoutMs: number) => Promise<Mt5PythonResult>;
+    }).executePythonScript = async () => ({
       connected: true,
-      accountInfo: {
-        login: 12345678,
-        server: "XM-Demo",
-        broker: "XM",
-        balance: 100000,
-        equity: 100000,
-        isDemo: true,
-      },
+      accountInfo: { login: 12345678, server: "Other-Demo", balance: 100000, equity: 100000, isDemo: true },
       positions: [],
       orders: [],
       history: [],
       terminalInfo: { connected: true },
       timestamp: Math.floor(Date.now() / 1000),
-      provider: "MT5" as ProviderName,
-    };
+    });
 
-    const snapshot = adapter["mapToProviderSnapshot"](mockOutput);
-    assert.strictEqual(snapshot.accountInfo?.server, "XM-Demo", "Server should match");
+    await assert.rejects(
+      adapter.fetchSnapshot({
+        accountId: "test-account",
+        accountNumber: "12345678",
+        expectedServer: "XM-Demo",
+        provider: "MT5",
+        credentials: encryptCredentials({ login: 12345678, password: "test-only-password", server: "XM-Demo" }),
+      }),
+      /identity does not match/,
+    );
+  });
+
+  it("accepts a provider response matching the inventory login and server", async () => {
+    const adapter = new RealMT5Adapter({ scriptTimeoutMs: 5000 });
+    (adapter as unknown as {
+      executePythonScript: (input: string, timeoutMs: number) => Promise<Mt5PythonResult>;
+    }).executePythonScript = async () => ({
+      connected: true,
+      accountInfo: { login: 12345678, server: "xm-demo", balance: 100000, equity: 100000, isDemo: true },
+      positions: [],
+      orders: [],
+      history: [],
+      terminalInfo: { connected: true },
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+
+    const snapshot = await adapter.fetchSnapshot({
+      accountId: "test-account",
+      accountNumber: "12345678",
+      expectedServer: "XM-Demo",
+      provider: "MT5",
+      credentials: encryptCredentials({ login: 12345678, password: "test-only-password", server: "XM-Demo" }),
+    });
+
+    assert.equal(snapshot.accountInfo?.login, 12345678);
+    assert.equal(snapshot.accountInfo?.server, "xm-demo");
   });
 });
 

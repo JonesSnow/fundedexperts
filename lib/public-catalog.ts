@@ -91,6 +91,12 @@ export const PUBLIC_PRODUCT_WHERE: Prisma.ProductWhereInput = {
   price: { not: null },
 };
 
+// Phase 33 creates published rulesets with reserved test markers (for example,
+// "RS-p33-e2e-<run-id>"). Keep those rulesets out of every customer-facing
+// catalog path, even if a test or manual configuration accidentally activates
+// a product that references them.
+const TEST_ONLY_RULESET_MARKER = /(?:^|[^a-z0-9])(?:e2e|test|fixture|mock)(?=$|[^a-z0-9])/i;
+
 export function approvedPublicProducts(products: readonly PublicProductRecord[]): PublicProductRecord[] {
   return products.filter((product) => (
     product.isActive
@@ -103,7 +109,8 @@ export function approvedPublicProducts(products: readonly PublicProductRecord[])
     && product.price !== null
     && product.evaluationStructure !== "DIRECT_FUNDED"
     && product.stages.every((stage) => (
-      stage.rulesetVersion.status === "PUBLISHED"
+      !TEST_ONLY_RULESET_MARKER.test(stage.rulesetVersion.ruleset.name)
+      && stage.rulesetVersion.status === "PUBLISHED"
       && stage.rulesetVersion.isActive
       && stage.rulesetVersion.ruleset.isActive
     ))

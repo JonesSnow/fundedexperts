@@ -17,6 +17,7 @@ import {
   type PublicRuleset,
   type PublicRulesetsResponse,
 } from "@/lib/product-experience";
+import { publicApiCorrelationId } from "@/lib/public-api-error";
 
 interface DisplayRuleset extends PublicRuleset { publishedVersion: string | null; rules: ConfiguredRule[]; loadError: boolean }
 
@@ -45,6 +46,7 @@ export default function RulesPage() {
   const [rulesets, setRulesets] = useState<DisplayRuleset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [errorReference, setErrorReference] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [selectedRuleset, setSelectedRuleset] = useState("all");
   const [search, setSearch] = useState("");
@@ -54,10 +56,15 @@ export default function RulesPage() {
     async function loadRules() {
       setLoading(true);
       setError("");
+      setErrorReference(null);
+      let responseReference: string | null = null;
       try {
         const response = await fetch("/api/rulesets", { signal: controller.signal });
         const data = (await response.json()) as Partial<PublicRulesetsResponse>;
-        if (!response.ok || !data.success || !Array.isArray(data.rulesets)) throw new Error("Rulesets unavailable");
+        if (!response.ok || !data.success || !Array.isArray(data.rulesets)) {
+          responseReference = publicApiCorrelationId(data);
+          throw new Error("Rulesets unavailable");
+        }
         const loaded = await Promise.all(data.rulesets.map(async (ruleset): Promise<DisplayRuleset> => {
           const version = ruleset.versions.find((item) => item.status === "PUBLISHED");
           if (!version) return { ...ruleset, publishedVersion: null, rules: [], loadError: false };
@@ -73,7 +80,10 @@ export default function RulesPage() {
         }));
         if (!controller.signal.aborted) setRulesets(loaded);
       } catch {
-        if (!controller.signal.aborted) setError("Published rules could not be loaded. Please try again.");
+        if (!controller.signal.aborted) {
+          setError("Published rules could not be loaded. Please try again.");
+          setErrorReference(responseReference);
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -131,7 +141,7 @@ export default function RulesPage() {
                 <div className="grid gap-3"><div><label htmlFor="ruleset-filter" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Plan rules</label><select id="ruleset-filter" value={selectedRuleset} onChange={(event) => setSelectedRuleset(event.target.value)} className="w-full rounded-lg border border-input-border bg-input px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="all">All plan rules</option>{rulesets.map((ruleset) => <option key={ruleset.id} value={ruleset.id}>{ruleset.name}</option>)}</select></div><div><label htmlFor="rules-search" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Search rules</label><input id="rules-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Target, loss, hours…" className="w-full rounded-lg border border-input-border bg-input px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div></div>
               </div>
               {loading && <p className="mt-5 text-sm text-muted-foreground" role="status" aria-live="polite">Loading published rules…</p>}
-              {error && <div className="mt-5 rounded-xl border border-danger/30 bg-danger-light p-4 text-sm text-danger" role="alert"><p>{error}</p><Button type="button" variant="ghost" className="mt-3" onClick={() => setRetryCount((count) => count + 1)}><RotateCw className="mr-2 h-4 w-4" aria-hidden="true" />Try again</Button></div>}
+              {error && <div className="mt-5 rounded-xl border border-danger/30 bg-danger-light p-4 text-sm text-danger" role="alert"><p>{error}</p>{errorReference && <p className="mt-2 text-xs text-muted-foreground">Request reference: <code>{errorReference}</code></p>}<Button type="button" variant="ghost" className="mt-3" onClick={() => setRetryCount((count) => count + 1)}><RotateCw className="mr-2 h-4 w-4" aria-hidden="true" />Try again</Button></div>}
               {!loading && !error && visibleRulesets.length === 0 && <p className="mt-5 rounded-xl border border-border p-4 text-sm text-muted-foreground">No published rules match this filter.</p>}
               {!loading && !error && visibleRulesets.length > 0 && <div className="mt-6 divide-y divide-border border-y border-border">{visibleRulesets.map((ruleset) => <article key={ruleset.id} id={`ruleset-${ruleset.id}`} className="scroll-mt-28 py-5">
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="break-words text-lg font-semibold">{ruleset.name}</h3>{ruleset.description && <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{ruleset.description}</p>}</div>{ruleset.publishedVersion ? <Badge variant="outline">Rules published</Badge> : <Badge variant="warning">Not published</Badge>}</div>

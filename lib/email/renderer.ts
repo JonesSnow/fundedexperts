@@ -436,6 +436,14 @@ export function renderEmailTemplate(
       };
     },
     "evaluation-passed": () => {
+      const stageName = safe("stageName");
+      const nextStageName = safe("nextStageName");
+      const stageStatus = nextStageName
+        ? "You passed " + (stageName || "this stage") + ". Your next stage, " + nextStageName + ", is now assigned in your dashboard."
+        : "You completed the evaluation. Our team will review the result before approving any funded-account activation.";
+      const stageRow = stageName
+        ? '<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#6b7280;">Stage</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;">' + stageName + "</td></tr>"
+        : "";
       return {
         html: `<!DOCTYPE html>
 <html lang="en">
@@ -455,7 +463,7 @@ export function renderEmailTemplate(
           Hi ${safe("firstName") || safe("email")},
         </p>
         <p style="color:#374151;font-size:16px;line-height:24px;margin:0 0 16px 0;">
-          You have successfully passed your evaluation.
+          ${stageStatus}
         </p>
         <table role="presentation" width="100%" style="border-collapse:collapse;margin:16px 0;">
           <tr>
@@ -466,17 +474,18 @@ export function renderEmailTemplate(
             <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#6b7280;">Challenge</td>
             <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;">${safe("productName")}</td>
           </tr>
+          ${stageRow}
           <tr>
             <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#6b7280;">Total PnL</td>
             <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;">${safe("totalPnl")}</td>
           </tr>
         </table>
         <p style="color:#374151;font-size:16px;line-height:24px;margin:0 0 24px 0;">
-          Your next step is to activate your funded account in the dashboard.
+          Review the current status and next steps in your dashboard.
         </p>
         <p style="text-align:center;margin:0 0 24px 0;">
           <a href="${safeUrl("dashboardUrl")}" style="display:inline-block;background-color:#16a34a;color:#ffffff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:16px;">
-            View Funded Account
+            View Dashboard
           </a>
         </p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;">
@@ -489,7 +498,7 @@ export function renderEmailTemplate(
   </table>
 </body>
 </html>`,
-        text: `Congratulations! Evaluation Passed\n\nHi ${safe("firstName") || safe("email")},\n\nYou have successfully passed your evaluation.\n\nEvaluation ID: ${safe("evaluationId")}\nChallenge: ${safe("productName")}\nTotal PnL: ${safe("totalPnl")}\n\nYour next step is to activate your funded account in the dashboard:\n${safeUrl("dashboardUrl")}\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
+        text: `Congratulations! Evaluation Passed\n\nHi ${safe("firstName") || safe("email")},\n\n${stageStatus}\n\nEvaluation ID: ${safe("evaluationId")}\nChallenge: ${safe("productName")}\n${stageName ? "Stage: " + stageName + "\n" : ""}Total PnL: ${safe("totalPnl")}\n\nReview the current status and next steps in your dashboard:\n${safeUrl("dashboardUrl")}\n\n---\nFunded Experts\n${safeUrl("appUrl")}/support`,
       };
     },
     "evaluation-failed": () => {

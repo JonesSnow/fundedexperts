@@ -1,9 +1,12 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { createLogger, generateCorrelationId } from "@/lib/logger";
 import { prisma } from "@/lib/db";
+import { CUSTOMER_EVALUATION_ACCOUNT_SELECT } from "@/lib/evaluation-account-select";
+import { isRuleInitializationComplete } from "@/lib/evaluation-rule-initialization";
 
 const logger = createLogger({
   environment: (process.env.NODE_ENV ?? "development") as "development" | "production" | "test",
@@ -52,14 +55,14 @@ export async function POST(
     }
 
     const where: Prisma.EvaluationWhereInput = { id };
-    if (trader.role === "TRADER") {
+    if (!isActiveAdministrator(trader)) {
       where.traderId = trader.id;
     }
 
     const evaluation = await prisma.evaluation.findFirst({
       where,
       include: {
-        account: true,
+        account: { select: CUSTOMER_EVALUATION_ACCOUNT_SELECT },
         rulesetVersion: { include: { ruleset: true, rules: true } },
       },
     });
@@ -100,13 +103,13 @@ export async function POST(
     }
 
     const rules = evaluation.rulesetVersion?.rules ?? [];
-    const requiredRuleIds = rules.filter((rule) => rule.disposition === "REQUIRED" && rule.isRequired).map((rule) => rule.id).sort();
+    const configuredRuleIds = rules.map((rule) => rule.id).sort();
     const ruleEvaluations = await prisma.ruleEvaluation.findMany({
       where: { evaluationId: evaluation.id },
       select: { ruleId: true },
     });
     const initializedRuleIds = ruleEvaluations.map((ruleEvaluation) => ruleEvaluation.ruleId).sort();
-    if (requiredRuleIds.length === 0 || requiredRuleIds.length !== initializedRuleIds.length || requiredRuleIds.some((ruleId, index) => ruleId !== initializedRuleIds[index])) {
+    if (!isRuleInitializationComplete(configuredRuleIds, initializedRuleIds)) {
       return NextResponse.json(
         { success: false, error: "Evaluation rule initialization is incomplete; administrator review is required", reviewRequired: true },
         { status: 409 },

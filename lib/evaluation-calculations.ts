@@ -223,6 +223,7 @@ export function evaluateDrawdown(input: DrawdownInput): CalculationResult<number
   } else if (input.model === "TRAILING_PEAK_EQUITY") {
     if (!input.historyComplete) return unavailable("complete historical equity data is required for trailing drawdown");
     if (typeof input.historicalPeakEquity !== "number" || !Number.isFinite(input.historicalPeakEquity)) return unavailable("historical peak equity is missing or invalid");
+    if (input.historicalPeakEquity < input.equity) return unavailable("historical peak equity is below current equity; account history is inconsistent");
     referenceEquity = input.historicalPeakEquity;
   } else {
     return unavailable("drawdown model is unsupported");

@@ -1,7 +1,8 @@
-import { EvaluationStatus, RuleType } from "@prisma/client";
+import { EvaluationStatus, Prisma, RuleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { encodeCreatedAtCursor, parseCursorPage } from "@/lib/cursor-pagination";
 
 
 async function getAuthenticatedTrader(request: NextRequest) {
@@ -22,8 +23,8 @@ async function getAuthenticatedTrader(request: NextRequest) {
   return trader;
 }
 
-function buildEvaluationWhere(traderId: string, status?: string) {
-  const where: Record<string, unknown> = { traderId };
+function buildEvaluationWhere(traderId: string, status?: string): Prisma.EvaluationWhereInput {
+  const where: Prisma.EvaluationWhereInput = { traderId };
   if (status && Object.values(EvaluationStatus).includes(status as EvaluationStatus)) {
     where.status = status as EvaluationStatus;
   }
@@ -35,6 +36,7 @@ function safeEvaluation(evaluation: {
   traderId: string;
   rulesetVersionId: string;
   rulesetVersion: { id: string; version: string; ruleset: { name: string } } | null;
+  productStage: { id: string; stageKey: string; displayName: string; stageOrder: number } | null;
   accountId: string | null;
   account: { id: string; accountNumber: string; broker: string | null; server: string | null; status: string; healthStatus: string } | null;
   status: string;
@@ -87,6 +89,12 @@ function safeEvaluation(evaluation: {
     rulesetVersionId: evaluation.rulesetVersionId,
     rulesetName: evaluation.rulesetVersion?.ruleset?.name ?? null,
     rulesetVersion: evaluation.rulesetVersion?.version ?? null,
+    productStage: evaluation.productStage ? {
+      id: evaluation.productStage.id,
+      stageKey: evaluation.productStage.stageKey,
+      displayName: evaluation.productStage.displayName,
+      stageOrder: evaluation.productStage.stageOrder,
+    } : null,
     status: evaluation.status as EvaluationStatus,
     account: evaluation.account
       ? {
@@ -125,56 +133,103 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const page = parseCursorPage(request.nextUrl.searchParams);
+  if (!page.success) {
+    return NextResponse.json({ success: false, error: page.error }, { status: 400 });
+  }
+
   try {
     const { status } = Object.fromEntries(request.nextUrl.searchParams) as {
       status?: string;
     };
 
-    const where = buildEvaluationWhere(trader.id, status);
+    const baseWhere = buildEvaluationWhere(trader.id, status);
+    const where: Prisma.EvaluationWhereInput = page.cursor
+      ? {
+          AND: [
+            baseWhere,
+            {
+              OR: [
+                { createdAt: { lt: page.cursor.createdAt } },
+                { createdAt: page.cursor.createdAt, id: { lt: page.cursor.id } },
+              ],
+            },
+          ],
+        }
+      : baseWhere;
 
-    const evaluations = await prisma.evaluation.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        rulesetVersion: {
-          select: {
-            id: true,
-            version: true,
-            ruleset: { select: { name: true } },
+    const [rows, totalCount, groupedStatuses, aggregate] = await prisma.$transaction(
+      async (tx) => Promise.all([
+        tx.evaluation.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: page.limit + 1,
+          include: {
+            productStage: { select: { id: true, stageKey: true, displayName: true, stageOrder: true } },
+            rulesetVersion: {
+              select: {
+                id: true,
+                version: true,
+                ruleset: { select: { name: true } },
+              },
+            },
+            account: {
+              select: {
+                id: true,
+                accountNumber: true,
+                broker: true,
+                server: true,
+                status: true,
+                healthStatus: true,
+              },
+            },
+            ruleEvaluations: {
+              select: {
+                id: true,
+                ruleId: true,
+                result: true,
+                state: true,
+                actualValue: true,
+                expectedValue: true,
+                details: true,
+                evaluatedAt: true,
+                sourceDataTimestamp: true,
+                rule: { select: { ruleType: true, name: true, value: true, isRequired: true, calculation: true } },
+              },
+              orderBy: { evaluatedAt: "desc" },
+            },
           },
-        },
-        account: {
-          select: {
-            id: true,
-            accountNumber: true,
-            broker: true,
-            server: true,
-            status: true,
-            healthStatus: true,
-          },
-        },
-        ruleEvaluations: {
-          select: {
-            id: true,
-            ruleId: true,
-            result: true,
-            state: true,
-            actualValue: true,
-            expectedValue: true,
-            details: true,
-            evaluatedAt: true,
-            sourceDataTimestamp: true,
-            rule: { select: { ruleType: true, name: true, value: true, isRequired: true, calculation: true } },
-          },
-          orderBy: { evaluatedAt: "desc" },
-        },
-      },
-    });
+        }),
+        tx.evaluation.count({ where: baseWhere }),
+        tx.evaluation.groupBy({ by: ["status"], where: baseWhere, _count: { _all: true } }),
+        tx.evaluation.aggregate({ where: baseWhere, _max: { maxDrawdown: true } }),
+      ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
 
+    const hasMore = rows.length > page.limit;
+    const evaluations = rows.slice(0, page.limit);
     const safe = evaluations.map(safeEvaluation);
+    const lastEvaluation = evaluations.at(-1);
+    const statusCounts = Object.fromEntries(
+      groupedStatuses.map((group) => [group.status, group._count._all]),
+    );
 
     return NextResponse.json(
-      { success: true, evaluations: safe },
+      {
+        success: true,
+        evaluations: safe,
+        nextCursor: hasMore && lastEvaluation
+          ? encodeCreatedAtCursor({ id: lastEvaluation.id, createdAt: lastEvaluation.createdAt })
+          : null,
+        summary: {
+          totalCount,
+          statusCounts,
+          largestDrawdown: aggregate._max.maxDrawdown !== null
+            ? Number(aggregate._max.maxDrawdown)
+            : null,
+        },
+      },
       { status: 200 },
     );
   } catch {

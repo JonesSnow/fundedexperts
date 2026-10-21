@@ -2,8 +2,9 @@ import { createJob, markRunning, markCompleted, markFailed, markTimeout, type Mo
 import { Logger, type LogEntry } from "./logger";
 import { evaluateEligibility, type EligibilityResult } from "./eligibility";
 import { validateCredentials, createCredentialSet, type ProviderCredentials } from "./credential-boundary";
-import type { MonitoringSnapshot, ProviderSnapshot, ProviderName } from "./types";
+import type { MonitoringSnapshot, ProviderName } from "./types";
 import { MockMT5Adapter } from "./mock-adapter";
+import { assertNoMockAdapterInProduction } from "./adapter-factory";
 import type { MT5Adapter } from "./adapter";
 import type { AdapterAccountInput } from "./adapter";
 
@@ -71,7 +72,9 @@ export class Worker {
 
   constructor(config: WorkerConfig, adapter?: MT5Adapter) {
     this.config = config;
-    this.adapter = adapter ?? new MockMT5Adapter({ accounts: [] });
+    const selectedAdapter = adapter ?? new MockMT5Adapter({ accounts: [] });
+    assertNoMockAdapterInProduction(selectedAdapter);
+    this.adapter = selectedAdapter;
     this.logger = new Logger({ workerId: config.workerId, maxEntries: config.loggerMaxEntries });
   }
 
@@ -173,6 +176,7 @@ export class Worker {
     const input: AdapterAccountInput = {
       accountId: job.accountId,
       accountNumber: String(credentials.login),
+      expectedServer: credentials.server,
       provider: providerNameToMonitor(credentials.providerType),
       credentials: credentials.password,
       timeoutMs: credentials.connectionTimeoutMs,

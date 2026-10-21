@@ -25,6 +25,20 @@ function check(name: string, condition: boolean, detail: string = "") {
 const provider = createMockPaymentProvider();
 
 describe("Payment Abstraction", () => {
+  it("refuses to construct the successful in-memory provider outside tests", () => {
+    const previousNodeEnv = Reflect.get(process.env, "NODE_ENV") as string | undefined;
+    try {
+      for (const environment of ["development", "production", undefined]) {
+        if (environment === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
+        else Reflect.set(process.env, "NODE_ENV", environment);
+        assert.throws(() => createMockPaymentProvider(), /available only in tests/);
+      }
+    } finally {
+      if (previousNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
+      else Reflect.set(process.env, "NODE_ENV", previousNodeEnv);
+    }
+  });
+
   it("should define PaymentProvider interface methods", () => {
     assert.equal(typeof provider.processPayment, "function");
     assert.equal(typeof provider.getPaymentStatus, "function");

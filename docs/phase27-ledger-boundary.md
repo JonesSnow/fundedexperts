@@ -23,8 +23,9 @@
 
 ### Duplicate Prevention
 - `referenceId` field with unique database constraint
-- Duplicate submissions return the existing entry (idempotent)
-- Same referenceId = same financial event
+- An exact retry (same trader/order, type, amount, direction, and currency) returns the existing entry
+- Reusing a referenceId with different transaction terms is rejected as an idempotency conflict
+- The unique database constraint remains the concurrency backstop for simultaneous retries
 
 ### What Is NOT Stored
 - Card numbers, CVVs, expiration dates
@@ -100,7 +101,7 @@
 |-------|----------|-------|
 | referenceId | Yes | Unique idempotency key |
 | entryType | Yes | Must be valid LedgerEntryType |
-| amount | Yes | Must be positive number |
+| amount | Yes | Positive decimal with at most two fractional digits; decimal strings are supported to avoid floating-point conversion |
 | direction | Yes | Must be DEBIT or CREDIT |
 | traderId | No | Links to trader |
 | orderId | No | Links to order |
@@ -114,7 +115,7 @@
 
 - `referenceId`: required, string
 - `entryType`: required, must be valid enum value
-- `amount`: required, must be positive finite number (> 0)
+- `amount`: required, positive and within Decimal(18,2) range; more than two fractional digits are rejected instead of rounded
 - `direction`: required, must be DEBIT or CREDIT
 - `currency`: if provided, must be 3-letter string
 - `traderId`: if provided, must be string

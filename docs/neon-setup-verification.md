@@ -98,3 +98,11 @@ These tests fail because the `Trader` table does not exist — the Neon database
 | Unit tests (no DB) | 52/52 PASS |
 | Integration tests (stubs) | 19/19 PASS (vacuous — no real assertions) |
 | Auth DB tests | 4/20 FAIL (table `public.Trader` missing) |
+
+## Current safety status — 2026-10-20
+
+The sections above are a historical investigation and their suggested migration command is not current authorization or a safe next step. Current project logs report `SCHEMA_TABLE_MISSING` for `public.ProductStage`, and the repository contains migration files. The Neon Console branch list was inspected read-only for project `fundedexperts`; it showed only the `production` branch. No isolated development branch was visible, and no database connection or query was made during this inspection. The current contents of any database were not inspected.
+
+Local application database access now requires an explicit `DEVELOPMENT_DATABASE_URL` plus `DEVELOPMENT_DATABASE_CONFIRMATION=I_HAVE_VERIFIED_THIS_IS_AN_ISOLATED_DEVELOPMENT_BRANCH`. Before constructing Prisma Client, the runtime compares its canonical PostgreSQL host, port, and database name against configured production references (`PRODUCTION_DATABASE_URL`, `DATABASE_URL`, and `DIRECT_URL`). Missing, invalid, uncomparable, or equal identities are rejected without printing URLs. Production Prisma configuration is unchanged. Set these values only after an isolated development branch has been independently verified; this guard does not itself prove that a branch is disposable or free of copied production data.
+
+Do not apply migrations, create products, or seed data until a separate development target and its data lineage/recovery plan are verified. The `ProductStage` runtime error remains unresolved; the catalog must continue to show unavailable/empty states rather than fabricated offers.

@@ -33,6 +33,8 @@ function productRecord(options: {
   category?: "PRO" | "DIRECT_FUNDED" | null;
   structure?: "TWO_STEP" | "DIRECT_FUNDED" | null;
   price?: Prisma.Decimal | null;
+  rulesetName?: string;
+  noStages?: boolean;
 } = {}): PublicProductRecord {
   const rule = {
     id: "a0c3279c-9695-4ec6-b4ed-02bdb46e12a1",
@@ -59,7 +61,7 @@ function productRecord(options: {
     isActive: options.versionActive ?? true,
     ruleset: {
       id: rulesetId,
-      name: "Published evaluation rules",
+      name: options.rulesetName ?? "Published evaluation rules",
       description: "Published evaluation terms.",
       isActive: options.rulesetActive ?? true,
     },
@@ -79,7 +81,7 @@ function productRecord(options: {
     currency: "USD",
     displayOrder: 1,
     isActive: options.active ?? true,
-    stages: [1, 2].map((stageOrder) => ({
+    stages: (options.noStages ? [] : [1, 2]).map((stageOrder) => ({
       id: `fbbd56d0-1314-4d5e-a144-${String(stageOrder).padStart(12, "0")}`,
       stageKey: `stage-${stageOrder}`,
       displayName: `Stage ${stageOrder}`,
@@ -109,6 +111,21 @@ test("public product filtering excludes inactive, incomplete, direct-funded, and
 
   assert.deepEqual(approvedPublicProducts(candidates), [approved]);
   assert.deepEqual(approvedPublicProducts([]), []);
+});
+
+test("draft products without configured stages stay out of the public catalog", () => {
+  const legacyDraft = productRecord({ status: "DRAFT", noStages: true });
+
+  assert.deepEqual(approvedPublicProducts([legacyDraft]), []);
+});
+
+test("Phase 33 E2E rulesets cannot be exposed through an otherwise active product", () => {
+  const e2eProduct = productRecord({ rulesetName: "RS-p33-e2e-run-123" });
+  const approved = approvedPublicProducts([e2eProduct]);
+
+  assert.deepEqual(approved, []);
+  assert.deepEqual(publicRulesetsForProducts(approved), []);
+  assert.equal(publicRulesForVersion(approved, rulesetId, "1.0"), null);
 });
 
 test("optional unsupported terms remain visible as explicitly not enforced", () => {

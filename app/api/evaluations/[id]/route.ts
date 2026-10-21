@@ -1,3 +1,4 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { Prisma, EvaluationStatus, RuleResult, RuleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
@@ -25,6 +26,7 @@ function safeEvaluation(
     traderId: string;
     rulesetVersionId: string;
     rulesetVersion: { id: string; version: string; ruleset: { name: string } } | null;
+    productStage: { id: string; stageKey: string; displayName: string; stageOrder: number } | null;
     accountId: string | null;
     account: { id: string; accountNumber: string; broker: string | null; server: string | null; status: string; healthStatus: string } | null;
     status: string;
@@ -51,6 +53,12 @@ function safeEvaluation(
     rulesetVersionId: evaluation.rulesetVersionId,
     rulesetName: evaluation.rulesetVersion?.ruleset?.name ?? null,
     rulesetVersion: evaluation.rulesetVersion?.version ?? null,
+    productStage: evaluation.productStage ? {
+      id: evaluation.productStage.id,
+      stageKey: evaluation.productStage.stageKey,
+      displayName: evaluation.productStage.displayName,
+      stageOrder: evaluation.productStage.stageOrder,
+    } : null,
     status: evaluation.status as EvaluationStatus,
     account: evaluation.account
       ? {
@@ -91,13 +99,14 @@ export async function GET(
 
   try {
     const where: Prisma.EvaluationWhereInput = { id };
-    if (trader.role === "TRADER") {
+    if (!isActiveAdministrator(trader)) {
       where.traderId = trader.id;
     }
 
     const evaluation = await prisma.evaluation.findFirst({
       where,
       include: {
+        productStage: { select: { id: true, stageKey: true, displayName: true, stageOrder: true } },
         rulesetVersion: {
           select: {
             id: true,
@@ -135,7 +144,7 @@ export async function GET(
     }
 
     return NextResponse.json(
-      { success: true, evaluation: safeEvaluation(evaluation, trader.role === "ADMIN") },
+      { success: true, evaluation: safeEvaluation(evaluation, isActiveAdministrator(trader)) },
       { status: 200 }
     );
   } catch {

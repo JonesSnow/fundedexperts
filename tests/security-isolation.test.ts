@@ -1,4 +1,5 @@
 import "./support/test-env";
+import "./support/test-cleanup-guard";
 import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";

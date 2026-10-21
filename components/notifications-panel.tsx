@@ -25,8 +25,12 @@ interface NotificationsPanelProps {
 export default function NotificationsPanel({ sessionData, showViewAll = false }: NotificationsPanelProps) {
   const authenticatedTraderId = sessionData?.authenticated && sessionData.trader ? sessionData.trader.id : null;
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [unreadTotal, setUnreadTotal] = useState<number | null>(null);
   const [loadedTraderId, setLoadedTraderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState("");
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState("");
   const [signInRequired, setSignInRequired] = useState(false);
@@ -39,23 +43,32 @@ export default function NotificationsPanel({ sessionData, showViewAll = false }:
     async function load() {
       setLoading(true);
       setNotifications([]);
+      setNextCursor(null);
+      setUnreadTotal(null);
       setLoadedTraderId(null);
       setHasLoaded(false);
       setError("");
+      setOlderError("");
       setSignInRequired(false);
       setMarkingId(null);
       try {
-        const res = await fetch("/api/notifications", { signal: controller.signal });
+        const query = new URLSearchParams({ limit: showViewAll ? "5" : "25" });
+        const res = await fetch(`/api/notifications?${query.toString()}`, { signal: controller.signal });
         const data = await res.json().catch(() => ({}));
         if (res.status === 401) {
           if (!controller.signal.aborted) {
             setSignInRequired(true);
             setError("Your session has expired. Sign in again to view notifications.");
           }
-        } else if (!res.ok || !data.success || !Array.isArray(data.notifications)) {
+        } else if (
+          !res.ok ||
+          !isNotificationPage(data)
+        ) {
           if (!controller.signal.aborted) setError((data as { error?: string }).error || "Failed to load notifications");
         } else if (!controller.signal.aborted) {
           setNotifications(data.notifications);
+          setNextCursor(data.nextCursor);
+          setUnreadTotal(data.unreadCount);
           setLoadedTraderId(authenticatedTraderId);
           setHasLoaded(true);
         }
@@ -67,7 +80,37 @@ export default function NotificationsPanel({ sessionData, showViewAll = false }:
     }
     void load();
     return () => controller.abort();
-  }, [authenticatedTraderId, retryKey]);
+  }, [authenticatedTraderId, retryKey, showViewAll]);
+
+  async function handleLoadOlder() {
+    if (!nextCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    setOlderError("");
+    try {
+      const query = new URLSearchParams({ limit: showViewAll ? "5" : "25", before: nextCursor });
+      const res = await fetch(`/api/notifications?${query.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        setSignInRequired(true);
+        setOlderError("Your session has expired. Sign in again to view older notifications.");
+      } else if (!res.ok || !isNotificationPage(data)) {
+        setOlderError((data as { error?: string }).error || "Older notifications could not be loaded.");
+      } else {
+        setNotifications((current) => {
+          const knownIds = new Set(current.map((notification) => notification.id));
+          return [...current, ...data.notifications.filter((notification) => !knownIds.has(notification.id))];
+        });
+        setNextCursor(data.nextCursor);
+        setUnreadTotal(data.unreadCount);
+        setOlderError("");
+        setSignInRequired(false);
+      }
+    } catch {
+      setOlderError("Network error while loading older notifications.");
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
 
   async function handleMarkRead(notificationId: string) {
     setMarkingId(notificationId);
@@ -79,9 +122,11 @@ export default function NotificationsPanel({ sessionData, showViewAll = false }:
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok && body.success) {
+        const wasUnread = notifications.some((notification) => notification.id === notificationId && !notification.read);
         setNotifications((prev) =>
           prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n))
         );
+        if (wasUnread) setUnreadTotal((count) => count === null ? null : Math.max(0, count - 1));
         setError("");
         setSignInRequired(false);
       } else {
@@ -99,7 +144,7 @@ export default function NotificationsPanel({ sessionData, showViewAll = false }:
 
   const visibleNotifications = loadedTraderId === authenticatedTraderId ? notifications : [];
   const visibleHasLoaded = loadedTraderId === authenticatedTraderId && hasLoaded;
-  const unreadCount = visibleNotifications.filter((n) => !n.read).length;
+  const unreadCount = loadedTraderId === authenticatedTraderId ? unreadTotal ?? 0 : 0;
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -188,8 +233,62 @@ export default function NotificationsPanel({ sessionData, showViewAll = false }:
           ))}
         </div>
       )}
+
+      {olderError && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger" role="alert">
+          <span>{olderError}</span>
+          {signInRequired && (
+            <Link href="/login" className="rounded-lg px-3 py-2 font-semibold underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Sign in again</Link>
+          )}
+        </div>
+      )}
+
+      {!showViewAll && visibleHasLoaded && nextCursor && !signInRequired && (
+        <div className="mt-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => void handleLoadOlder()}
+            disabled={loadingOlder}
+            aria-busy={loadingOlder}
+            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-border bg-card px-4 text-sm font-semibold text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loadingOlder ? "Loading older notifications…" : olderError ? "Try again" : "Load older notifications"}
+          </button>
+        </div>
+      )}
     </section>
   );
+}
+
+function isNotification(value: unknown): value is Notification {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.id === "string"
+    && typeof item.traderId === "string"
+    && typeof item.type === "string"
+    && typeof item.title === "string"
+    && typeof item.message === "string"
+    && typeof item.read === "boolean"
+    && (typeof item.relatedEntityType === "string" || item.relatedEntityType === null)
+    && (typeof item.relatedEntityId === "string" || item.relatedEntityId === null)
+    && typeof item.createdAt === "string"
+    && !Number.isNaN(Date.parse(item.createdAt));
+}
+
+function isNotificationPage(value: unknown): value is {
+  success: true;
+  notifications: Notification[];
+  unreadCount: number;
+  nextCursor: string | null;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const body = value as Record<string, unknown>;
+  return body.success === true
+    && Array.isArray(body.notifications)
+    && body.notifications.every(isNotification)
+    && Number.isSafeInteger(body.unreadCount)
+    && (body.unreadCount as number) >= 0
+    && (typeof body.nextCursor === "string" || body.nextCursor === null);
 }
 
 function getNotificationHref(notification: Notification): string | null {

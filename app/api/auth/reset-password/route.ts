@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hashPassword } from "@/lib/auth/hash";
 import { validatePassword, validateEmail } from "@/lib/auth/validation";
-import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
+import { checkAuthClientRateLimit, checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { hashOtp } from "@/lib/auth/otp";
 import { sendPasswordChangedEmail } from "@/lib/email/templates";
 import { prisma } from "@/lib/db";
@@ -31,6 +31,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
+    const clientRateLimit = checkAuthClientRateLimit(request, "reset-password", 20);
+    if (!clientRateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: "Too many attempts. Request a new reset code later." },
+        { status: 429, headers: { "Retry-After": String(clientRateLimit.retryAfter) } },
+      );
+    }
     const rateLimitKey = `reset-password:${email}`;
     const rateLimit = checkRateLimit(rateLimitKey);
     if (!rateLimit.allowed) {

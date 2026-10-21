@@ -8,8 +8,13 @@ const dashboard = readFileSync(
 );
 
 test("dashboard treats malformed or unsuccessful collection responses as errors", () => {
-  assert.match(dashboard, /!response\.ok \|\| !body\.success \|\| !Array\.isArray\(body\.orders\)/);
-  assert.match(dashboard, /!response\.ok \|\| !body\.success \|\| !Array\.isArray\(body\.evaluations\)/);
+  assert.match(dashboard, /!Array\.isArray\(body\.orders\)/);
+  assert.match(dashboard, /!body\.summary/);
+  assert.match(dashboard, /setOrderSummary\(body\.summary\)/);
+  assert.match(dashboard, /!Array\.isArray\(body\.evaluations\)/);
+  assert.match(dashboard, /setEvaluationSummary\(body\.summary\)/);
+  assert.match(dashboard, /evaluationSummary\?\.statusCounts\.IN_PROGRESS/);
+  assert.match(dashboard, /evaluationSummary\.largestDrawdown/);
   assert.match(dashboard, /!response\.ok \|\| !body\.success \|\| !Array\.isArray\(body\.accounts\)/);
 });
 

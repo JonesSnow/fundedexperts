@@ -3,6 +3,8 @@ import { ProviderSnapshot, ProviderName } from "./types";
 export interface AdapterAccountInput {
   accountId: string;
   accountNumber: string | null;
+  /** Inventory server that the adapter must verify against credentials and provider response. */
+  expectedServer?: string | null;
   provider: ProviderName;
   credentials?: string | null;
   timeoutMs?: number;

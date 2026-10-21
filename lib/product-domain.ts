@@ -46,6 +46,7 @@ export interface ProductRuleConfiguration {
   disposition: string;
   /** Legacy runtime flag must agree with the explicit disposition when supplied. */
   isRequired?: boolean;
+  effectiveDate?: Date | string | null;
   value: unknown;
   calculation: unknown;
 }
@@ -54,8 +55,10 @@ export interface PublishedRulesetConfiguration {
   id: string;
   version: string;
   status: string;
+  effectiveDate?: Date | string | null;
   rules: ProductRuleConfiguration[];
   rulesetId?: string;
+  ruleset?: { id?: string; name: string } | null;
 }
 
 export interface ProductStageConfiguration {
@@ -70,6 +73,9 @@ export interface ProductConfiguration {
   id?: string;
   code: string | null;
   name: string;
+  description?: string | null;
+  isActive?: boolean;
+  ruleset?: { id?: string; name: string } | null;
   category: string | null;
   evaluationStructure: string | null;
   status?: string;
@@ -459,48 +465,72 @@ export function hasDuplicateProductCode(candidate: string | null, existingCodes:
   return candidate !== null && existingCodes.some((code) => code !== null && code.toLocaleLowerCase("en-US") === candidate.toLocaleLowerCase("en-US"));
 }
 
+function snapshotDate(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function snapshotRulesetVersion(version: PublishedRulesetConfiguration) {
+  return {
+    id: version.id,
+    version: version.version,
+    status: version.status,
+    effectiveDate: snapshotDate(version.effectiveDate),
+    rulesetId: version.rulesetId ?? version.ruleset?.id ?? null,
+    rulesetName: version.ruleset?.name ?? null,
+    rules: [...version.rules]
+      .sort((left, right) => `${left.id ?? ""}:${left.ruleType}:${left.name}`.localeCompare(`${right.id ?? ""}:${right.ruleType}:${right.name}`))
+      .map((rule) => ({
+        id: rule.id ?? null,
+        name: rule.name,
+        type: rule.ruleType,
+        disposition: rule.disposition,
+        isRequired: rule.isRequired ?? (rule.disposition === "REQUIRED"),
+        effectiveDate: snapshotDate(rule.effectiveDate),
+        value: rule.value,
+        calculation: rule.calculation,
+      })),
+  };
+}
+
 export function buildProductOrderSnapshot(product: ProductConfiguration, capturedAt: Date = new Date()): Record<string, unknown> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt: capturedAt.toISOString(),
     productId: product.id ?? null,
     code: product.code,
     name: product.name,
+    description: product.description ?? null,
     category: product.category,
     evaluationStructure: product.evaluationStructure,
     accountSize: decimalString(product.accountSize),
     denominationCurrency: product.denominationCurrency,
     price: decimalString(product.price),
     priceCurrency: product.currency,
-    stages: product.stages.map((stage) => ({
-      id: stage.id ?? null,
-      key: stage.stageKey,
-      displayName: stage.displayName,
-      order: stage.stageOrder,
-      rulesetVersionId: stage.rulesetVersion.id,
-      rulesetVersion: stage.rulesetVersion.version,
-      rules: stage.rulesetVersion.rules.map((rule) => ({
-        id: rule.id ?? null,
-        name: rule.name,
-        type: rule.ruleType,
-        disposition: rule.disposition,
-        value: rule.value,
-        calculation: rule.calculation,
-      })),
-    })),
+    legacyRuleset: product.ruleset
+      ? { id: product.ruleset.id ?? product.rulesetId ?? null, name: product.ruleset.name }
+      : product.rulesetId
+        ? { id: product.rulesetId, name: null }
+        : null,
+    stages: [...product.stages]
+      .sort((left, right) => left.stageOrder - right.stageOrder || left.stageKey.localeCompare(right.stageKey))
+      .map((stage) => {
+        const version = snapshotRulesetVersion(stage.rulesetVersion);
+        const { rules, ...versionDetails } = version;
+        return {
+          id: stage.id ?? null,
+          key: stage.stageKey,
+          displayName: stage.displayName,
+          order: stage.stageOrder,
+          rulesetVersionId: stage.rulesetVersion.id,
+          rulesetVersion: stage.rulesetVersion.version,
+          rulesetVersionDetails: versionDetails,
+          rules,
+        };
+      }),
     operatingRulesetVersion: product.operatingRulesetVersion
-      ? {
-          id: product.operatingRulesetVersion.id,
-          version: product.operatingRulesetVersion.version,
-          rules: product.operatingRulesetVersion.rules.map((rule) => ({
-            id: rule.id ?? null,
-            name: rule.name,
-            type: rule.ruleType,
-            disposition: rule.disposition,
-            value: rule.value,
-            calculation: rule.calculation,
-          })),
-        }
+      ? snapshotRulesetVersion(product.operatingRulesetVersion)
       : null,
   };
 }

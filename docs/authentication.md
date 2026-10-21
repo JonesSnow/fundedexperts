@@ -19,18 +19,19 @@ Authentication uses **JWT (HS256)** stored in an **httpOnly cookie**.
 
 ### Rate Limiting
 
-Login, registration, verification, and recovery endpoints use an **in-memory rate limiter**:
+Login, registration, verification, and recovery endpoints use **process-local limits** at two levels:
 
 | Parameter | Value |
 |---|---|
-| Max attempts per window | 5 |
+| Per-email attempts | 5 |
+| Per-client attempts | Login 50; registration, recovery, and resend 20; OTP confirmation 30 |
 | Window duration | 15 minutes |
 | Lockout duration | 15 minutes |
-| Scope | Per email (login), per email (register) |
+| Scope | Per email plus a separate client-address budget when a trusted address is available |
 
-Email OTP resend flows also use a 60-second process-local cooldown. Neither mechanism is shared across serverless instances or restarts.
+In production, the client-address budget uses Vercel's `x-vercel-forwarded-for` header. If no valid trusted address is present, that extra budget is skipped and the per-email limit remains in force. In non-production environments, forwarded client-address headers are accepted for local proxy testing. Email OTP resend flows also use a 60-second process-local cooldown. These counters and cooldowns are not shared across serverless instances or restarts, so the address budget is an additional best-effort layer rather than a distributed abuse control.
 
-**Production requirement:** Implement distributed rate limiting using Redis or a similar shared-state solution. The in-memory solution does not work across multiple instances and will be lost on server restart.
+**Production requirement:** Implement distributed rate limiting using Redis or a similar shared-state solution before relying on these limits as a production brute-force defense. The in-memory solution does not work across multiple instances and will be lost on server restart.
 
 ### Login Flow
 
@@ -47,8 +48,10 @@ Email OTP resend flows also use a 60-second process-local cooldown. Neither mech
 2. Server validates input, normalizes email, and checks for a duplicate
 3. Server hashes the password and creates an unverified trader record with the default TRADER role
 4. Server generates a six-digit code, stores a purpose-bound HMAC in the existing verification-token field, and sets a 10-minute expiry
-5. Server attempts email delivery and reports whether the configured provider accepted the message
+5. Server schedules verification-email delivery after the response; delivery failures are logged safely and can be retried from the verification screen
 6. Registration does not create a session; the user verifies the code, then signs in
+
+For valid registration requests, the API uses the same generic accepted response for a new address, an address already in use, and a concurrent duplicate. This avoids confirming whether an address has an account. The response does not confirm that an account was created or that an email reached an inbox. Existing users should sign in or use password recovery.
 
 The `console` email mode is preview-only and reports no delivery. It does not print message bodies, OTPs, full email addresses, or sender addresses.
 
@@ -173,22 +176,16 @@ Registers a new trader.
 }
 ```
 
-**Success Response (201):**
+**Accepted Response (202):**
 ```json
 {
-  "success": true,
-  "emailSent": true,
-  "trader": {
-    "id": "...",
-    "email": "trader@example.com",
-    "role": "TRADER",
-    "firstName": "John",
-    "lastName": "Doe"
-  }
+  "accepted": true,
+  "email": "trader@example.com",
+  "message": "If this address can be registered, check your inbox for verification instructions. If you already have an account, sign in or reset your password."
 }
 ```
 
-`emailSent` is false when console preview is selected or delivery is rejected. In either case, a new code can be requested. Registration does not set a session cookie. The example above omits delivery failure details and uses illustrative identity fields only.
+The same response is returned for duplicate addresses. A `202` means the request was accepted, not that an account was created or a message was delivered. If no code arrives for a new account, request another code. Registration does not set a session cookie or return account identifiers.
 
 ### POST /api/auth/login
 

@@ -20,8 +20,14 @@ interface Account {
   updatedAt: string;
 }
 
+const ACCOUNT_PAGE_SIZE = 50;
+
 export default function AdminAccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [authError, setAuthError] = useState(false);
@@ -29,29 +35,51 @@ export default function AdminAccountsPage() {
   const [filterStatus, setFilterStatus] = useState("");
   const [filterPurpose, setFilterPurpose] = useState("");
   const [filterBroker, setFilterBroker] = useState("");
+  const [appliedFilters, setAppliedFilters] = useState({ search: "", status: "", purpose: "", broker: "" });
   const [showAddForm, setShowAddForm] = useState(false);
 
-  const fetchAccounts = useCallback(async (s = "", st = "", p = "", br = "") => {
+  const fetchAccounts = useCallback(async (s = "", st = "", p = "", br = "", before?: string, append = false) => {
     try {
       const params = new URLSearchParams();
+      params.set("limit", String(ACCOUNT_PAGE_SIZE));
       if (s) params.set("search", s);
       if (st) params.set("status", st);
       if (p) params.set("purpose", p);
       if (br) params.set("broker", br);
+      if (before) params.set("before", before);
       const res = await fetch(`/api/accounts?${params.toString()}`);
       const data = await res.json();
-      if (res.ok) {
+      if (
+        res.ok &&
+        Array.isArray(data.accounts) &&
+        Number.isSafeInteger(data.totalCount) &&
+        (data.nextCursor === null || typeof data.nextCursor === "string")
+      ) {
         setAuthError(false);
-        setAccounts(data.accounts ?? []);
+        if (append) {
+          setAccounts((current) => {
+            const knownIds = new Set(current.map((account) => account.id));
+            return [...current, ...(data.accounts as Account[]).filter((account) => !knownIds.has(account.id))];
+          });
+          setOlderError("");
+        } else {
+          setAccounts(data.accounts);
+          setOlderError("");
+        }
+        setTotalCount(data.totalCount);
+        setNextCursor(data.nextCursor);
         setError("");
       } else {
         setAuthError(res.status === 401 || res.status === 403);
-        setError(data.error || "Failed to load accounts");
+        if (append) setOlderError(data.error || "Older accounts could not be loaded.");
+        else setError(data.error || "Failed to load accounts");
       }
     } catch {
-      setError("Network error");
+      if (append) setOlderError("Network error while loading older accounts.");
+      else setError("Network error");
     } finally {
       setLoading(false);
+      setLoadingOlder(false);
     }
   }, []);
 
@@ -66,7 +94,23 @@ export default function AdminAccountsPage() {
 
   async function handleSearch() {
     setLoading(true);
+    setNextCursor(null);
+    setOlderError("");
+    setAppliedFilters({ search, status: filterStatus, purpose: filterPurpose, broker: filterBroker });
     await fetchAccounts(search, filterStatus, filterPurpose, filterBroker);
+  }
+
+  async function handleLoadOlder() {
+    if (!nextCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    await fetchAccounts(
+      appliedFilters.search,
+      appliedFilters.status,
+      appliedFilters.purpose,
+      appliedFilters.broker,
+      nextCursor,
+      true,
+    );
   }
 
   async function handleDelete(id: string) {
@@ -75,6 +119,7 @@ export default function AdminAccountsPage() {
       const res = await fetch(`/api/accounts/${id}`, { method: "DELETE" });
       if (res.ok || res.status === 404) {
         setAccounts((prev) => prev.filter((a) => a.id !== id));
+        setTotalCount((count) => Math.max(0, count - 1));
       } else {
         setError("Failed to delete account");
       }
@@ -158,70 +203,95 @@ export default function AdminAccountsPage() {
       </div>
 
       {showAddForm && (
-        <AddAccountForm onCreated={() => { setShowAddForm(false); fetchAccounts(); }} />
+        <AddAccountForm onCreated={() => {
+          setShowAddForm(false);
+          setLoading(true);
+          const filters = { search, status: filterStatus, purpose: filterPurpose, broker: filterBroker };
+          setAppliedFilters(filters);
+          fetchAccounts(filters.search, filters.status, filters.purpose, filters.broker);
+        }} />
       )}
 
       {loading ? (
         <p className="text-muted-foreground" role="status" aria-live="polite">Loading accounts...</p>
       ) : (
-        <div className="w-full min-w-0 max-w-full overflow-x-auto" role="region" aria-label="Account inventory table" tabIndex={0}>
-          <table className="min-w-full bg-card border">
-            <thead>
-              <tr className="bg-muted">
-                <th className="px-4 py-2 text-left border">Account #</th>
-                <th className="px-4 py-2 text-left border">Broker</th>
-                <th className="px-4 py-2 text-left border">Server</th>
-                <th className="px-4 py-2 text-left border">Size</th>
-                <th className="px-4 py-2 text-left border">Purpose</th>
-                <th className="px-4 py-2 text-left border">Status</th>
-                <th className="px-4 py-2 text-left border">Health</th>
-                <th className="px-4 py-2 text-left border">Created</th>
-                <th className="px-4 py-2 text-left border">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-4 text-center text-muted-foreground">No accounts found</td>
+        <>
+          <p className="mb-3 text-sm text-muted-foreground" role="status" aria-live="polite">
+            Showing {accounts.length} of {totalCount} accounts
+          </p>
+          <div className="w-full min-w-0 max-w-full overflow-x-auto" role="region" aria-label="Account inventory table" tabIndex={0}>
+            <table className="min-w-full bg-card border">
+              <thead>
+                <tr className="bg-muted">
+                  <th className="px-4 py-2 text-left border">Account #</th>
+                  <th className="px-4 py-2 text-left border">Broker</th>
+                  <th className="px-4 py-2 text-left border">Server</th>
+                  <th className="px-4 py-2 text-left border">Size</th>
+                  <th className="px-4 py-2 text-left border">Purpose</th>
+                  <th className="px-4 py-2 text-left border">Status</th>
+                  <th className="px-4 py-2 text-left border">Health</th>
+                  <th className="px-4 py-2 text-left border">Created</th>
+                  <th className="px-4 py-2 text-left border">Actions</th>
                 </tr>
-              )}
-              {accounts.map((acc) => (
-                <tr key={acc.id} className="hover:bg-background">
-                  <td className="px-4 py-2 border font-mono">{acc.accountNumber}</td>
-                  <td className="px-4 py-2 border">{acc.broker ?? "—"}</td>
-                  <td className="px-4 py-2 border">{acc.server ?? "—"}</td>
-                  <td className="px-4 py-2 border">{acc.accountSize ? `${acc.accountSize} ${acc.currency}` : "—"}</td>
-                  <td className="px-4 py-2 border">{acc.purpose ?? "—"}</td>
-                  <td className="px-4 py-2 border">
-                    <StatusBadge status={acc.status} />
-                  </td>
-                  <td className="px-4 py-2 border">
-                    <HealthBadge status={acc.healthStatus} />
-                  </td>
-                  <td className="px-4 py-2 border text-sm text-muted-foreground">
-                    {new Date(acc.createdAt).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-2 border">
-                    <div className="flex gap-2">
-                      <Link
-                        href={`/admin/accounts/${acc.id}`}
-                        className="rounded bg-info-light px-2 py-1 text-sm text-info hover:bg-info/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        View
-                      </Link>
-                      <button
-                        onClick={() => handleDelete(acc.id)}
-                        className="rounded bg-danger-light px-2 py-1 text-sm text-danger hover:bg-danger/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {accounts.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-4 text-center text-muted-foreground">No accounts found</td>
+                  </tr>
+                )}
+                {accounts.map((acc) => (
+                  <tr key={acc.id} className="hover:bg-background">
+                    <td className="px-4 py-2 border font-mono">{acc.accountNumber}</td>
+                    <td className="px-4 py-2 border">{acc.broker ?? "—"}</td>
+                    <td className="px-4 py-2 border">{acc.server ?? "—"}</td>
+                    <td className="px-4 py-2 border">{acc.accountSize ? `${acc.accountSize} ${acc.currency}` : "—"}</td>
+                    <td className="px-4 py-2 border">{acc.purpose ?? "—"}</td>
+                    <td className="px-4 py-2 border">
+                      <StatusBadge status={acc.status} />
+                    </td>
+                    <td className="px-4 py-2 border">
+                      <HealthBadge status={acc.healthStatus} />
+                    </td>
+                    <td className="px-4 py-2 border text-sm text-muted-foreground">
+                      {new Date(acc.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-2 border">
+                      <div className="flex gap-2">
+                        <Link
+                          href={`/admin/accounts/${acc.id}`}
+                          className="rounded bg-info-light px-2 py-1 text-sm text-info hover:bg-info/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          View
+                        </Link>
+                        <button
+                          onClick={() => handleDelete(acc.id)}
+                          className="rounded bg-danger-light px-2 py-1 text-sm text-danger hover:bg-danger/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {nextCursor && (
+            <div className="mt-4 space-y-2">
+              {olderError && <p className="text-sm text-danger" role="alert">{olderError}</p>}
+              <button
+                type="button"
+                onClick={() => void handleLoadOlder()}
+                disabled={loadingOlder}
+                aria-busy={loadingOlder}
+                className="min-h-10 rounded border px-4 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              >
+                {loadingOlder ? "Loading older accounts..." : olderError ? "Try again" : "Load older accounts"}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -260,6 +330,7 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
     broker: "",
     server: "",
     login: "",
+    mt5Password: "",
     accountSize: "",
     currency: "USD",
     purpose: "",
@@ -276,11 +347,17 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
     setSubmitting(true);
 
     try {
+      const { mt5Password, ...accountFields } = form;
+      const login = form.login.trim();
+      const server = form.server.trim();
       const res = await fetch("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...form,
+          ...accountFields,
+          login,
+          server,
+          credentials: JSON.stringify({ login, password: mt5Password, server }),
           accountSize: form.accountSize ? parseFloat(form.accountSize) : undefined,
           purpose: form.purpose || undefined,
         }),
@@ -329,22 +406,44 @@ function AddAccountForm({ onCreated }: { onCreated: () => void }) {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Server</label>
+          <label htmlFor="mt5-server" className="block text-sm font-medium mb-1">MT5 Server *</label>
           <input
+            id="mt5-server"
             type="text"
             value={form.server}
             onChange={(e) => setForm({ ...form, server: e.target.value })}
+            required
             className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
+          {errors.server && <p className="text-xs text-danger mt-1" role="alert">{errors.server}</p>}
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Login</label>
+          <label htmlFor="mt5-login" className="block text-sm font-medium mb-1">MT5 Login *</label>
           <input
+            id="mt5-login"
             type="text"
+            inputMode="numeric"
+            pattern="[0-9]+"
             value={form.login}
             onChange={(e) => setForm({ ...form, login: e.target.value })}
+            required
             className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
+          {errors.login && <p className="text-xs text-danger mt-1" role="alert">{errors.login}</p>}
+        </div>
+        <div>
+          <label htmlFor="mt5-password" className="block text-sm font-medium mb-1">MT5 Password *</label>
+          <input
+            id="mt5-password"
+            type="password"
+            autoComplete="new-password"
+            value={form.mt5Password}
+            onChange={(e) => setForm({ ...form, mt5Password: e.target.value })}
+            required
+            className="w-full px-3 py-2 border rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          {errors.credentials && <p className="text-xs text-danger mt-1" role="alert">{errors.credentials}</p>}
+          {!errors.credentials && <p className="mt-1 text-xs text-muted-foreground">Encrypted before storage. The password is never returned by the API.</p>}
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Account Size</label>

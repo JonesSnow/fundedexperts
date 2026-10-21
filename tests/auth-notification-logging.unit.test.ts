@@ -44,12 +44,17 @@ function assertLoggedEmailBoundary(
 }
 
 test("registration reports thrown verification-email dispatch failures safely", () => {
-  assertLoggedEmailBoundary(
-    registrationRoute,
-    "sendVerificationEmail",
-    "Verification email dispatch failed after registration",
-    "VERIFICATION_EMAIL_DISPATCH_FAILED",
-  );
+  const senderPosition = registrationRoute.indexOf("sendVerificationEmail(");
+  const catchPosition = registrationRoute.indexOf("} catch {", senderPosition);
+  assert.notEqual(senderPosition, -1, "sendVerificationEmail should be scheduled");
+  assert.notEqual(catchPosition, -1, "background email dispatch rejection must be handled");
+  const catchBody = registrationRoute.slice(catchPosition, registrationRoute.indexOf("\n      }\n      if (!emailDelivered)", catchPosition));
+  assert.ok(catchBody.includes("emailDelivered = false"));
+  assert.match(registrationRoute, /const logEmailDispatchFailure = \(\) => logger\.error\(/);
+  assert.match(registrationRoute, /"Verification email dispatch failed after registration"/);
+  assert.match(registrationRoute, /code: "VERIFICATION_EMAIL_DISPATCH_FAILED"/);
+  assert.equal(registrationRoute.split("logEmailDispatchFailure();").length - 1, 2);
+  assert.doesNotMatch(registrationRoute, /emailError:\s*error\.message/);
 });
 
 test("login reports thrown security-alert dispatch failures safely", () => {

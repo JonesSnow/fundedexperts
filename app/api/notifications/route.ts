@@ -1,6 +1,9 @@
+import { isActiveAdministrator } from "@/lib/auth/admin-policy";
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { getSessionCookie, getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { encodeCreatedAtCursor, parseCursorPage } from "@/lib/cursor-pagination";
 
 
 async function getAuthenticatedTrader(request: NextRequest) {
@@ -20,7 +23,7 @@ async function getAuthenticatedTrader(request: NextRequest) {
 
 async function getAuthenticatedAdmin(request: NextRequest) {
   const trader = await getAuthenticatedTrader(request);
-  if (!trader || trader.role !== "ADMIN") return null;
+  if (!trader || !isActiveAdministrator(trader)) return null;
   return trader;
 }
 
@@ -33,12 +36,17 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const page = parseCursorPage(request.nextUrl.searchParams);
+  if (!page.success) {
+    return NextResponse.json({ success: false, error: page.error }, { status: 400 });
+  }
+
   try {
     const { searchParams } = new URL(request.url);
     const traderIdParam = searchParams.get("traderId");
 
-    let where: { traderId: string };
-    if (traderIdParam && trader.role === "ADMIN") {
+    let baseWhere: Prisma.NotificationWhereInput;
+    if (traderIdParam && isActiveAdministrator(trader)) {
       const target = await prisma.trader.findUnique({
         where: { id: traderIdParam },
         select: { id: true },
@@ -49,18 +57,55 @@ export async function GET(request: NextRequest) {
           { status: 404 },
         );
       }
-      where = { traderId: traderIdParam };
+      baseWhere = { traderId: traderIdParam };
     } else {
-      where = { traderId: trader.id };
+      baseWhere = { traderId: trader.id };
     }
 
-    const notifications = await prisma.notification.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-    });
+    const where: Prisma.NotificationWhereInput = page.cursor
+      ? {
+          AND: [
+            baseWhere,
+            {
+              OR: [
+                { createdAt: { lt: page.cursor.createdAt } },
+                { createdAt: page.cursor.createdAt, id: { lt: page.cursor.id } },
+              ],
+            },
+          ],
+        }
+      : baseWhere;
+    const includeTraderDetails = Boolean(traderIdParam && isActiveAdministrator(trader));
+
+    const [rows, unreadCount] = await prisma.$transaction(
+      async (tx) => Promise.all([
+        tx.notification.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: page.limit + 1,
+          ...(includeTraderDetails ? {
+            include: {
+              trader: { select: { email: true, firstName: true, lastName: true } },
+            },
+          } : {}),
+        }),
+        tx.notification.count({ where: { ...baseWhere, read: false } }),
+      ]),
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+    const hasMore = rows.length > page.limit;
+    const notifications = rows.slice(0, page.limit);
+    const lastNotification = notifications.at(-1);
 
     return NextResponse.json(
-      { success: true, notifications },
+      {
+        success: true,
+        notifications,
+        unreadCount,
+        nextCursor: hasMore && lastNotification
+          ? encodeCreatedAtCursor({ id: lastNotification.id, createdAt: lastNotification.createdAt })
+          : null,
+      },
       { status: 200 },
     );
   } catch {

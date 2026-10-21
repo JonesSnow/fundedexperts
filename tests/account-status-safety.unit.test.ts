@@ -14,6 +14,8 @@ test("admin account status route never permits AVAILABLE with an active assignme
   assert.doesNotMatch(route, /adminOverride/);
   assert.match(route, /prisma\.\$transaction\(async \(tx\) => \{[\s\S]*?FOR UPDATE[\s\S]*?tx\.accountAssignment\.findFirst/);
   assert.match(route, /tx\.mT5Account\.updateMany\(\{[\s\S]*?where: \{ id, status: account\.status \}/);
+  assert.match(route, /credentialsConfigured:\s*boolean/);
+  assert.match(route, /newStatus === "IN_USE" && locked\[0\]\?\.credentialsConfigured !== true/);
   assert.doesNotMatch(route, /prisma\.mT5Account\.update\(/);
   assert.ok(route.indexOf("const activeAssignment = await tx.accountAssignment.findFirst") < route.indexOf("if (newStatus === account.status)"));
 });
@@ -28,6 +30,10 @@ test("all admin status mutation routes serialize on the inventory row and audit 
   assert.match(route, /FOR UPDATE[\s\S]*?tx\.accountAssignment\.findFirst[\s\S]*?evaluateMt5AccountStatusChange/);
   assert.match(route, /tx\.mT5Account\.updateMany\([\s\S]*?where: \{ id, status: current\.status \}/);
   assert.match(route, /tx\.auditLog\.create/);
+  assert.match(route, /credentialsConfiguredAfterUpdate/);
+  assert.match(route, /newStatus === "IN_USE" && !credentialsConfiguredAfterUpdate/);
+  assert.match(route, /credentials !== undefined && !credentialsConfiguredAfterUpdate && \(current\.status === "IN_USE" \|\| activeAssignment\)/);
+  assert.match(route, /Credentials cannot be removed while the account is IN_USE or has an active assignment/);
   const statusBranch = route.slice(
     route.indexOf("if (status !== undefined) {"),
     route.indexOf("} else {", route.indexOf("if (status !== undefined) {")),
@@ -68,6 +74,10 @@ test("reconciliation revalidates inventory state and assignments under the accou
   assert.match(repairBranch, /current\.status !== "AVAILABLE"/);
   assert.match(repairBranch, /tx\.accountAssignment\.findMany[\s\S]*?activeAssignments\.length === 0/);
   assert.match(repairBranch, /tx\.mT5Account\.updateMany\([\s\S]*?status: "AVAILABLE"/);
+  assert.match(repairBranch, /credentialsConfigured !== true/);
+  assert.match(repairBranch, /Encrypted MT5 credentials are missing; IN_USE repair skipped/);
+  assert.match(repairBranch, /inconsistency.repairable = false/);
+  assert.match(repairBranch, /Configure encrypted MT5 credentials before retrying this repair/);
   assert.match(repairBranch, /tx\.auditLog\.create/);
   assert.doesNotMatch(repairBranch, /tx\.mT5Account\.update\(/);
 });

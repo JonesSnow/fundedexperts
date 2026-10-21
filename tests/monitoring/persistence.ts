@@ -73,7 +73,7 @@ async function cleanupData(): Promise<CleanupResult> {
     { label: "monitoringJob.deleteMany", fn: () => prisma.monitoringJob.deleteMany({ where: { accountId: TEST_ACCOUNT_ID } }) },
     { label: "mT5Account.deleteMany", fn: () => prisma.mT5Account.deleteMany({ where: { id: TEST_ACCOUNT_ID } }) },
   ];
-  return runCleanupSteps(prisma, steps);
+  return runCleanupSteps(prisma, steps, { requireGlobalCleanupConfirmation: false });
 }
 
 before(async () => {
